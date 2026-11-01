@@ -1,4 +1,5 @@
 import {
+  ProviderItem,
   Session,
   Message,
   Artifact,
@@ -6,7 +7,6 @@ import {
   ApprovalRequest,
   SystemStatus,
   AgentEvent,
-  ProviderItem,
   TerminalInfo,
   TerminalExecResult,
 } from './types';
@@ -125,7 +125,7 @@ export const api = {
     return res.json();
   },
 
-  async resolveApproval(id: string, decision: 'approved' | 'rejected', reason?: string): Promise<boolean> {
+  async resolveApproval(id: string, decision: 'approve_once' | 'approve_always' | 'deny', reason?: string): Promise<boolean> {
     const res = await fetch(`${this.getBaseUrl()}/api/approvals/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

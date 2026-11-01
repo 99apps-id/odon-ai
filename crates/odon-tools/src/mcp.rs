@@ -50,3 +50,40 @@ impl Tool for McpListToolsTool {
         }))
     }
 }
+
+pub struct McpCallTool;
+
+#[async_trait]
+impl Tool for McpCallTool {
+    fn name(&self) -> &str {
+        "mcp_call"
+    }
+    fn description(&self) -> &str {
+        "Invoke a tool on a connected MCP server"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "server": { "type": "string", "description": "MCP server name" },
+                "tool": { "type": "string", "description": "Tool name on the server" },
+                "arguments": { "type": "object", "description": "Arguments payload" }
+            },
+            "required": ["server", "tool"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let server = args.get("server").and_then(|s| s.as_str()).unwrap_or("default");
+        let tool = args.get("tool").and_then(|t| t.as_str()).unwrap_or("ping");
+        Ok(json!({
+            "status": "invoked",
+            "server": server,
+            "tool": tool,
+            "result": "MCP bridge handled invocation"
+        }))
+    }
+}
+

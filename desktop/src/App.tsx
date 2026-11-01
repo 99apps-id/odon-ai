@@ -30,16 +30,21 @@ import {
   ArrowLeft,
   CheckCircle2,
   Check,
+  Download,
+  Copy,
   Terminal,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
 import { SettingsModal } from './components/SettingsModal';
+import { MarkdownView } from './components/MarkdownView';
+import { ApprovalCard } from './components/ApprovalCard';
 import { api } from './api';
-import { Session, Message, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS } from './types';
+import { Session, Message, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
 interface ChatMessage {
   id: string;
@@ -54,24 +59,86 @@ interface ChatMessage {
 // Model lists are now dynamically populated from the active provider chosen in Settings.
 
 const REGISTERED_TOOLS = [
-  { name: 'fs_read', category: 'File System', tier: 'Tier 0', desc: 'Read file contents' },
-  { name: 'fs_write', category: 'File System', tier: 'Tier 1', desc: 'Write or overwrite file' },
-  { name: 'fs_edit', category: 'File System', tier: 'Tier 1', desc: 'Find and replace file text' },
-  { name: 'fs_search', category: 'File System', tier: 'Tier 0', desc: 'Search workspace files' },
-  { name: 'fs_delete', category: 'File System', tier: 'Tier 1', desc: 'Delete workspace file' },
+  // File System & Termigo Standard
+  { name: 'read_file', category: 'File System', tier: 'Tier 0', desc: 'Read file contents inside workspace' },
+  { name: 'write_file', category: 'File System', tier: 'Tier 1', desc: 'Create or overwrite workspace file' },
+  { name: 'edit', category: 'File System', tier: 'Tier 1', desc: 'Surgical single-string replacement' },
+  { name: 'multi_edit', category: 'File System', tier: 'Tier 1', desc: 'Atomic multi-replacement file edit' },
+  { name: 'list_directory', category: 'File System', tier: 'Tier 0', desc: 'List immediate directory entries' },
+  { name: 'create_directory', category: 'File System', tier: 'Tier 1', desc: 'Create directory recursively' },
+  { name: 'delete_file', category: 'File System', tier: 'Tier 2', desc: 'Delete workspace file (irreversible)' },
+  { name: 'move_file', category: 'File System', tier: 'Tier 1', desc: 'Move or rename file/folder' },
+  { name: 'copy_file', category: 'File System', tier: 'Tier 1', desc: 'Copy file within workspace' },
+  { name: 'grep', category: 'File System', tier: 'Tier 0', desc: 'Search file contents using pattern' },
+  { name: 'glob', category: 'File System', tier: 'Tier 0', desc: 'Find files matching pattern' },
+  { name: 'fs_read', category: 'File System', tier: 'Tier 0', desc: 'Read file path' },
+  { name: 'fs_write', category: 'File System', tier: 'Tier 1', desc: 'Write content to path' },
+  { name: 'fs_edit', category: 'File System', tier: 'Tier 1', desc: 'Find and replace target' },
+  { name: 'fs_list', category: 'File System', tier: 'Tier 0', desc: 'List directory entries' },
+  { name: 'fs_search', category: 'File System', tier: 'Tier 0', desc: 'Recursive text search' },
+  { name: 'fs_delete', category: 'File System', tier: 'Tier 2', desc: 'Remove file from disk' },
+
+  // Planning & Harness
+  { name: 'todo_write', category: 'Harness', tier: 'Tier 0', desc: 'Set task breakdown & milestones' },
+  { name: 'todo_read', category: 'Harness', tier: 'Tier 0', desc: 'Read task status and progress' },
+  { name: 'todo_update', category: 'Harness', tier: 'Tier 0', desc: 'Update specific todo status' },
+  { name: 'think', category: 'Harness', tier: 'Tier 0', desc: 'Private reasoning scratchpad' },
+  { name: 'plan_mode', category: 'Harness', tier: 'Tier 0', desc: 'Toggle read-only plan mode' },
+  { name: 'remember', category: 'Harness', tier: 'Tier 1', desc: 'Save durable project fact/gotcha' },
+
+  // Git Tools
   { name: 'git_status', category: 'Git', tier: 'Tier 0', desc: 'Working tree status' },
-  { name: 'git_diff', category: 'Git', tier: 'Tier 0', desc: 'Inspect uncommitted diffs' },
-  { name: 'git_log', category: 'Git', tier: 'Tier 0', desc: 'View commit history' },
-  { name: 'git_branch', category: 'Git', tier: 'Tier 0', desc: 'List or create branches' },
-  { name: 'web_search', category: 'Web', tier: 'Tier 0', desc: 'DuckDuckGo web search' },
-  { name: 'web_fetch', category: 'Web', tier: 'Tier 0', desc: 'Fetch webpage content' },
-  { name: 'system_info', category: 'System', tier: 'Tier 0', desc: 'OS, CPU, memory details' },
-  { name: 'calc_eval', category: 'Utility', tier: 'Tier 0', desc: 'Safe math evaluator' },
+  { name: 'git_diff', category: 'Git', tier: 'Tier 0', desc: 'Inspect uncommitted git diff' },
+  { name: 'git_commit', category: 'Git', tier: 'Tier 1', desc: 'Stage and commit changes' },
+  { name: 'git_log', category: 'Git', tier: 'Tier 0', desc: 'View commit history log' },
+  { name: 'git_branch', category: 'Git', tier: 'Tier 1', desc: 'List or create git branches' },
+  { name: 'git_add', category: 'Git', tier: 'Tier 1', desc: 'Stage specific files or all changes' },
+  { name: 'git_checkout', category: 'Git', tier: 'Tier 1', desc: 'Switch branch or restore path' },
+  { name: 'git_show', category: 'Git', tier: 'Tier 0', desc: 'Show commit details and diff' },
+  { name: 'git_stash', category: 'Git', tier: 'Tier 1', desc: 'Stash dirty working tree state' },
+  { name: 'git_stash_pop', category: 'Git', tier: 'Tier 1', desc: 'Apply and drop latest stash' },
+  { name: 'git_stash_list', category: 'Git', tier: 'Tier 0', desc: 'List all repository stashes' },
+  { name: 'git_pull', category: 'Git', tier: 'Tier 2', desc: 'Pull remote commits' },
+  { name: 'git_push', category: 'Git', tier: 'Tier 2', desc: 'Push local commits upstream' },
+  { name: 'git_reset', category: 'Git', tier: 'Tier 2', desc: 'Reset HEAD to specified commit' },
+
+  // Shell & Execution
   { name: 'shell_exec', category: 'Execution', tier: 'Tier 2', desc: 'Run PowerShell / sh command' },
-  { name: 'process_spawn', category: 'Execution', tier: 'Tier 2', desc: 'Background daemon process' },
-  { name: 'memory_store', category: 'Memory', tier: 'Tier 0', desc: 'Save long-term project note' },
+  { name: 'bash_run', category: 'Execution', tier: 'Tier 2', desc: 'Foreground command with timeout' },
+  { name: 'terminal_exec', category: 'Execution', tier: 'Tier 2', desc: 'Direct terminal command run' },
+
+  // Web & Security Pentest
+  { name: 'web_search', category: 'Web & Security', tier: 'Tier 0', desc: 'Web search for docs and CVEs' },
+  { name: 'web_fetch', category: 'Web & Security', tier: 'Tier 0', desc: 'Fetch web page text content' },
+  { name: 'probe_url', category: 'Web & Security', tier: 'Tier 0', desc: 'Probe HTTP headers and latency' },
+  { name: 'http_get', category: 'Web & Security', tier: 'Tier 0', desc: 'Send raw HTTP GET request' },
+  { name: 'http_post', category: 'Web & Security', tier: 'Tier 1', desc: 'Send HTTP POST with JSON body' },
+  { name: 'dns_lookup', category: 'Web & Security', tier: 'Tier 0', desc: 'Resolve domain hostnames to IP' },
+  { name: 'port_scan', category: 'Web & Security', tier: 'Tier 1', desc: 'TCP connect port scan on target' },
+
+  // System & Environment
+  { name: 'system_info', category: 'System', tier: 'Tier 0', desc: 'Host OS, CPU, memory details' },
+  { name: 'calc_eval', category: 'System', tier: 'Tier 0', desc: 'Safe math expression evaluator' },
+  { name: 'env_get', category: 'System', tier: 'Tier 0', desc: 'Read environment variable safely' },
+  { name: 'env_list', category: 'System', tier: 'Tier 0', desc: 'List visible environment keys' },
+  { name: 'process_list', category: 'System', tier: 'Tier 0', desc: 'List running host processes' },
+  { name: 'disk_usage', category: 'System', tier: 'Tier 0', desc: 'Workspace disk usage metrics' },
+
+  // GitHub & MCP
+  { name: 'github_get_repo', category: 'Integrations', tier: 'Tier 0', desc: 'GitHub repository metadata' },
+  { name: 'github_list_issues', category: 'Integrations', tier: 'Tier 0', desc: 'List repository issues' },
+  { name: 'github_create_issue', category: 'Integrations', tier: 'Tier 1', desc: 'Open a new GitHub issue' },
+  { name: 'github_list_prs', category: 'Integrations', tier: 'Tier 0', desc: 'List repository pull requests' },
+  { name: 'mcp_list_tools', category: 'Integrations', tier: 'Tier 0', desc: 'List connected MCP tools' },
+  { name: 'mcp_call', category: 'Integrations', tier: 'Tier 1', desc: 'Call tool on MCP server' },
+
+  // Memory & Artifacts
+  { name: 'memory_store', category: 'Memory', tier: 'Tier 0', desc: 'Save long-term note/fact' },
   { name: 'memory_recall', category: 'Memory', tier: 'Tier 0', desc: 'Recall persistent memories' },
-  { name: 'artifact_create', category: 'Artifact', tier: 'Tier 0', desc: 'Synthesize code/doc/image' },
+  { name: 'artifact_create_code', category: 'Artifacts', tier: 'Tier 0', desc: 'Generate multi-file code app' },
+  { name: 'artifact_create_document', category: 'Artifacts', tier: 'Tier 0', desc: 'Generate PRD or report' },
+  { name: 'artifact_create_image', category: 'Artifacts', tier: 'Tier 0', desc: 'Synthesize preview image' },
+  { name: 'artifact_update', category: 'Artifacts', tier: 'Tier 1', desc: 'Update existing artifact content' },
 ];
 
 export default function App() {
@@ -106,23 +173,59 @@ export default function App() {
   const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
+  const [quickModelInput, setQuickModelInput] = useState('');
+
   // Active Provider & Model resolution
   const activeProvider = providers.find((p) => p.id === activeProviderId) || providers[0] || FALLBACK_PROVIDERS[0];
-  const activeModels = activeProvider?.models || [];
+  const isOpenAiCompatible = activeProvider?.id === 'openai-compatible' || activeProvider?.id === 'openai_compatible';
+  const activeModels = isOpenAiCompatible ? customOpenAiModels : (activeProvider?.models || []);
   const currentModelObj = activeModels.find((m) => m.id === selectedModel || `${activeProvider?.id}::${m.id}` === selectedModel || m.name === selectedModel) || activeModels[0];
-  const displayModelName = currentModelObj ? currentModelObj.name : selectedModel;
+  const displayModelName = currentModelObj ? (currentModelObj.name || currentModelObj.id) : (selectedModel || 'Select Model');
 
   const handleSelectProvider = (providerId: string) => {
     setActiveProviderId(providerId);
     if (typeof window !== 'undefined') {
       localStorage.setItem('odon_active_provider', providerId);
     }
+    const isComp = providerId === 'openai-compatible' || providerId === 'openai_compatible';
     const prov = providers.find((p) => p.id === providerId);
-    if (prov && prov.models.length > 0) {
-      const rec = prov.models.find((m) => m.recommended) || prov.models[0];
+    const pModels = isComp ? getCustomOpenAiModels() : (prov?.models || []);
+    if (pModels.length > 0) {
+      const rec = pModels.find((m) => m.recommended) || pModels[0];
       setSelectedModel(rec.id);
       if (typeof window !== 'undefined') {
         localStorage.setItem('odon_selected_model', rec.id);
+      }
+    } else if (isComp) {
+      setSelectedModel('');
+    }
+  };
+
+  const handleAddQuickCustomModel = () => {
+    const trimmed = quickModelInput.trim();
+    if (!trimmed) return;
+    const existing = getCustomOpenAiModels();
+    let updated = existing;
+    if (!existing.some((m) => m.id === trimmed)) {
+      updated = [...existing, { id: trimmed, name: trimmed, context: 128000 }];
+      saveCustomOpenAiModels(updated);
+      setCustomOpenAiModels(updated);
+    }
+    setQuickModelInput('');
+    handleSelectModel(trimmed);
+  };
+
+  const handleDeleteQuickCustomModel = (modelId: string) => {
+    const existing = getCustomOpenAiModels();
+    const updated = existing.filter((m) => m.id !== modelId);
+    saveCustomOpenAiModels(updated);
+    setCustomOpenAiModels(updated);
+    if (selectedModel === modelId) {
+      if (updated.length > 0) {
+        handleSelectModel(updated[0].id);
+      } else {
+        setSelectedModel('');
       }
     }
   };
@@ -205,6 +308,19 @@ export default function App() {
   const [streamingText, setStreamingText] = useState('');
   const [streamingThought, setStreamingThought] = useState('');
   const [streamingTool, setStreamingTool] = useState<string | null>(null);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+
+  const handleCopyMessage = (id: string, content: string) => {
+    navigator.clipboard.writeText(content);
+    setCopiedMsgId(id);
+    setTimeout(() => setCopiedMsgId(null), 2000);
+  };
+  const [pendingApproval, setPendingApproval] = useState<{
+    id: string;
+    toolName: string;
+    risk: string;
+    arguments: Record<string, unknown>;
+  } | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -274,6 +390,13 @@ export default function App() {
         setStreamingText((prev) => prev + event.payload.delta);
       } else if (event.type === 'thought_delta') {
         setStreamingThought((prev) => prev + event.payload.delta);
+      } else if (event.type === 'approval_requested') {
+        setPendingApproval({
+          id: event.payload.approval_id,
+          toolName: event.payload.tool_name,
+          risk: `Tier ${event.payload.risk_tier}`,
+          arguments: { description: event.payload.description },
+        });
       } else if (event.type === 'tool_call_started') {
         setStreamingTool(event.payload.tool_name);
       } else if (event.type === 'tool_call_finished') {
@@ -302,6 +425,20 @@ export default function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, streamingThought, isGenerating]);
+
+  const decideApproval = async (decision: 'approve_once' | 'approve_always' | 'deny') => {
+    if (!pendingApproval) return;
+    try {
+      await api.resolveApproval(
+        pendingApproval.id,
+        decision,
+        decision === 'deny' ? 'Rejected by user' : undefined,
+      );
+      setPendingApproval(null);
+    } catch (error) {
+      console.error('Failed to submit approval decision:', error);
+    }
+  };
 
   // Start a new chat (return to hero)
   const handleNewChat = () => {
@@ -530,7 +667,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
     ];
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans select-none">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans">
       {/* Hidden File Picker */}
       <input
         type="file"
@@ -958,89 +1095,228 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
             {/* VIEW B: CONVERSATION STREAM */}
             {inChatMode && (
-              <div className="w-full max-w-2xl flex flex-col space-y-6 mx-auto">
+              <div className="w-full max-w-2xl flex flex-col space-y-6 mx-auto select-text">
                 {messages.map((msg) => (
-                  <div key={msg.id} className="flex flex-col space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${msg.role === 'user'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-neutral-900 text-white'
+                  <div key={msg.id} className="flex flex-col space-y-2 group">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                          msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-neutral-900 text-white'
                         }`}>
-                        {msg.role === 'user' ? 'U' : <CatLogo className="w-3.5 h-3.5 text-white" />}
+                          {msg.role === 'user' ? 'U' : <CatLogo className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                        <span className="text-xs font-semibold text-neutral-900">
+                          {msg.role === 'user' ? 'You' : 'ODON'}
+                        </span>
+                        <span className="text-[10px] text-neutral-400">{msg.timestamp}</span>
                       </div>
-                      <span className="text-xs font-semibold text-neutral-900">
-                        {msg.role === 'user' ? 'You' : 'ODON'}
-                      </span>
-                      <span className="text-[10px] text-neutral-400">{msg.timestamp}</span>
+
+                      {/* Message Action Bar (Copy Button like ChatGPT / Muse AI) */}
+                      <button
+                        onClick={() => handleCopyMessage(msg.id, msg.content)}
+                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100 transition-all cursor-pointer"
+                        title="Copy message"
+                      >
+                        {copiedMsgId === msg.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            <span className="text-emerald-600 font-medium">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
                     </div>
 
                     {msg.thought && (
-                      <div className="ml-7 p-2 rounded-lg bg-neutral-50 border border-neutral-200/60 text-[11px] text-neutral-500 italic">
-                        {msg.thought}
+                      <details className="ml-7 rounded-xl bg-neutral-100/70 border border-neutral-200/70 p-2.5 text-xs text-neutral-600">
+                        <summary className="cursor-pointer text-[11px] font-medium text-neutral-500 hover:text-neutral-800 flex items-center gap-1.5 select-none">
+                          <Sparkles className="w-3 h-3 text-amber-500" />
+                          <span>Thought process</span>
+                        </summary>
+                        <div className="mt-2 text-[11.5px] italic text-neutral-600 leading-relaxed pl-1 border-l-2 border-neutral-300 ml-1 select-text">
+                          {msg.thought}
+                        </div>
+                      </details>
+                    )}
+
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="ml-7 flex flex-wrap items-center gap-1.5 py-0.5">
+                        {msg.toolCalls.map((tc, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 text-[10.5px] font-mono text-neutral-600"
+                          >
+                            <Terminal className="w-2.5 h-2.5 text-neutral-400" />
+                            {tc}
+                          </span>
+                        ))}
                       </div>
                     )}
 
-                    <div className="text-xs text-neutral-800 leading-relaxed pl-7 whitespace-pre-wrap">
-                      {msg.content}
+                    <div className="pl-7 select-text">
+                      <MarkdownView content={msg.content} />
                     </div>
 
-                    {/* Interactive App Card */}
+                    {/* Dynamic Artifacts Card for this turn */}
                     {msg.showAppCard && (
-                      <div className="ml-7 mt-2 p-3.5 rounded-xl border border-neutral-200/90 bg-neutral-50/60 shadow-2xs max-w-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 border border-blue-100">
-                              <Code2 className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="font-semibold text-xs text-neutral-900">personal-notes</div>
-                              <div className="text-[10px] text-neutral-500">React 19 + TypeScript + Local Storage</div>
-                            </div>
-                          </div>
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            Verified
-                          </span>
-                        </div>
+                      <div className="ml-7 mt-2 space-y-2">
+                        {artifacts.filter(a => msg.role === 'assistant').length > 0 ? (
+                          artifacts.map((art) => {
+                            if (art.kind === 'image' && art.payload.type === 'image') {
+                              const rawUrl = art.payload.data.preview_url || '';
+                              const fullSrc = rawUrl.startsWith('/api/') ? `http://127.0.0.1:4096${rawUrl}` : rawUrl;
+                              const fileName = art.title.endsWith('.png') ? art.title : `${art.title}.png`;
 
-                        <div className="flex items-center gap-2 mt-3">
-                          <button
-                            onClick={() => {
-                              setRightPanelView('browser');
-                              setIsRightPanelOpen(true);
-                            }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-xs font-medium transition-colors shadow-2xs cursor-pointer"
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                            Preview in Browser
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRightPanelView('editor');
-                              setIsRightPanelOpen(true);
-                            }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
-                          >
-                            <Code2 className="w-3 h-3 text-neutral-500" />
-                            Inspect Source
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRightPanelView('terminal');
-                              setIsRightPanelOpen(true);
-                            }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
-                          >
-                            <Terminal className="w-3 h-3 text-neutral-500" />
-                            Terminal
-                          </button>
-                        </div>
+                              return (
+                                <div key={art.id} className="p-3.5 rounded-2xl border border-neutral-200/90 bg-white shadow-2xs max-w-lg">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <div className="p-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-100">
+                                        <ImageIcon className="w-4 h-4" />
+                                      </div>
+                                      <div>
+                                        <div className="font-semibold text-xs text-neutral-900">{art.title}</div>
+                                        <div className="text-[10px] text-neutral-500">
+                                          {art.payload.data.width} × {art.payload.data.height} • {art.payload.data.model}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      Saved
+                                    </span>
+                                  </div>
+
+                                  <div className="relative aspect-video rounded-xl bg-neutral-950 flex items-center justify-center overflow-hidden my-2.5">
+                                    {fullSrc ? (
+                                      <img src={fullSrc} alt={art.payload.data.prompt} className="w-full h-full object-contain" />
+                                    ) : (
+                                      <ImageIcon className="w-8 h-8 text-neutral-600" />
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2 mt-3">
+                                    <button
+                                      onClick={async () => {
+                                        if (!fullSrc) return;
+                                        try {
+                                          const resp = await fetch(fullSrc);
+                                          const blob = await resp.blob();
+                                          const url = window.URL.createObjectURL(blob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.download = fileName;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          window.URL.revokeObjectURL(url);
+                                          document.body.removeChild(a);
+                                        } catch {
+                                          window.open(fullSrc, '_blank');
+                                        }
+                                      }}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      Save Image
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setRightPanelView('artifacts');
+                                        setIsRightPanelOpen(true);
+                                      }}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                                    >
+                                      <Layers className="w-3 h-3 text-neutral-500" />
+                                      Artifacts Panel
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (art.kind === 'code' && art.payload.type === 'code') {
+                              return (
+                                <div key={art.id} className="p-3.5 rounded-2xl border border-neutral-200/90 bg-neutral-50/60 shadow-2xs max-w-lg">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 border border-blue-100">
+                                        <Code2 className="w-4 h-4" />
+                                      </div>
+                                      <div>
+                                        <div className="font-semibold text-xs text-neutral-900">{art.title}</div>
+                                        <div className="text-[10px] text-neutral-500">{art.summary}</div>
+                                      </div>
+                                    </div>
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      Verified
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 mt-3">
+                                    <button
+                                      onClick={() => {
+                                        setRightPanelView('browser');
+                                        setIsRightPanelOpen(true);
+                                      }}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                      Preview in Browser
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setRightPanelView('editor');
+                                        setIsRightPanelOpen(true);
+                                      }}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                                    >
+                                      <Code2 className="w-3 h-3 text-neutral-500" />
+                                      Inspect Source
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setRightPanelView('terminal');
+                                        setIsRightPanelOpen(true);
+                                      }}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                                    >
+                                      <Terminal className="w-3 h-3 text-neutral-500" />
+                                      Terminal
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            return null;
+                          })
+                        ) : null}
                       </div>
                     )}
                   </div>
                 ))}
 
                 {/* Active Generating / Streaming Turn */}
+                {pendingApproval && (
+                  <div className="flex gap-4 mb-4 max-w-3xl" role="alert" aria-live="assertive">
+                    <div className="flex-1">
+                      <ApprovalCard
+                        id={pendingApproval.id}
+                        toolName={pendingApproval.toolName}
+                        risk={pendingApproval.risk}
+                        description={(pendingApproval.arguments?.description as string) || undefined}
+                        parameters={pendingApproval.arguments}
+                        onDecide={decideApproval}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {isGenerating && (
                   <div className="flex flex-col space-y-2">
                     <div className="flex items-center gap-2">
@@ -1062,13 +1338,25 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     )}
 
                     {streamingThought && (
-                      <div className="ml-7 p-2 rounded-lg bg-neutral-50 border border-neutral-200/60 text-[11px] text-neutral-500 italic">
-                        {streamingThought}
-                      </div>
+                      <details open className="ml-7 rounded-xl bg-neutral-50 border border-neutral-200/60 p-2.5 text-xs text-neutral-600">
+                        <summary className="cursor-pointer text-[11px] font-medium text-neutral-500 hover:text-neutral-800 flex items-center gap-1.5 select-none">
+                          <Sparkles className="w-3 h-3 text-amber-500 animate-spin" />
+                          <span>Thinking...</span>
+                        </summary>
+                        <div className="mt-2 text-[11.5px] italic text-neutral-600 leading-relaxed pl-1 border-l-2 border-neutral-300 ml-1 select-text">
+                          {streamingThought}
+                        </div>
+                      </details>
                     )}
 
-                    <div className="text-xs text-neutral-800 leading-relaxed pl-7 whitespace-pre-wrap">
-                      {streamingText || 'Orchestrating tools and synthesizing solution...'}
+                    <div className="pl-7 select-text">
+                      {streamingText ? (
+                        <MarkdownView content={streamingText} />
+                      ) : (
+                        <span className="text-xs text-neutral-400 italic">
+                          Orchestrating tools and synthesizing solution...
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1579,7 +1867,10 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
       {/* Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          setCustomOpenAiModels(getCustomOpenAiModels());
+        }}
         isDark={false}
         onToggleTheme={() => { }}
         activeProviderId={activeProviderId}
@@ -1652,25 +1943,42 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
             {/* Models List belonging to Active Provider */}
             <div className="space-y-1.5 overflow-y-auto max-h-[360px] pr-1">
-              <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-1 mb-1">
-                {activeProvider?.name} Models ({activeModels.length})
+              <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-1 mb-1 flex items-center justify-between">
+                <span>{activeProvider?.name} Models ({activeModels.length})</span>
+                {isOpenAiCompatible && (
+                  <button
+                    onClick={() => {
+                      setIsModelMenuOpen(false);
+                      setSettingsOpen(true);
+                    }}
+                    className="text-blue-600 hover:underline font-normal capitalize"
+                  >
+                    Kelola di Settings
+                  </button>
+                )}
               </div>
+
+              {isOpenAiCompatible && activeModels.length === 0 && (
+                <div className="p-3 rounded-xl bg-neutral-50 border border-dashed border-neutral-300 text-center text-xs text-neutral-500 my-2">
+                  Belum ada model custom gateway. Isi Model ID manual di bawah atau buka Pengaturan.
+                </div>
+              )}
 
               {activeModels.map((m) => {
                 const isSelected = selectedModel === m.id || selectedModel === m.name || `${activeProvider.id}::${m.id}` === selectedModel;
                 return (
-                  <button
+                  <div
                     key={m.id}
                     onClick={() => handleSelectModel(m.id)}
-                    className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-start justify-between border ${
+                    className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-between border group ${
                       isSelected
                         ? 'bg-blue-50/80 border-blue-200 text-blue-900 shadow-2xs'
                         : 'border-transparent hover:border-neutral-200 hover:bg-neutral-50 text-neutral-800'
                     }`}
                   >
-                    <div>
+                    <div className="flex-1">
                       <div className="flex items-center gap-2 font-semibold text-xs">
-                        <span>{m.name}</span>
+                        <span>{m.name || m.id}</span>
                         {m.recommended && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">
                             Recommended
@@ -1683,12 +1991,51 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                         <span>{m.context > 0 ? `${(m.context / 1000).toFixed(0)}k context` : 'auto context'}</span>
                       </div>
                     </div>
-                    {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />}
-                  </button>
+
+                    <div className="flex items-center gap-1.5">
+                      {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
+                      {isOpenAiCompatible && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteQuickCustomModel(m.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-red-600 rounded transition-all cursor-pointer"
+                          title="Hapus model ini"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
 
-
+              {isOpenAiCompatible && (
+                <div className="pt-2.5 mt-2 border-t border-neutral-200">
+                  <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1.5 px-0.5">
+                    Input Model ID Manual
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={quickModelInput}
+                      onChange={(e) => setQuickModelInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleAddQuickCustomModel();
+                      }}
+                      placeholder="Ketik Model ID (misal: llama-3.3-70b)..."
+                      className="flex-1 px-3 py-1.5 text-xs font-mono rounded-xl border border-neutral-300 bg-white focus:border-blue-500 outline-none"
+                    />
+                    <button
+                      onClick={handleAddQuickCustomModel}
+                      className="px-3 py-1.5 bg-neutral-900 text-white rounded-xl text-xs font-medium hover:bg-neutral-800 transition-colors cursor-pointer shrink-0"
+                    >
+                      + Tambah
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

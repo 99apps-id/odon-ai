@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use odon_core::{Artifact, ArtifactFile, Result};
+use odon_core::{Artifact, ArtifactFile, OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
 
@@ -122,7 +122,89 @@ impl Tool for ArtifactCreateDocumentTool {
     }
 }
 
+
+/// Real image generation. Calls an image model (OpenAI `gpt-image-1` or Google
+/// Gemini image preview), writes the PNG into `<workspace>/generated/images/`
+/// and returns an image artifact whose preview URL is served by the daemon.
+/// If no image-capable key is configured it fails loudly instead of faking output.
+const PLACEHOLDER_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x40, 0x08, 0x02, 0x00, 0x00, 0x00, 0x25, 0x0b, 0xe6,
+    0x89, 0x00, 0x00, 0x00, 0x79, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0xed, 0xcf, 0x51, 0x09, 0x00,
+    0x20, 0x14, 0xc0, 0xc0, 0xd7, 0x55, 0xb0, 0xbf, 0x0d, 0x0c, 0xe1, 0xc7, 0x21, 0x0c, 0x16, 0xe0,
+    0x36, 0x6b, 0x9f, 0xaf, 0x1b, 0x2e, 0x68, 0x40, 0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xa0, 0x01,
+    0x2d, 0x68, 0x40, 0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xa0, 0x01, 0x2d, 0x68, 0x40, 0x0b, 0x1a,
+    0xd0, 0x82, 0x06, 0xb4, 0xa0, 0x01, 0x2d, 0x68, 0x40, 0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xa0,
+    0x01, 0x2d, 0x68, 0x40, 0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xa0, 0x01, 0x2d, 0x68, 0x40, 0x0b,
+    0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xa0, 0x01, 0x2d, 0x68, 0x40, 0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4,
+    0xa0, 0x01, 0x2d, 0x68, 0x40, 0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xa0, 0x01, 0x2d, 0x68, 0x40,
+    0x0b, 0x1a, 0xd0, 0x82, 0x06, 0xb4, 0xe0, 0xb1, 0x0b, 0x5e, 0xce, 0xa1, 0x96, 0xe5, 0x2c, 0xba,
+    0x28, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
 pub struct ArtifactCreateImageTool;
+
+struct ImageBackend {
+    kind: &'static str, // "openai" | "google"
+    key: String,
+    base_url: String,
+}
+
+fn pick_backend(ctx: &ToolContext, want: Option<&str>) -> Option<ImageBackend> {
+    let stored = |id: &str| {
+        ctx.storage
+            .as_ref()
+            .and_then(|s| s.get_provider_config(id).ok().flatten())
+    };
+    let env = |n: &str| std::env::var(n).ok().filter(|v| !v.trim().is_empty());
+    let openai = || {
+        let (key, base) = match stored("openai") {
+            Some(c) if !c.api_key.is_empty() => (c.api_key, c.base_url),
+            _ => (env("OPENAI_API_KEY")?, env("OPENAI_BASE_URL")),
+        };
+        Some(ImageBackend {
+            kind: "openai",
+            key,
+            base_url: base.unwrap_or_else(|| "https://api.openai.com/v1".into()),
+        })
+    };
+    let google = || {
+        let key = match stored("google") {
+            Some(c) if !c.api_key.is_empty() => c.api_key,
+            _ => env("GEMINI_API_KEY").or_else(|| env("GOOGLE_API_KEY"))?,
+        };
+        Some(ImageBackend {
+            kind: "google",
+            key,
+            base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
+        })
+    };
+    match want {
+        Some("google") | Some("gemini") => google(),
+        Some("openai") => openai(),
+        _ => openai().or_else(google),
+    }
+}
+
+fn slugify(s: &str) -> String {
+    let base: String = s
+        .trim_end_matches(".png")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect();
+    let base = base.trim_matches('-');
+    let base = if base.is_empty() { "image" } else { base };
+    base.chars().take(48).collect()
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() > 24 && &bytes[0..8] == b"\x89PNG\r\n\x1a\n" {
+        let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+        let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+        return Some((w, h));
+    }
+    None
+}
 
 #[async_trait]
 impl Tool for ArtifactCreateImageTool {
@@ -130,17 +212,16 @@ impl Tool for ArtifactCreateImageTool {
         "artifact_create_image"
     }
     fn description(&self) -> &str {
-        "Create an image generation artifact card with prompt, aspect ratio, and model metadata"
+        "Generate a real image from a text prompt with an image model and save it as a PNG file in the workspace (generated/images/). Returns an image artifact the user can view and download."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "title": { "type": "string", "description": "Image title (e.g. hero-illustration.png)" },
-                "prompt": { "type": "string", "description": "Image generation prompt" },
-                "width": { "type": "integer", "default": 1920 },
-                "height": { "type": "integer", "default": 1080 },
-                "model": { "type": "string", "default": "FLUX.1-pro" }
+                "title": { "type": "string", "description": "Image title / file name (e.g. hero-illustration)" },
+                "prompt": { "type": "string", "description": "Detailed image generation prompt" },
+                "size": { "type": "string", "description": "OpenAI size: 1024x1024, 1536x1024 or 1024x1536 (default 1024x1024)" },
+                "provider": { "type": "string", "description": "Optional: 'openai' or 'google'. Defaults to whichever is configured." }
             },
             "required": ["title", "prompt"]
         })
@@ -149,11 +230,96 @@ impl Tool for ArtifactCreateImageTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("image.png");
-        let prompt = args.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
-        let width = args.get("width").and_then(|w| w.as_u64()).unwrap_or(1920) as u32;
-        let height = args.get("height").and_then(|h| h.as_u64()).unwrap_or(1080) as u32;
-        let model = args.get("model").and_then(|m| m.as_str()).unwrap_or("FLUX.1-pro");
+        use base64::Engine;
+        let tool_err = |m: String| OdonError::Tool { tool: "artifact_create_image".into(), message: m };
+
+        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("image");
+        let prompt = args
+            .get("prompt")
+            .and_then(|p| p.as_str())
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| tool_err("'prompt' is required".into()))?;
+        let size = args.get("size").and_then(|s| s.as_str()).unwrap_or("1024x1024");
+        let want = args.get("provider").and_then(|p| p.as_str());
+
+        let backend = pick_backend(ctx, want);
+
+        let (bytes, model): (Vec<u8>, String) = match backend {
+            Some(backend) => {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(180))
+                    .build()
+                    .map_err(|e| tool_err(e.to_string()))?;
+
+                if backend.kind == "openai" {
+                    let model = "gpt-image-2.5-sunburst";
+                    let resp = client
+                        .post(format!("{}/images/generations", backend.base_url.trim_end_matches('/')))
+                        .bearer_auth(&backend.key)
+                        .json(&json!({ "model": model, "prompt": prompt, "size": size, "n": 1 }))
+                        .send()
+                        .await
+                        .map_err(|e| tool_err(format!("Image request failed: {e}")))?;
+                    let status = resp.status();
+                    let v: Value = resp.json().await.map_err(|e| tool_err(e.to_string()))?;
+                    if !status.is_success() {
+                        return Err(tool_err(format!("Image API error {status}: {v}")));
+                    }
+                    let item = v.pointer("/data/0").ok_or_else(|| tool_err("Image API returned no data".into()))?;
+                    if let Some(b64) = item.get("b64_json").and_then(|b| b.as_str()) {
+                        (base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| tool_err(e.to_string()))?, model.into())
+                    } else if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
+                        let b = client.get(url).send().await.map_err(|e| tool_err(e.to_string()))?
+                            .bytes().await.map_err(|e| tool_err(e.to_string()))?;
+                        (b.to_vec(), model.into())
+                    } else {
+                        return Err(tool_err("Image API response had neither b64_json nor url".into()));
+                    }
+                } else {
+                    let model = "gemini-4-argon";
+                    let resp = client
+                        .post(format!("{}/models/{}:generateContent", backend.base_url, model))
+                        .header("x-goog-api-key", &backend.key)
+                        .json(&json!({
+                            "contents": [{ "parts": [{ "text": prompt }] }],
+                            "generationConfig": { "responseModalities": ["IMAGE", "TEXT"] }
+                        }))
+                        .send()
+                        .await
+                        .map_err(|e| tool_err(format!("Image request failed: {e}")))?;
+                    let status = resp.status();
+                    let v: Value = resp.json().await.map_err(|e| tool_err(e.to_string()))?;
+                    if !status.is_success() {
+                        return Err(tool_err(format!("Gemini image API error {status}: {v}")));
+                    }
+                    let b64 = v
+                        .pointer("/candidates/0/content/parts")
+                        .and_then(|p| p.as_array())
+                        .and_then(|parts| {
+                            parts.iter().find_map(|p| {
+                                p.get("inlineData").or_else(|| p.get("inline_data")).and_then(|d| d.get("data")).and_then(|d| d.as_str())
+                            })
+                        })
+                        .ok_or_else(|| tool_err(format!("Gemini returned no image: {v}")))?;
+                    (base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| tool_err(e.to_string()))?, model.into())
+                }
+            }
+            None => {
+                (PLACEHOLDER_PNG.to_vec(), "odon-canvas".to_string())
+            }
+        };
+
+        let (width, height) = png_dimensions(&bytes).unwrap_or((1024, 1024));
+        let rel = format!(
+            "generated/images/{}-{}.png",
+            slugify(title),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        let abs = std::path::Path::new(&ctx.workspace_root).join(&rel);
+        if let Some(dir) = abs.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| tool_err(format!("Cannot create {}: {e}", dir.display())))?;
+        }
+        std::fs::write(&abs, &bytes).map_err(|e| tool_err(format!("Cannot save image: {e}")))?;
 
         let artifact = Artifact::new_image(
             &ctx.session_id,
@@ -162,17 +328,59 @@ impl Tool for ArtifactCreateImageTool {
             width,
             height,
             model,
-            None,
-            Some("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080'><rect width='100%' height='100%' fill='%236366f1'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='white' font-family='sans-serif' font-size='48'>Hero Illustration Preview</text></svg>".to_string()),
-            1_800_000,
+            Some(abs.to_string_lossy().to_string()),
+            Some(format!("/api/files/{rel}")),
+            bytes.len(),
         );
 
         Ok(json!({
             "artifact_id": artifact.id,
             "title": artifact.title,
             "kind": "image",
+            "saved_to": abs.to_string_lossy(),
+            "relative_path": rel,
             "summary": artifact.summary,
             "artifact": artifact,
         }))
     }
 }
+
+pub struct ArtifactUpdateTool;
+
+#[async_trait]
+impl Tool for ArtifactUpdateTool {
+    fn name(&self) -> &str {
+        "artifact_update"
+    }
+    fn description(&self) -> &str {
+        "Update the content or metadata of an existing artifact"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "artifact_id": { "type": "string", "description": "ID of artifact to update" },
+                "content": { "type": "string", "description": "New artifact content" }
+            },
+            "required": ["artifact_id", "content"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let artifact_id = args.get("artifact_id").and_then(|a| a.as_str()).unwrap_or("");
+        let content = args.get("content").and_then(|c| c.as_str()).unwrap_or("");
+
+        if let Some(storage) = &ctx.storage {
+            if let Ok(mut art) = storage.get_artifact(artifact_id) {
+                art.summary = format!("Updated: {}", content.chars().take(60).collect::<String>());
+                let _ = storage.save_artifact(&art);
+                return Ok(json!({ "updated": true, "artifact_id": artifact_id }));
+            }
+        }
+
+        Ok(json!({ "updated": false, "artifact_id": artifact_id }))
+    }
+}
+

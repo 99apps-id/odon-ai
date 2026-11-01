@@ -57,22 +57,48 @@ impl ModelProvider for AnthropicProvider {
         );
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
-        let mut messages_payload = Vec::new();
+        // Anthropic wants: assistant turns carry `tool_use` blocks, and the matching
+        // results come back as `tool_result` blocks inside a single user turn.
+        let mut messages_payload: Vec<serde_json::Value> = Vec::new();
         for msg in request.messages {
             match msg.role {
                 MessageRole::User => {
-                    messages_payload.push(json!({
-                        "role": "user",
-                        "content": msg.content.text,
-                    }));
+                    messages_payload.push(json!({ "role": "user", "content": msg.content.text }));
                 }
                 MessageRole::Assistant => {
-                    messages_payload.push(json!({
-                        "role": "assistant",
-                        "content": msg.content.text,
-                    }));
+                    let mut blocks = Vec::new();
+                    if !msg.content.text.is_empty() {
+                        blocks.push(json!({ "type": "text", "text": msg.content.text }));
+                    }
+                    for tc in &msg.content.tool_calls {
+                        let input = if tc.arguments.is_object() { tc.arguments.clone() } else { json!({}) };
+                        blocks.push(json!({
+                            "type": "tool_use", "id": tc.call_id, "name": tc.tool_name, "input": input
+                        }));
+                    }
+                    if blocks.is_empty() {
+                        continue;
+                    }
+                    messages_payload.push(json!({ "role": "assistant", "content": blocks }));
                 }
-                _ => {}
+                MessageRole::Tool => {
+                    let call_id = msg.content.tool_calls.first().map(|t| t.call_id.clone()).unwrap_or_default();
+                    let block = json!({
+                        "type": "tool_result", "tool_use_id": call_id, "content": msg.content.text
+                    });
+                    let merge = messages_payload
+                        .last()
+                        .map(|m| m["role"] == "user" && m["content"].is_array())
+                        .unwrap_or(false);
+                    if merge {
+                        if let Some(arr) = messages_payload.last_mut().and_then(|m| m["content"].as_array_mut()) {
+                            arr.push(block);
+                        }
+                    } else {
+                        messages_payload.push(json!({ "role": "user", "content": [block] }));
+                    }
+                }
+                MessageRole::System => {}
             }
         }
 
@@ -89,6 +115,15 @@ impl ModelProvider for AnthropicProvider {
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "stream": true,
         });
+
+        if !request.tools.is_empty() {
+            let tools: Vec<_> = request
+                .tools
+                .iter()
+                .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.parameters }))
+                .collect();
+            body["tools"] = json!(tools);
+        }
 
         if let Some(sys) = request.system_prompt {
             body["system"] = json!(sys);
@@ -132,21 +167,37 @@ impl ModelProvider for AnthropicProvider {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
                                 let evt_type = val.get("type").and_then(|t| t.as_str()).unwrap_or_default();
                                 match evt_type {
+                                    "content_block_start" => {
+                                        if let Some(cb) = val.get("content_block") {
+                                            if cb.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                                                let idx = val.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                                                let _ = event_sender.send(StreamEvent::ToolCallDelta {
+                                                    index: idx,
+                                                    id: cb.get("id").and_then(|s| s.as_str()).map(String::from),
+                                                    name: cb.get("name").and_then(|s| s.as_str()).map(String::from),
+                                                    arguments_delta: None,
+                                                }).await;
+                                            }
+                                        }
+                                    }
                                     "content_block_delta" => {
                                         if let Some(delta) = val.get("delta") {
                                             if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
                                                 let _ = event_sender.send(StreamEvent::TextDelta(text.to_string())).await;
+                                            } else if let Some(th) = delta.get("thinking").and_then(|t| t.as_str()) {
+                                                let _ = event_sender.send(StreamEvent::ThoughtDelta(th.to_string())).await;
+                                            } else if let Some(pj) = delta.get("partial_json").and_then(|t| t.as_str()) {
+                                                let idx = val.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                                                let _ = event_sender.send(StreamEvent::ToolCallDelta {
+                                                    index: idx,
+                                                    id: None,
+                                                    name: None,
+                                                    arguments_delta: Some(pj.to_string()),
+                                                }).await;
                                             }
                                         }
                                     }
-                                    "message_delta" => {
-                                        if let Some(stop) = val.get("delta").and_then(|d| d.get("stop_reason")).and_then(|s| s.as_str()) {
-                                            if stop == "end_turn" || stop == "stop_sequence" {
-                                                let _ = event_sender.send(StreamEvent::Done).await;
-                                                break;
-                                            }
-                                        }
-                                    }
+                                    "message_delta" => {}
                                     "error" => {
                                         let msg = val.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).unwrap_or("Anthropic error");
                                         let _ = event_sender.send(StreamEvent::Error(msg.to_string())).await;

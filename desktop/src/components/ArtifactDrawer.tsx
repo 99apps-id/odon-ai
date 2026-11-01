@@ -5,6 +5,7 @@ import {
   Image as ImageIcon,
   Check,
   Copy,
+  Download,
   FolderOpen,
   Bot,
   Zap,
@@ -195,25 +196,69 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                 )}
 
                 {/* Image Artifact Payload */}
-                {selectedArtifact.payload.type === 'image' && (
-                  <div className="space-y-2">
-                    <div className="rounded-lg overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-neutral-950 aspect-video flex items-center justify-center">
-                      {selectedArtifact.payload.data.preview_url ? (
-                        <img
-                          src={selectedArtifact.payload.data.preview_url}
-                          alt={selectedArtifact.payload.data.prompt}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <ImageIcon className="w-8 h-8 text-neutral-600" />
+                {selectedArtifact.payload.type === 'image' && (() => {
+                  const imgData = selectedArtifact.payload.data;
+                  const rawUrl = imgData.preview_url || '';
+                  const fullSrc = rawUrl.startsWith('/api/') ? `http://127.0.0.1:4096${rawUrl}` : rawUrl;
+                  const fileName = selectedArtifact.title.endsWith('.png') ? selectedArtifact.title : `${selectedArtifact.title}.png`;
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-neutral-950 aspect-video flex items-center justify-center">
+                        {fullSrc ? (
+                          <img
+                            src={fullSrc}
+                            alt={imgData.prompt}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <ImageIcon className="w-8 h-8 text-neutral-600" />
+                        )}
+                      </div>
+                      <div className="text-[11.5px] text-neutral-500 flex items-center justify-between">
+                        <span>{imgData.width} × {imgData.height}</span>
+                        <span>Model: {imgData.model}</span>
+                      </div>
+                      {imgData.file_path && (
+                        <div className="text-[11px] font-mono text-neutral-500 bg-neutral-100 dark:bg-neutral-800/80 p-2 rounded-lg truncate border border-neutral-200/60 dark:border-neutral-700/60" title={imgData.file_path}>
+                          📁 {imgData.file_path}
+                        </div>
                       )}
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={async () => {
+                            if (!fullSrc) return;
+                            try {
+                              const resp = await fetch(fullSrc);
+                              const blob = await resp.blob();
+                              const url = window.URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = fileName;
+                              document.body.appendChild(a);
+                              a.click();
+                              window.URL.revokeObjectURL(url);
+                              document.body.removeChild(a);
+                            } catch {
+                              window.open(fullSrc, '_blank');
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 text-xs font-medium hover:bg-neutral-800 transition-colors shadow-2xs cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Save Image
+                        </button>
+                        <button
+                          onClick={() => fullSrc && window.open(fullSrc, '_blank')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
+                          Open Full
+                        </button>
+                      </div>
                     </div>
-                    <div className="text-[11.5px] text-neutral-500 flex items-center justify-between">
-                      <span>{selectedArtifact.payload.data.width} × {selectedArtifact.payload.data.height}</span>
-                      <span>Model: {selectedArtifact.payload.data.model}</span>
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             ) : (
               <div className="text-center py-12 text-neutral-400 text-[13px]">

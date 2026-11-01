@@ -154,3 +154,123 @@ impl Tool for GitHubListIssuesTool {
         Ok(json!({ "issues": body }))
     }
 }
+
+pub struct GitHubCreateIssueTool {
+    gh: GitHubClient,
+}
+
+impl GitHubCreateIssueTool {
+    pub fn new() -> Self {
+        Self { gh: GitHubClient::new() }
+    }
+}
+
+#[async_trait]
+impl Tool for GitHubCreateIssueTool {
+    fn name(&self) -> &str {
+        "github_create_issue"
+    }
+    fn description(&self) -> &str {
+        "Create a new issue on a GitHub repository (requires GITHUB_TOKEN)"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string", "description": "Repository owner" },
+                "repo": { "type": "string", "description": "Repository name" },
+                "title": { "type": "string", "description": "Issue title" },
+                "body": { "type": "string", "description": "Issue body content" }
+            },
+            "required": ["owner", "repo", "title"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let body_text = args.get("body").and_then(|b| b.as_str()).unwrap_or("");
+
+        let url = format!("https://api.github.com/repos/{}/{}/issues", owner, repo);
+        let resp = self
+            .gh
+            .client
+            .post(&url)
+            .headers(self.gh.headers())
+            .json(&json!({ "title": title, "body": body_text }))
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("GitHub create issue failed: {}", e),
+            })?;
+
+        let body = resp.json::<Value>().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to parse GitHub response: {}", e),
+        })?;
+
+        Ok(json!({ "status": "created", "issue": body }))
+    }
+}
+
+pub struct GitHubListPullRequestsTool {
+    gh: GitHubClient,
+}
+
+impl GitHubListPullRequestsTool {
+    pub fn new() -> Self {
+        Self { gh: GitHubClient::new() }
+    }
+}
+
+#[async_trait]
+impl Tool for GitHubListPullRequestsTool {
+    fn name(&self) -> &str {
+        "github_list_prs"
+    }
+    fn description(&self) -> &str {
+        "List pull requests for a GitHub repository"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string", "description": "Repository owner" },
+                "repo": { "type": "string", "description": "Repository name" }
+            },
+            "required": ["owner", "repo"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+
+        let url = format!("https://api.github.com/repos/{}/{}/pulls?per_page=10", owner, repo);
+        let resp = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("GitHub request failed: {}", e),
+            })?;
+
+        let body = resp.json::<Value>().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to parse GitHub response: {}", e),
+        })?;
+
+        Ok(json!({ "pull_requests": body }))
+    }
+}
+

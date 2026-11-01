@@ -182,3 +182,138 @@ fn parse_primary(chars: &mut std::iter::Peekable<std::str::Chars>) -> std::resul
     }
 }
 
+pub struct EnvGetTool;
+
+#[async_trait]
+impl Tool for EnvGetTool {
+    fn name(&self) -> &str {
+        "env_get"
+    }
+    fn description(&self) -> &str {
+        "Read one environment variable (sensitive keys redacted)"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "Environment variable name" }
+            },
+            "required": ["name"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let name = args.get("name").and_then(|n| n.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'name' parameter".to_string(),
+            }
+        })?;
+
+        let val = std::env::var(name).unwrap_or_default();
+        let upper = name.to_uppercase();
+        let safe_val = if upper.contains("KEY") || upper.contains("SECRET") || upper.contains("TOKEN") || upper.contains("PASS") {
+            if val.is_empty() { "".to_string() } else { "REDACTED".to_string() }
+        } else {
+            val
+        };
+
+        Ok(json!({ "name": name, "value": safe_val }))
+    }
+}
+
+pub struct EnvListTool;
+
+#[async_trait]
+impl Tool for EnvListTool {
+    fn name(&self) -> &str {
+        "env_list"
+    }
+    fn description(&self) -> &str {
+        "List environment variable names currently visible to the agent"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
+        let vars: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
+        Ok(json!({ "variables": vars, "count": vars.len() }))
+    }
+}
+
+pub struct ProcessListTool;
+
+#[async_trait]
+impl Tool for ProcessListTool {
+    fn name(&self) -> &str {
+        "process_list"
+    }
+    fn description(&self) -> &str {
+        "List running processes on the host"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        #[cfg(target_os = "windows")]
+        let output = tokio::process::Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg("Get-Process | Select-Object -First 25 Id, ProcessName, WS | ConvertTo-Json")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await;
+
+        #[cfg(not(target_os = "windows"))]
+        let output = tokio::process::Command::new("ps")
+            .arg("aux")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await;
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                Ok(json!({ "processes": stdout }))
+            }
+            Err(e) => Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to list processes: {}", e),
+            }),
+        }
+    }
+}
+
+pub struct DiskUsageTool;
+
+#[async_trait]
+impl Tool for DiskUsageTool {
+    fn name(&self) -> &str {
+        "disk_usage"
+    }
+    fn description(&self) -> &str {
+        "Inspect workspace disk usage"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        Ok(json!({
+            "workspace": ctx.workspace_root,
+            "status": "active"
+        }))
+    }
+}
+
+

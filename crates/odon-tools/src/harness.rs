@@ -228,6 +228,111 @@ pub fn is_plan_mode(storage: &odon_storage::StorageEngine, session_id: &str) -> 
     )
 }
 
+pub struct TodoUpdateTool;
+
+#[async_trait]
+impl Tool for TodoUpdateTool {
+    fn name(&self) -> &str {
+        "todo_update"
+    }
+    fn description(&self) -> &str {
+        "Incrementally update status or title of an existing item in the todo list"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "ID or title of item to update" },
+                "title": { "type": "string", "description": "New title if updating" },
+                "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] }
+            },
+            "required": ["id", "status"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let storage = ctx
+            .storage
+            .as_ref()
+            .ok_or_else(|| tool_err(self.name(), "Storage engine unavailable"))?;
+        let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        let new_status = args.get("status").and_then(|s| s.as_str()).unwrap_or("completed");
+
+        let key = format!("todos:{}", ctx.session_id);
+        let existing = storage.get_memory(&key).ok().flatten();
+        let mut list: Vec<Value> = if let Some(mem) = existing {
+            serde_json::from_str(&mem.value).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let mut found = false;
+        for item in list.iter_mut() {
+            let item_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+            if item_id == id || item_title == id {
+                item["status"] = json!(new_status);
+                if let Some(t) = args.get("title").and_then(|t| t.as_str()) {
+                    item["title"] = json!(t);
+                }
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            list.push(json!({
+                "id": id,
+                "title": args.get("title").and_then(|t| t.as_str()).unwrap_or(id),
+                "status": new_status
+            }));
+        }
+
+        let serialized = serde_json::to_string(&list).unwrap_or_default();
+        let _ = storage.set_memory(&key, &serialized, "todos");
+
+        Ok(json!({ "updated_id": id, "status": new_status, "count": list.len() }))
+    }
+}
+
+pub struct RememberTool;
+
+#[async_trait]
+impl Tool for RememberTool {
+    fn name(&self) -> &str {
+        "remember"
+    }
+    fn description(&self) -> &str {
+        "Record one durable fact, convention, or lesson about this project for future runs"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "fact": { "type": "string", "description": "Single standalone lesson or avoided mistake" }
+            },
+            "required": ["fact"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let fact = args.get("fact").and_then(|f| f.as_str()).ok_or_else(|| {
+            tool_err(self.name(), "Missing 'fact' parameter")
+        })?;
+
+        if let Some(storage) = &ctx.storage {
+            let key = format!("memory:facts:{}", ctx.session_id);
+            let _ = storage.set_memory(&key, fact, "facts");
+        }
+
+        Ok(json!({ "saved": true, "fact": fact }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use odon_core::{AgentEvent, EventSender};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use uuid::Uuid;
@@ -29,6 +30,7 @@ pub struct ApprovalRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApprovalDecision {
     Approved,
+    ApprovedAlways,
     Rejected { reason: String },
     Expired,
 }
@@ -41,6 +43,7 @@ struct PendingRequest {
 fn decision_label(decision: &ApprovalDecision) -> &'static str {
     match decision {
         ApprovalDecision::Approved => "approved",
+        ApprovalDecision::ApprovedAlways => "approved_always",
         ApprovalDecision::Rejected { .. } => "rejected",
         ApprovalDecision::Expired => "expired",
     }
@@ -50,14 +53,29 @@ fn decision_label(decision: &ApprovalDecision) -> &'static str {
 pub struct ApprovalEngine {
     policy: Arc<RwLock<SecurityPolicy>>,
     pending: Arc<RwLock<HashMap<String, PendingRequest>>>,
+    always_allowed: Arc<RwLock<HashSet<String>>>,
+    policy_path: PathBuf,
     events: Option<EventSender>,
 }
 
 impl ApprovalEngine {
     pub fn new(policy: SecurityPolicy) -> Self {
+        let base = std::env::var_os("ODON_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let policy_path = base.join(".odon").join("approval-policies.json");
+        let always_allowed = std::fs::read_to_string(&policy_path)
+            .ok()
+            .and_then(|data| serde_json::from_str::<HashSet<String>>(&data).ok())
+            .unwrap_or_default();
+
         Self {
             policy: Arc::new(RwLock::new(policy)),
             pending: Arc::new(RwLock::new(HashMap::new())),
+            always_allowed: Arc::new(RwLock::new(always_allowed)),
+            policy_path,
             events: None,
         }
     }
@@ -94,6 +112,11 @@ impl ApprovalEngine {
         description: &str,
     ) -> Result<ApprovalDecision, String> {
         let risk = self.check_risk(tool_name).await;
+        let policy_key = Self::policy_key(tool_name, parameters);
+        if self.always_allowed.read().await.contains(&policy_key) {
+            return Ok(ApprovalDecision::Approved);
+        }
+
         let policy = self.policy.read().await;
 
         // In locked mode, all mutating calls rejected
@@ -163,6 +186,20 @@ impl ApprovalEngine {
     pub async fn submit_decision(&self, approval_id: &str, decision: ApprovalDecision) -> bool {
         let mut pending = self.pending.write().await;
         if let Some(entry) = pending.remove(approval_id) {
+            if matches!(decision, ApprovalDecision::ApprovedAlways) {
+                let key = Self::policy_key(&entry.request.tool_name, &entry.request.parameters);
+                let policies = {
+                    let mut policies = self.always_allowed.write().await;
+                    policies.insert(key);
+                    policies.clone()
+                };
+                if let Some(parent) = self.policy_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Ok(data) = serde_json::to_vec_pretty(&policies) {
+                    let _ = std::fs::write(&self.policy_path, data);
+                }
+            }
             let session_id = entry.request.session_id.clone();
             let label = decision_label(&decision);
             let _ = entry.sender.send(decision);
@@ -176,6 +213,16 @@ impl ApprovalEngine {
         } else {
             false
         }
+    }
+
+    fn policy_key(tool_name: &str, parameters: &serde_json::Value) -> String {
+        let scope = parameters
+            .get("path")
+            .or_else(|| parameters.get("cwd"))
+            .or_else(|| parameters.get("destination"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("workspace");
+        format!("{tool_name}|{scope}")
     }
 
     pub async fn list_pending(&self) -> Vec<ApprovalRequest> {

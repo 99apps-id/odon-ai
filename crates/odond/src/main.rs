@@ -216,7 +216,8 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/terminal/info", get(get_terminal_info))
                 .route("/api/terminal/exec", post(execute_terminal))
                 .route("/api/terminal/ws", get(ws_terminal_handler))
-                .route("/api/events", get(sse_events));
+                .route("/api/events", get(sse_events))
+                .route("/api/files/{*path}", get(serve_file));
 
             let dist_path = std::path::Path::new("desktop/dist");
             if dist_path.exists() {
@@ -405,12 +406,12 @@ async fn resolve_approval(
     State(state): State<AppState>,
     Json(req): Json<ResolveApprovalRequest>,
 ) -> impl IntoResponse {
-    let dec = if req.decision.eq_ignore_ascii_case("approved") {
-        ApprovalDecision::Approved
-    } else {
-        ApprovalDecision::Rejected {
+    let dec = match req.decision.to_ascii_lowercase().as_str() {
+        "approved" | "approve_once" => ApprovalDecision::Approved,
+        "approved_always" | "approve_always" => ApprovalDecision::ApprovedAlways,
+        _ => ApprovalDecision::Rejected {
             reason: req.reason.unwrap_or_else(|| "User rejected action".to_string()),
-        }
+        },
     };
 
     let resolved = state.approval.submit_decision(&id, dec).await;
@@ -1068,56 +1069,56 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
             {
                 "id": "github-copilot", "name": "GitHub Copilot", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("github-copilot"),
-                "description": "Active GitHub Copilot session with frontier GPT-4o and Claude models",
+                "description": "Active GitHub Copilot session with frontier GPT-6 Astra and Claude 5.5 models",
                 "models": [
-                    { "id": "gpt-4o", "name": "GPT-4o (GitHub Copilot)", "context": 128000, "recommended": true },
-                    { "id": "claude-3.5-sonnet", "name": "Claude 3.5 Sonnet (GitHub Copilot)", "context": 200000, "recommended": true },
-                    { "id": "o3-mini", "name": "o3-mini (GitHub Copilot)", "context": 200000, "recommended": false },
-                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini (GitHub Copilot)", "context": 128000, "recommended": false }
+                    { "id": "gpt-6-astra", "name": "GPT-6 Astra (GitHub Copilot)", "context": 1050000, "recommended": true },
+                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5 (GitHub Copilot)", "context": 1000000, "recommended": true },
+                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol (GitHub Copilot)", "context": 1050000, "recommended": false },
+                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5 (GitHub Copilot)", "context": 1000000, "recommended": false }
                 ]
             },
             {
                 "id": "antigravity", "name": "Google Antigravity", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("antigravity"),
-                "description": "Google Cloud Code Assist & Antigravity OAuth with hybrid reasoning support",
+                "description": "Google Cloud Code Assist & Antigravity OAuth with Gemini 4 and Claude 5.5 reasoning",
                 "models": [
-                    { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1048576, "recommended": true },
-                    { "id": "gemini-2.0-flash-thinking-exp", "name": "Gemini 2.0 Flash Thinking", "context": 1048576, "recommended": true },
-                    { "id": "claude-3-7-sonnet", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
-                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": false },
-                    { "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "context": 2097152, "recommended": false },
-                    { "id": "claude-3-5-haiku", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
+                    { "id": "gemini-4-argon", "name": "Gemini 4 Argon (Flagship)", "context": 1000000, "recommended": true },
+                    { "id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash (Agentic & Coding)", "context": 1000000, "recommended": true },
+                    { "id": "gemini-3.7-flash", "name": "Gemini 3.7 Flash", "context": 1000000, "recommended": false },
+                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5 (Antigravity)", "context": 1000000, "recommended": true },
+                    { "id": "gemini-3.8-live", "name": "Gemini 3.8 Live (Real-Time)", "context": 128000, "recommended": false }
                 ]
             },
             {
                 "id": "chatgpt", "name": "ChatGPT / OpenAI Codex", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("chatgpt"),
-                "description": "Official OpenAI OAuth authorization with specialized coding & reasoning models",
+                "description": "Official OpenAI OAuth authorization with GPT-6 frontier reasoning models",
                 "models": [
-                    { "id": "gpt-4o", "name": "GPT-4o (Omnimodal Flagship)", "context": 128000, "recommended": true },
-                    { "id": "o3-mini", "name": "o3-mini (Reasoning & Coding)", "context": 200000, "recommended": true },
-                    { "id": "o1", "name": "o1 (Advanced Deep Reasoning)", "context": 200000, "recommended": false },
-                    { "id": "gpt-4.5-preview", "name": "GPT-4.5 Preview", "context": 128000, "recommended": true },
-                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini (Fast & Light)", "context": 128000, "recommended": false }
+                    { "id": "gpt-6-astra", "name": "GPT-6 Astra (Flagship Frontier)", "context": 1050000, "recommended": true },
+                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol (Production Reasoning)", "context": 1050000, "recommended": true },
+                    { "id": "gpt-6.1-terra", "name": "GPT-6.1 Terra (Visual & Agentic)", "context": 1050000, "recommended": false },
+                    { "id": "gpt-6-luna", "name": "GPT-6 Luna (Fast & High Throughput)", "context": 1050000, "recommended": false }
                 ]
             },
             {
                 "id": "claude-oauth", "name": "Claude (Anthropic OAuth)", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("claude-oauth"),
-                "description": "Direct Anthropic Claude account authorization via OAuth",
+                "description": "Direct Anthropic Claude account authorization with Claude 5.5 architecture",
                 "models": [
-                    { "id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
-                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": true },
-                    { "id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
+                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5 (Flagship Balance)", "context": 1000000, "recommended": true },
+                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5 (Deep Agentic Coding)", "context": 1000000, "recommended": true },
+                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5 (Low Latency)", "context": 1000000, "recommended": false },
+                    { "id": "claude-fable-5-1", "name": "Claude Fable 5.1 (Complex Reasoning)", "context": 1000000, "recommended": false }
                 ]
             },
             {
                 "id": "xai-oauth", "name": "xAI Grok", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("xai-oauth"),
-                "description": "xAI Grok device authorization flow",
+                "description": "xAI Grok device authorization with Grok 4.7 frontier reasoning",
                 "models": [
-                    { "id": "grok-2-latest", "name": "Grok 2 Latest (Flagship)", "context": 131072, "recommended": true },
-                    { "id": "grok-beta", "name": "Grok Beta", "context": 131072, "recommended": false }
+                    { "id": "grok-4.7", "name": "Grok 4.7 (Flagship Frontier)", "context": 500000, "recommended": true },
+                    { "id": "grok-4.6", "name": "Grok 4.6 (High Context)", "context": 500000, "recommended": false },
+                    { "id": "grok-4.20-reasoning", "name": "Grok 4.20 Reasoning (Deep Math & Logic)", "context": 256000, "recommended": true }
                 ]
             },
             {
@@ -1125,87 +1126,90 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 "connected": is_connected("muse"),
                 "description": "Meta Muse Code developer device authorization and SSE streaming",
                 "models": [
-                    { "id": "muse-spark-1.3", "name": "Muse Spark 1.3 (Flagship Coding)", "context": 128000, "recommended": true },
-                    { "id": "muse-code-v2", "name": "Muse Code v2", "context": 128000, "recommended": false }
+                    { "id": "muse-spark-2.0", "name": "Muse Spark 2.0 (Flagship Coding)", "context": 256000, "recommended": true },
+                    { "id": "muse-code-v3", "name": "Muse Code v3", "context": 128000, "recommended": false }
                 ]
             },
             {
                 "id": "openai", "name": "OpenAI (Official BYOK)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("openai"),
                 "default_base_url": "https://api.openai.com/v1",
-                "description": "Official OpenAI platform with GPT-4.5, o3-mini, and GPT-4o models",
+                "description": "Official OpenAI platform with GPT-6 Astra, Sol, Terra, and Luna models",
                 "models": [
-                    { "id": "gpt-4.5-preview", "name": "GPT-4.5 Preview", "context": 128000, "recommended": true },
-                    { "id": "o3-mini", "name": "o3-mini (Reasoning)", "context": 200000, "recommended": true },
-                    { "id": "o1", "name": "o1 (Deep Reasoning)", "context": 200000, "recommended": false },
-                    { "id": "gpt-4o", "name": "GPT-4o (Omnimodal)", "context": 128000, "recommended": true },
-                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000, "recommended": false }
+                    { "id": "gpt-6-astra", "name": "GPT-6 Astra (Flagship Frontier)", "context": 1050000, "recommended": true },
+                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol (Production Reasoning)", "context": 1050000, "recommended": true },
+                    { "id": "gpt-6.1-terra", "name": "GPT-6.1 Terra (Visual & Agentic)", "context": 1050000, "recommended": false },
+                    { "id": "gpt-6-luna", "name": "GPT-6 Luna (Fast & High Throughput)", "context": 1050000, "recommended": false }
                 ]
             },
             {
                 "id": "anthropic", "name": "Anthropic (Official BYOK)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("anthropic"),
                 "default_base_url": "https://api.anthropic.com/v1",
-                "description": "Official Anthropic API with Claude 3.7 Sonnet Hybrid Reasoning",
+                "description": "Official Anthropic API with Claude 5.5 adaptive thinking models",
                 "models": [
-                    { "id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
-                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": true },
-                    { "id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
+                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5 (Flagship Balance)", "context": 1000000, "recommended": true },
+                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5 (Deep Agentic Coding)", "context": 1000000, "recommended": true },
+                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5 (Low Latency)", "context": 1000000, "recommended": false },
+                    { "id": "claude-fable-5-1", "name": "Claude Fable 5.1 (Complex Reasoning)", "context": 1000000, "recommended": false }
                 ]
             },
             {
                 "id": "google", "name": "Google Gemini (Official BYOK)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("google"),
                 "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                "description": "Google Gemini API with 1M-2M context and native multimodal reasoning",
+                "description": "Google Gemini API with 1M context and native multimodal reasoning",
                 "models": [
-                    { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1048576, "recommended": true },
-                    { "id": "gemini-2.0-flash-thinking-exp", "name": "Gemini 2.0 Flash Thinking", "context": 1048576, "recommended": true },
-                    { "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "context": 2097152, "recommended": false }
+                    { "id": "gemini-4-argon", "name": "Gemini 4 Argon (Flagship)", "context": 1000000, "recommended": true },
+                    { "id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash (Agentic & Coding)", "context": 1000000, "recommended": true },
+                    { "id": "gemini-3.7-flash", "name": "Gemini 3.7 Flash", "context": 1000000, "recommended": false },
+                    { "id": "gemini-3.8-live", "name": "Gemini 3.8 Live (Real-Time)", "context": 128000, "recommended": false }
                 ]
             },
             {
                 "id": "deepseek", "name": "DeepSeek (BYOK)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("deepseek"),
                 "default_base_url": "https://api.deepseek.com/v1",
-                "description": "DeepSeek V3 and R1 reasoning models with transparent BYOK pricing",
+                "description": "DeepSeek V4.1 Flash and Pro reasoning models with 1M context",
                 "models": [
-                    { "id": "deepseek-chat", "name": "DeepSeek-V3 (Chat & Coding)", "context": 64000, "recommended": true },
-                    { "id": "deepseek-reasoner", "name": "DeepSeek-R1 (Deep Reasoning)", "context": 64000, "recommended": true },
-                    { "id": "deepseek-coder", "name": "DeepSeek Coder", "context": 32000, "recommended": false }
+                    { "id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash (General & Agent)", "context": 1000000, "recommended": true },
+                    { "id": "deepseek-v4-pro", "name": "DeepSeek-V4-Pro (Deep Reasoning & Coding)", "context": 1000000, "recommended": true }
                 ]
             },
             {
                 "id": "qwen", "name": "Qwen Plan / DashScope Global", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("qwen"),
                 "default_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                "description": "Alibaba Cloud international AI gateway: Qwen 2.5 Coder, QwQ Reasoning, and Qwen Max",
+                "description": "Alibaba Cloud international AI gateway: Qwen 3.5, Qwen Max, and Qwen 2.5 Coder",
                 "models": [
-                    { "id": "qwen-max-latest", "name": "Qwen Max Latest (Flagship)", "context": 32768, "recommended": true },
+                    { "id": "qwen3.5-plus", "name": "Qwen 3.5 Plus (Flagship)", "context": 1000000, "recommended": true },
+                    { "id": "qwen-max", "name": "Qwen Max (Complex Reasoning)", "context": 131072, "recommended": true },
                     { "id": "qwen-2.5-coder-32b-instruct", "name": "Qwen 2.5 Coder 32B", "context": 131072, "recommended": true },
-                    { "id": "qwq-32b-preview", "name": "QwQ 32B Reasoning Preview", "context": 32768, "recommended": false },
-                    { "id": "qwen-plus-latest", "name": "Qwen Plus Latest", "context": 131072, "recommended": false },
-                    { "id": "qwen-turbo-latest", "name": "Qwen Turbo Latest (Speed)", "context": 131072, "recommended": false }
+                    { "id": "qwq-32b-preview", "name": "QwQ 32B Reasoning Preview", "context": 32768, "recommended": false }
                 ]
             },
             {
                 "id": "mistral", "name": "Mistral AI", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("mistral"),
                 "default_base_url": "https://api.mistral.ai/v1",
-                "description": "Mistral AI models including Codestral and Mistral Large",
+                "description": "Mistral AI models including Mistral Large 4, Medium 3.5, and Codestral",
                 "models": [
-                    { "id": "mistral-large-latest", "name": "Mistral Large Latest", "context": 128000, "recommended": true },
-                    { "id": "codestral-latest", "name": "Codestral Latest (Coding)", "context": 256000, "recommended": true }
+                    { "id": "mistral-large-4", "name": "Mistral Large 4 (Multimodal Flagship)", "context": 128000, "recommended": true },
+                    { "id": "mistral-medium-3.5", "name": "Mistral Medium 3.5 (Agentic & Coding)", "context": 128000, "recommended": true },
+                    { "id": "mistral-small-4", "name": "Mistral Small 4", "context": 128000, "recommended": false },
+                    { "id": "codestral-latest", "name": "Codestral Latest (Code Specialist)", "context": 256000, "recommended": true },
+                    { "id": "ministral-8b", "name": "Ministral 8B (Fast & Light)", "context": 128000, "recommended": false }
                 ]
             },
             {
                 "id": "groq", "name": "Groq (Fast Inference)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("groq"),
                 "default_base_url": "https://api.groq.com/openai/v1",
-                "description": "Ultra high-speed LPU inference engine for open-weights models",
+                "description": "Ultra high-speed LPU inference engine for open-weights Llama 4 models",
                 "models": [
+                    { "id": "llama-4-scout", "name": "Llama 4 Scout (10M Context)", "context": 10000000, "recommended": true },
                     { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B Versatile", "context": 131072, "recommended": true },
-                    { "id": "deepseek-r1-distill-llama-70b", "name": "DeepSeek R1 Distill Llama 70B", "context": 131072, "recommended": true }
+                    { "id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B Instant", "context": 131072, "recommended": false }
                 ]
             },
             {
@@ -1214,9 +1218,10 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 "default_base_url": "https://openrouter.ai/api/v1",
                 "description": "Unified gateway across all frontier models and providers",
                 "models": [
-                    { "id": "anthropic/claude-3.7-sonnet", "name": "Claude 3.7 Sonnet (OpenRouter)", "context": 200000, "recommended": true },
-                    { "id": "deepseek/deepseek-r1", "name": "DeepSeek R1 (OpenRouter)", "context": 64000, "recommended": true },
-                    { "id": "openai/o3-mini", "name": "o3-mini (OpenRouter)", "context": 200000, "recommended": false }
+                    { "id": "openai/gpt-6-astra", "name": "GPT-6 Astra (OpenRouter)", "context": 1050000, "recommended": true },
+                    { "id": "anthropic/claude-sonnet-5-5", "name": "Claude Sonnet 5.5 (OpenRouter)", "context": 1000000, "recommended": true },
+                    { "id": "deepseek/deepseek-flash", "name": "DeepSeek Flash (OpenRouter)", "context": 1000000, "recommended": true },
+                    { "id": "google/gemini-4-argon", "name": "Gemini 4 Argon (OpenRouter)", "context": 1000000, "recommended": false }
                 ]
             },
             {
@@ -1225,9 +1230,10 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 "default_base_url": "http://localhost:11434/v1",
                 "description": "Run open models entirely locally on your hardware without internet",
                 "models": [
-                    { "id": "llama3.3:latest", "name": "Llama 3.3 70B Local", "context": 32768, "recommended": true },
-                    { "id": "qwen2.5-coder:32b", "name": "Qwen 2.5 Coder 32B Local", "context": 32768, "recommended": true },
-                    { "id": "deepseek-r1:14b", "name": "DeepSeek R1 14B Local", "context": 32768, "recommended": false }
+                    { "id": "llama4:scout", "name": "Llama 4 Scout Local (10M Context)", "context": 10000000, "recommended": true },
+                    { "id": "llama4:maverick", "name": "Llama 4 Maverick Local", "context": 1000000, "recommended": true },
+                    { "id": "llama3.3", "name": "Llama 3.3 70B Local", "context": 32768, "recommended": false },
+                    { "id": "deepseek-flash", "name": "DeepSeek-V4.1 Local", "context": 64000, "recommended": false }
                 ]
             },
             {
@@ -1235,15 +1241,57 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 "configured": is_byok("openai-compatible"),
                 "default_base_url": "http://localhost:11434/v1",
                 "description": "Any OpenAI-compatible gateway: vLLM, LM Studio, LiteLLM, or custom proxies",
-                "models": [
-                    { "id": "gpt-4o", "name": "GPT-4o", "context": 128000, "recommended": true },
-                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000, "recommended": false },
-                    { "id": "o3-mini", "name": "o3-mini", "context": 200000, "recommended": false },
-                    { "id": "custom", "name": "Custom Model (Manual input)", "context": 128000, "recommended": false }
-                ]
+                "models": []
             }
         ]
     }))
+}
+
+async fn serve_file(
+    Path(rel_path): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let clean = rel_path.trim_start_matches('/').replace('\\', "/");
+    if clean.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "Invalid path".as_bytes().to_vec(),
+        ).into_response();
+    }
+    let full = std::path::Path::new(&state.workspace_root).join(&clean);
+    match tokio::fs::read(&full).await {
+        Ok(bytes) => {
+            let mime = if clean.ends_with(".png") {
+                "image/png"
+            } else if clean.ends_with(".jpg") || clean.ends_with(".jpeg") {
+                "image/jpeg"
+            } else if clean.ends_with(".svg") {
+                "image/svg+xml"
+            } else if clean.ends_with(".webp") {
+                "image/webp"
+            } else if clean.ends_with(".json") {
+                "application/json"
+            } else if clean.ends_with(".txt") || clean.ends_with(".md") {
+                "text/plain; charset=utf-8"
+            } else {
+                "application/octet-stream"
+            };
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CACHE_CONTROL, "public, max-age=3600"),
+                ],
+                bytes,
+            ).into_response()
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "File not found".as_bytes().to_vec(),
+        ).into_response(),
+    }
 }
 
 async fn sse_events(

@@ -13,9 +13,12 @@ use crate::trait_def::{ChatRequest, ModelProvider};
 pub struct OpenAiCompatibleProvider {
     client: reqwest::Client,
     base_url: String,
-    api_key: String,
+    api_key: std::sync::Mutex<(String, std::time::Instant)>,
     provider_label: String,
 }
+
+/// GitHub Copilot session tokens live ~30 minutes; re-mint before they lapse.
+const COPILOT_TOKEN_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(20 * 60);
 
 impl OpenAiCompatibleProvider {
     pub fn new(
@@ -26,9 +29,25 @@ impl OpenAiCompatibleProvider {
         Self {
             client: reqwest::Client::new(),
             base_url: base_url.into(),
-            api_key: api_key.into(),
+            api_key: std::sync::Mutex::new((api_key.into(), std::time::Instant::now())),
             provider_label: label.unwrap_or("openai-compatible").to_string(),
         }
+    }
+
+    /// Returns a usable bearer token, refreshing the Copilot session token when stale.
+    async fn current_token(&self) -> String {
+        let (token, age) = {
+            let g = self.api_key.lock().unwrap();
+            (g.0.clone(), g.1.elapsed())
+        };
+        if self.provider_label == "github-copilot" && age > COPILOT_TOKEN_MAX_AGE {
+            if let Some(fresh) = crate::host_creds::discover_github_copilot().await {
+                let mut g = self.api_key.lock().unwrap();
+                *g = (fresh.access_token.clone(), std::time::Instant::now());
+                return fresh.access_token;
+            }
+        }
+        token
     }
 
     pub fn new_deepseek(api_key: impl Into<String>) -> Self {
@@ -64,8 +83,9 @@ impl ModelProvider for OpenAiCompatibleProvider {
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if !self.api_key.is_empty() {
-            let auth_val = format!("Bearer {}", self.api_key);
+        let bearer = self.current_token().await;
+        if !bearer.is_empty() {
+            let auth_val = format!("Bearer {}", bearer);
             if let Ok(val) = HeaderValue::from_str(&auth_val) {
                 headers.insert(AUTHORIZATION, val);
             }
@@ -121,9 +141,17 @@ impl ModelProvider for OpenAiCompatibleProvider {
                     messages_payload.push(obj);
                 }
                 MessageRole::Tool => {
+                    // The tool result must reference the assistant's tool_call id,
+                    // which Message::new_tool stores in tool_calls[0].call_id.
+                    let call_id = msg
+                        .content
+                        .tool_calls
+                        .first()
+                        .map(|t| t.call_id.clone())
+                        .unwrap_or_else(|| msg.id.clone());
                     messages_payload.push(json!({
                         "role": "tool",
-                        "tool_call_id": msg.id,
+                        "tool_call_id": call_id,
                         "content": msg.content.text,
                     }));
                 }

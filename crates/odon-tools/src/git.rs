@@ -250,3 +250,337 @@ impl Tool for GitBranchTool {
         }
     }
 }
+
+pub struct GitAddTool;
+
+#[async_trait]
+impl Tool for GitAddTool {
+    fn name(&self) -> &str {
+        "git_add"
+    }
+    fn description(&self) -> &str {
+        "Stage specific paths or all changes with git add"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Specific files to stage (defaults to '.')" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let mut cmd = Command::new("git");
+        cmd.arg("add");
+        if let Some(paths) = args.get("paths").and_then(|p| p.as_array()) {
+            for p in paths {
+                if let Some(s) = p.as_str() {
+                    cmd.arg(s);
+                }
+            }
+        } else {
+            cmd.arg(".");
+        }
+        cmd.current_dir(&ctx.workspace_root);
+
+        let output = cmd.output().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to run git add: {}", e),
+        })?;
+
+        Ok(json!({ "success": output.status.success() }))
+    }
+}
+
+pub struct GitCheckoutTool;
+
+#[async_trait]
+impl Tool for GitCheckoutTool {
+    fn name(&self) -> &str {
+        "git_checkout"
+    }
+    fn description(&self) -> &str {
+        "Switch branches or restore working tree files"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "Branch name or file path to checkout" }
+            },
+            "required": ["target"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let target = args.get("target").and_then(|t| t.as_str()).unwrap_or("HEAD");
+        let output = Command::new("git")
+            .arg("checkout")
+            .arg(target)
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git checkout {}: {}", target, e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stderr).to_string();
+        Ok(json!({ "target": target, "success": output.status.success(), "message": text }))
+    }
+}
+
+pub struct GitShowTool;
+
+#[async_trait]
+impl Tool for GitShowTool {
+    fn name(&self) -> &str {
+        "git_show"
+    }
+    fn description(&self) -> &str {
+        "Show commit logs, file contents, or diff from a commit object"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "object": { "type": "string", "description": "Commit SHA or object ref (default: HEAD)" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let object = args.get("object").and_then(|o| o.as_str()).unwrap_or("HEAD");
+        let output = Command::new("git")
+            .arg("show")
+            .arg("--stat")
+            .arg(object)
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git show {}: {}", object, e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(json!({ "object": object, "output": text }))
+    }
+}
+
+pub struct GitStashTool;
+
+#[async_trait]
+impl Tool for GitStashTool {
+    fn name(&self) -> &str {
+        "git_stash"
+    }
+    fn description(&self) -> &str {
+        "Stash changes in the working directory"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "message": { "type": "string", "description": "Optional message for the stash" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let mut cmd = Command::new("git");
+        cmd.arg("stash").arg("push");
+        if let Some(msg) = args.get("message").and_then(|m| m.as_str()) {
+            cmd.arg("-m").arg(msg);
+        }
+        cmd.current_dir(&ctx.workspace_root);
+
+        let output = cmd.output().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to run git stash: {}", e),
+        })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(json!({ "output": text, "success": output.status.success() }))
+    }
+}
+
+pub struct GitStashPopTool;
+
+#[async_trait]
+impl Tool for GitStashPopTool {
+    fn name(&self) -> &str {
+        "git_stash_pop"
+    }
+    fn description(&self) -> &str {
+        "Apply and drop the latest stashed state"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        let output = Command::new("git")
+            .arg("stash")
+            .arg("pop")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git stash pop: {}", e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(json!({ "output": text, "success": output.status.success() }))
+    }
+}
+
+pub struct GitStashListTool;
+
+#[async_trait]
+impl Tool for GitStashListTool {
+    fn name(&self) -> &str {
+        "git_stash_list"
+    }
+    fn description(&self) -> &str {
+        "List all stashes currently saved in the repository"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        let output = Command::new("git")
+            .arg("stash")
+            .arg("list")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git stash list: {}", e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let stashes: Vec<String> = text.lines().map(|s| s.trim().to_string()).collect();
+        Ok(json!({ "stashes": stashes }))
+    }
+}
+
+pub struct GitPullTool;
+
+#[async_trait]
+impl Tool for GitPullTool {
+    fn name(&self) -> &str {
+        "git_pull"
+    }
+    fn description(&self) -> &str {
+        "Pull changes from remote repository"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        let output = Command::new("git")
+            .arg("pull")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git pull: {}", e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(json!({ "output": text, "success": output.status.success() }))
+    }
+}
+
+pub struct GitPushTool;
+
+#[async_trait]
+impl Tool for GitPushTool {
+    fn name(&self) -> &str {
+        "git_push"
+    }
+    fn description(&self) -> &str {
+        "Push committed changes to remote repository"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        let output = Command::new("git")
+            .arg("push")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git push: {}", e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(json!({ "output": text, "success": output.status.success() }))
+    }
+}
+
+pub struct GitResetTool;
+
+#[async_trait]
+impl Tool for GitResetTool {
+    fn name(&self) -> &str {
+        "git_reset"
+    }
+    fn description(&self) -> &str {
+        "Reset current HEAD to the specified state"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "commit": { "type": "string", "description": "Target commit (default: HEAD)" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("HEAD");
+        let output = Command::new("git")
+            .arg("reset")
+            .arg(commit)
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git reset: {}", e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(json!({ "output": text, "success": output.status.success() }))
+    }
+}
+

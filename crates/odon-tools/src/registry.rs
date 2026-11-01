@@ -104,7 +104,7 @@ impl ToolRegistry {
             .map_err(|e| OdonError::Security(e))?;
 
         match decision {
-            ApprovalDecision::Approved => {
+            ApprovalDecision::Approved | ApprovalDecision::ApprovedAlways => {
                 let res = tool.execute(ctx, args).await;
                 let duration = start.elapsed().as_millis() as u64;
                 let is_ok = res.is_ok();

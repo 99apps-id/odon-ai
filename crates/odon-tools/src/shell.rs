@@ -68,3 +68,59 @@ impl Tool for ShellExecTool {
         }))
     }
 }
+
+pub struct BashRunTool;
+
+#[async_trait]
+impl Tool for BashRunTool {
+    fn name(&self) -> &str {
+        "bash_run"
+    }
+    fn description(&self) -> &str {
+        "Run a foreground shell command with optional timeout (Termigo compatible)"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "Shell command to run" },
+                "timeout_secs": { "type": "integer", "description": "Execution timeout in seconds (default: 120)" }
+            },
+            "required": ["command"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        ShellExecTool.execute(ctx, args).await
+    }
+}
+
+pub struct TerminalExecTool;
+
+#[async_trait]
+impl Tool for TerminalExecTool {
+    fn name(&self) -> &str {
+        "terminal_exec"
+    }
+    fn description(&self) -> &str {
+        "Execute a terminal command directly within the active workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "Command to run" }
+            },
+            "required": ["command"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        ShellExecTool.execute(ctx, args).await
+    }
+}
+

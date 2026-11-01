@@ -410,6 +410,365 @@ impl Tool for FsDeleteTool {
     }
 }
 
+pub struct FsMkdirTool;
+
+#[async_trait]
+impl Tool for FsMkdirTool {
+    fn name(&self) -> &str {
+        "create_directory"
+    }
+    fn description(&self) -> &str {
+        "Create a directory (and any missing parents) inside workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Directory path to create" }
+            },
+            "required": ["path"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'path' parameter".to_string(),
+            }
+        })?;
+
+        let full_path = resolve_path(&ctx.workspace_root, path_str)?;
+        tokio::fs::create_dir_all(&full_path)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to create directory {}: {}", path_str, e),
+            })?;
+
+        Ok(json!({ "path": path_str, "status": "created" }))
+    }
+}
+
+pub struct FsMoveTool;
+
+#[async_trait]
+impl Tool for FsMoveTool {
+    fn name(&self) -> &str {
+        "move_file"
+    }
+    fn description(&self) -> &str {
+        "Move or rename a file or directory within workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "from": { "type": "string", "description": "Source path relative to workspace" },
+                "to": { "type": "string", "description": "Destination path relative to workspace" }
+            },
+            "required": ["from", "to"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let from_str = args.get("from").and_then(|p| p.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'from' parameter".to_string(),
+            }
+        })?;
+        let to_str = args.get("to").and_then(|p| p.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'to' parameter".to_string(),
+            }
+        })?;
+
+        let from_path = resolve_path(&ctx.workspace_root, from_str)?;
+        let to_path = resolve_path(&ctx.workspace_root, to_str)?;
+
+        if let Some(parent) = to_path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+
+        tokio::fs::rename(&from_path, &to_path)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to move {} to {}: {}", from_str, to_str, e),
+            })?;
+
+        Ok(json!({ "from": from_str, "to": to_str, "status": "moved" }))
+    }
+}
+
+pub struct FsCopyTool;
+
+#[async_trait]
+impl Tool for FsCopyTool {
+    fn name(&self) -> &str {
+        "copy_file"
+    }
+    fn description(&self) -> &str {
+        "Copy a file inside the workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "from": { "type": "string", "description": "Source file path" },
+                "to": { "type": "string", "description": "Destination file path" }
+            },
+            "required": ["from", "to"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let from_str = args.get("from").and_then(|p| p.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'from' parameter".to_string(),
+            }
+        })?;
+        let to_str = args.get("to").and_then(|p| p.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'to' parameter".to_string(),
+            }
+        })?;
+
+        let from_path = resolve_path(&ctx.workspace_root, from_str)?;
+        let to_path = resolve_path(&ctx.workspace_root, to_str)?;
+
+        if let Some(parent) = to_path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+
+        let bytes = tokio::fs::copy(&from_path, &to_path)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to copy {} to {}: {}", from_str, to_str, e),
+            })?;
+
+        Ok(json!({ "from": from_str, "to": to_str, "bytes_copied": bytes, "status": "copied" }))
+    }
+}
+
+pub struct FsGlobTool;
+
+#[async_trait]
+impl Tool for FsGlobTool {
+    fn name(&self) -> &str {
+        "glob"
+    }
+    fn description(&self) -> &str {
+        "Find files matching glob pattern inside workspace (e.g. '**/*.rs', 'src/**/*.tsx')"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "pattern": { "type": "string", "description": "Glob or extension pattern" },
+                "path": { "type": "string", "description": "Subdirectory to scan (defaults to workspace root)" }
+            },
+            "required": ["pattern"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let pattern = args.get("pattern").and_then(|p| p.as_str()).unwrap_or("*");
+        let subpath = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
+        let root_dir = resolve_path(&ctx.workspace_root, subpath)?;
+
+        let mut matches = Vec::new();
+        let mut queue = vec![root_dir.clone()];
+
+        let clean_pat = pattern.trim_start_matches("**/").trim_start_matches('*');
+
+        while let Some(current_dir) = queue.pop() {
+            if matches.len() >= 100 {
+                break;
+            }
+            let mut read_dir = match tokio::fs::read_dir(&current_dir).await {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+
+            while let Ok(Some(entry)) = read_dir.next_entry().await {
+                if matches.len() >= 100 {
+                    break;
+                }
+                let path = entry.path();
+                let file_name = entry.file_name().to_string_lossy().to_string();
+
+                if file_name.starts_with('.') || file_name == "target" || file_name == "node_modules" {
+                    continue;
+                }
+
+                if let Ok(file_type) = entry.file_type().await {
+                    if file_type.is_dir() {
+                        queue.push(path);
+                    } else if file_type.is_file() {
+                        if clean_pat.is_empty() || file_name.ends_with(clean_pat) || file_name.contains(clean_pat) {
+                            let rel = path.strip_prefix(&root_dir).unwrap_or(&path).to_string_lossy().to_string();
+                            matches.push(rel);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(json!({ "pattern": pattern, "count": matches.len(), "matches": matches }))
+    }
+}
+
+pub struct MultiEditTool;
+
+#[async_trait]
+impl Tool for MultiEditTool {
+    fn name(&self) -> &str {
+        "multi_edit"
+    }
+    fn description(&self) -> &str {
+        "Apply several exact-string replacements to a single file atomically"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path to edit" },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_string": { "type": "string" },
+                            "new_string": { "type": "string" }
+                        },
+                        "required": ["old_string", "new_string"]
+                    }
+                }
+            },
+            "required": ["path", "edits"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'path' parameter".to_string(),
+            }
+        })?;
+        let edits = args.get("edits").and_then(|e| e.as_array()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'edits' array parameter".to_string(),
+            }
+        })?;
+
+        let full_path = resolve_path(&ctx.workspace_root, path_str)?;
+        let mut content = tokio::fs::read_to_string(&full_path)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to read file {}: {}", path_str, e),
+            })?;
+
+        let mut applied = 0;
+        for edit in edits {
+            let old_str = edit.get("old_string").and_then(|s| s.as_str()).unwrap_or("");
+            let new_str = edit.get("new_string").and_then(|s| s.as_str()).unwrap_or("");
+            if !old_str.is_empty() && content.contains(old_str) {
+                content = content.replacen(old_str, new_str, 1);
+                applied += 1;
+            }
+        }
+
+        tokio::fs::write(&full_path, content)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to write edited file {}: {}", path_str, e),
+            })?;
+
+        Ok(json!({ "path": path_str, "applied_edits": applied, "status": "success" }))
+    }
+}
+
+// Aliases matching Termigo conventions
+pub struct TermigoReadFileTool;
+#[async_trait]
+impl Tool for TermigoReadFileTool {
+    fn name(&self) -> &str { "read_file" }
+    fn description(&self) -> &str { "Read content of a file at the specified path" }
+    fn parameters_schema(&self) -> Value { FsReadTool.parameters_schema() }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsReadTool.execute(ctx, args).await }
+}
+
+pub struct TermigoWriteFileTool;
+#[async_trait]
+impl Tool for TermigoWriteFileTool {
+    fn name(&self) -> &str { "write_file" }
+    fn description(&self) -> &str { "Create or overwrite a file with the given content" }
+    fn parameters_schema(&self) -> Value { FsWriteTool.parameters_schema() }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsWriteTool.execute(ctx, args).await }
+}
+
+pub struct TermigoEditTool;
+#[async_trait]
+impl Tool for TermigoEditTool {
+    fn name(&self) -> &str { "edit" }
+    fn description(&self) -> &str { "Replace target text in a file with replacement text" }
+    fn parameters_schema(&self) -> Value { FsEditTool.parameters_schema() }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsEditTool.execute(ctx, args).await }
+}
+
+pub struct TermigoListDirTool;
+#[async_trait]
+impl Tool for TermigoListDirTool {
+    fn name(&self) -> &str { "list_directory" }
+    fn description(&self) -> &str { "List immediate entries in a directory" }
+    fn parameters_schema(&self) -> Value { FsListTool.parameters_schema() }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsListTool.execute(ctx, args).await }
+}
+
+pub struct TermigoDeleteFileTool;
+#[async_trait]
+impl Tool for TermigoDeleteFileTool {
+    fn name(&self) -> &str { "delete_file" }
+    fn description(&self) -> &str { "Delete a file or directory" }
+    fn parameters_schema(&self) -> Value { FsDeleteTool.parameters_schema() }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsDeleteTool.execute(ctx, args).await }
+}
+
+pub struct TermigoGrepTool;
+#[async_trait]
+impl Tool for TermigoGrepTool {
+    fn name(&self) -> &str { "grep" }
+    fn description(&self) -> &str { "Search file contents in the workspace using text query" }
+    fn parameters_schema(&self) -> Value { FsSearchTool.parameters_schema() }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsSearchTool.execute(ctx, args).await }
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_path;

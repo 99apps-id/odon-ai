@@ -170,6 +170,248 @@ impl Tool for WebFetchTool {
     }
 }
 
+pub struct ProbeUrlTool;
+
+#[async_trait]
+impl Tool for ProbeUrlTool {
+    fn name(&self) -> &str {
+        "probe_url"
+    }
+    fn description(&self) -> &str {
+        "Probe a URL for HTTP status, response headers, and latency"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "URL to probe" }
+            },
+            "required": ["url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'url' parameter".to_string(),
+            }
+        })?;
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(6))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let start = std::time::Instant::now();
+        let resp = client.head(url_str).send().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Probe error on {}: {}", url_str, e),
+        })?;
+
+        let elapsed = start.elapsed().as_millis();
+        let status = resp.status().as_u16();
+        let headers: serde_json::Map<String, Value> = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), json!(v.to_str().unwrap_or(""))))
+            .collect();
+
+        Ok(json!({
+            "url": url_str,
+            "status": status,
+            "latency_ms": elapsed,
+            "headers": headers
+        }))
+    }
+}
+
+pub struct HttpGetTool;
+
+#[async_trait]
+impl Tool for HttpGetTool {
+    fn name(&self) -> &str {
+        "http_get"
+    }
+    fn description(&self) -> &str {
+        "Send an HTTP GET request and retrieve raw status and body"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "HTTP URL to fetch" }
+            },
+            "required": ["url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        WebFetchTool.execute(_ctx, args).await
+    }
+}
+
+pub struct HttpPostTool;
+
+#[async_trait]
+impl Tool for HttpPostTool {
+    fn name(&self) -> &str {
+        "http_post"
+    }
+    fn description(&self) -> &str {
+        "Send an HTTP POST request with a JSON body"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Target HTTP URL" },
+                "body": { "type": "object", "description": "JSON payload" }
+            },
+            "required": ["url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'url' parameter".to_string(),
+            }
+        })?;
+        let body = args.get("body").unwrap_or(&Value::Null);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let resp = client
+            .post(url_str)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("POST request failed to {}: {}", url_str, e),
+            })?;
+
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+
+        Ok(json!({
+            "url": url_str,
+            "status": status,
+            "response": text
+        }))
+    }
+}
+
+pub struct DnsLookupTool;
+
+#[async_trait]
+impl Tool for DnsLookupTool {
+    fn name(&self) -> &str {
+        "dns_lookup"
+    }
+    fn description(&self) -> &str {
+        "Resolve hostnames to IP addresses for security and network analysis"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "host": { "type": "string", "description": "Domain or hostname to resolve (e.g. 'example.com')" }
+            },
+            "required": ["host"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let host = args.get("host").and_then(|h| h.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'host' parameter".to_string(),
+            }
+        })?;
+
+        let addrs = tokio::net::lookup_host(format!("{}:80", host))
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("DNS resolution error for {}: {}", host, e),
+            })?;
+
+        let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
+        Ok(json!({ "host": host, "resolved_ips": ips }))
+    }
+}
+
+pub struct PortScanTool;
+
+#[async_trait]
+impl Tool for PortScanTool {
+    fn name(&self) -> &str {
+        "port_scan"
+    }
+    fn description(&self) -> &str {
+        "Perform a TCP connect port check on authorized targets"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "host": { "type": "string", "description": "Target IP or hostname" },
+                "ports": { "type": "array", "items": { "type": "integer" }, "description": "Ports to probe (e.g. [80, 443, 22, 8080])" }
+            },
+            "required": ["host"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let host = args.get("host").and_then(|h| h.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'host' parameter".to_string(),
+            }
+        })?;
+
+        let default_ports = vec![json!(22), json!(80), json!(443), json!(3000), json!(8080)];
+        let ports_arr = args.get("ports").and_then(|p| p.as_array()).unwrap_or(&default_ports);
+
+        let mut results = Vec::new();
+        for p in ports_arr {
+            let port = p.as_u64().unwrap_or(80) as u16;
+            let target = format!("{}:{}", host, port);
+            let is_open = tokio::time::timeout(
+                std::time::Duration::from_millis(1500),
+                tokio::net::TcpStream::connect(&target),
+            )
+            .await
+            .map(|r| r.is_ok())
+            .unwrap_or(false);
+
+            results.push(json!({
+                "port": port,
+                "open": is_open
+            }));
+        }
+
+        Ok(json!({ "host": host, "results": results }))
+    }
+}
+
+
 mod urlencoding {
     pub fn encode(s: &str) -> String {
         url::form_urlencoded::byte_serialize(s.as_bytes()).collect()

@@ -21,7 +21,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { api, OAuthAccountInfo, OAuthLoginResponse } from '../api';
-import { ProviderItem, ModelItem } from '../types';
+import { ProviderItem, ModelItem, FALLBACK_PROVIDERS } from '../types';
 import { ProviderLogo } from './ProviderLogo';
 
 interface SettingsModalProps {
@@ -130,234 +130,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     api.getModels().then((data) => {
       if (data?.providers?.length) {
         setProviders(data.providers);
+      } else {
+        setProviders(FALLBACK_PROVIDERS);
       }
     }).catch(() => {
-      setProviders([]);
-      return;
-      // Legacy fallback catalog is intentionally unreachable. The daemon is the
-      // source of truth so the UI never advertises unavailable or retired models.
-      setProviders([
-        {
-          id: 'antigravity',
-          name: 'Antigravity (Google / DeepMind)',
-          category: 'oauth',
-          auth_type: 'oauth',
-          description: 'High-throughput intelligence via Antigravity OAuth proxy with hybrid reasoning',
-          models: [
-            { id: 'claude-3-7-sonnet', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', context: 200000, recommended: true },
-            { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', context: 200000 },
-            { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1048576, recommended: true },
-            { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', context: 2097152 },
-            { id: 'claude-3-5-haiku', name: 'Claude 3.5 Haiku', context: 200000 },
-          ],
-        },
-        {
-          id: 'codex',
-          name: 'OpenAI Codex / ChatGPT',
-          category: 'oauth',
-          auth_type: 'oauth',
-          description: 'Official OpenAI OAuth authorization with specialized coding & reasoning models',
-          models: [
-            { id: 'o3-mini', name: 'o3-mini (Reasoning & Coding)', context: 200000, recommended: true },
-            { id: 'o1', name: 'o1 (Advanced Deep Reasoning)', context: 200000 },
-            { id: 'gpt-4.5-preview', name: 'GPT-4.5 Preview', context: 128000, recommended: true },
-            { id: 'gpt-4o', name: 'GPT-4o (Omnimodal Flagship)', context: 128000, recommended: true },
-            { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Light)', context: 128000 },
-          ],
-        },
-        {
-          id: 'claude-oauth',
-          name: 'Claude (Anthropic OAuth)',
-          category: 'oauth',
-          auth_type: 'oauth',
-          description: 'Direct Anthropic Claude account authorization via OAuth',
-          models: [
-            { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', context: 200000, recommended: true },
-            { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', context: 200000, recommended: true },
-            { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', context: 200000 },
-          ],
-        },
-        {
-          id: 'github-copilot',
-          name: 'GitHub Copilot',
-          category: 'oauth',
-          auth_type: 'oauth',
-          description: 'GitHub Copilot device authorization with Copilot token exchange',
-          models: [
-            { id: 'copilot-gpt-4o', name: 'GPT-4o (GitHub Copilot)', context: 128000, recommended: true },
-            { id: 'copilot-claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (Copilot)', context: 200000, recommended: true },
-            { id: 'copilot-o3-mini', name: 'o3-mini (GitHub Copilot)', context: 200000 },
-          ],
-        },
-        {
-          id: 'xai-oauth',
-          name: 'xAI Grok',
-          category: 'oauth',
-          auth_type: 'oauth',
-          description: 'xAI Grok device authorization flow',
-          models: [
-            { id: 'grok-2-latest', name: 'Grok 2 Latest (Flagship)', context: 131072, recommended: true },
-            { id: 'grok-beta', name: 'Grok Beta', context: 131072 },
-          ],
-        },
-        {
-          id: 'muse',
-          name: 'Meta Muse Code',
-          category: 'oauth',
-          auth_type: 'oauth',
-          description: 'Meta Muse Code developer device authorization and SSE streaming',
-          models: [
-            { id: 'muse-spark-1.3', name: 'Muse Spark 1.3 (Flagship Coding)', context: 128000, recommended: true },
-            { id: 'muse-code-v2', name: 'Muse Code v2', context: 128000 },
-          ],
-        },
-        {
-          id: 'deepseek',
-          name: 'DeepSeek (BYOK)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.deepseek.com/v1',
-          description: 'DeepSeek V3 and R1 reasoning models with transparent BYOK pricing',
-          models: [
-            { id: 'deepseek-chat', name: 'DeepSeek-V3 (Chat & Coding)', context: 64000, recommended: true },
-            { id: 'deepseek-reasoner', name: 'DeepSeek-R1 (Deep Reasoning)', context: 64000, recommended: true },
-            { id: 'deepseek-coder', name: 'DeepSeek Coder', context: 32000 },
-          ],
-        },
-        {
-          id: 'qwen',
-          name: 'Qwen Plan / DashScope Global',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-          description: 'Alibaba Cloud international gateway: Qwen 2.5 Coder, QwQ Reasoning, and Qwen Max',
-          models: [
-            { id: 'qwen-max-latest', name: 'Qwen Max Latest (Flagship)', context: 32768, recommended: true },
-            { id: 'qwen-plus-latest', name: 'Qwen Plus Latest', context: 131072 },
-            { id: 'qwen-turbo-latest', name: 'Qwen Turbo Latest (Speed)', context: 131072 },
-            { id: 'qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', context: 131072, recommended: true },
-            { id: 'qwq-32b-preview', name: 'QwQ 32B Reasoning Preview', context: 32768 },
-            { id: 'qwen2.5-72b-instruct', name: 'Qwen 2.5 72B Instruct', context: 131072 },
-          ],
-        },
-        {
-          id: 'stepfun',
-          name: 'StepFun Plan (阶跃星辰)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.stepfun.com/v1',
-          description: 'StepFun frontier reasoning, ultra-long 256K context, and multimodal vision models',
-          models: [
-            { id: 'step-2-16k', name: 'Step-2 16K (Multimodal Flagship)', context: 16384, recommended: true },
-            { id: 'step-1-32k', name: 'Step-1 32K (Fast)', context: 32768 },
-            { id: 'step-1-128k', name: 'Step-1 128K (Long Context)', context: 131072 },
-            { id: 'step-1-256k', name: 'Step-1 256K (Ultra Long Context)', context: 262144, recommended: true },
-            { id: 'step-1v-32k', name: 'Step-1V 32K (Vision Multimodal)', context: 32768 },
-          ],
-        },
-        {
-          id: 'openai',
-          name: 'OpenAI (Official BYOK)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.openai.com/v1',
-          description: 'Official OpenAI platform with GPT-4.5, o3-mini, and GPT-4o models',
-          models: [
-            { id: 'gpt-4.5-preview', name: 'GPT-4.5 Preview', context: 128000, recommended: true },
-            { id: 'o3-mini', name: 'o3-mini (Reasoning)', context: 200000, recommended: true },
-            { id: 'o1', name: 'o1 (Deep Reasoning)', context: 200000 },
-            { id: 'gpt-4o', name: 'GPT-4o (Omnimodal)', context: 128000, recommended: true },
-            { id: 'gpt-4o-mini', name: 'GPT-4o Mini', context: 128000 },
-          ],
-        },
-        {
-          id: 'anthropic',
-          name: 'Anthropic (Official BYOK)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.anthropic.com/v1',
-          description: 'Official Anthropic API with Claude 3.7 Sonnet Hybrid Reasoning',
-          models: [
-            { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', context: 200000, recommended: true },
-            { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', context: 200000, recommended: true },
-            { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', context: 200000 },
-          ],
-        },
-        {
-          id: 'google',
-          name: 'Google Gemini (Official BYOK)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://generativelanguage.googleapis.com/v1beta',
-          description: 'Google Gemini API with 1M-2M context and native multimodal reasoning',
-          models: [
-            { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1048576, recommended: true },
-            { id: 'gemini-2.0-flash-thinking-exp', name: 'Gemini 2.0 Flash Thinking', context: 1048576, recommended: true },
-            { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', context: 2097152 },
-          ],
-        },
-        {
-          id: 'groq',
-          name: 'Groq (Fast Inference)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.groq.com/openai/v1',
-          description: 'Ultra high-speed LPU inference engine for open-weights models',
-          models: [
-            { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', context: 131072, recommended: true },
-            { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill Llama 70B', context: 131072, recommended: true },
-          ],
-        },
-        {
-          id: 'mistral',
-          name: 'Mistral AI',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.mistral.ai/v1',
-          description: 'Mistral AI models including Codestral and Mistral Large',
-          models: [
-            { id: 'mistral-large-latest', name: 'Mistral Large Latest', context: 128000, recommended: true },
-            { id: 'codestral-latest', name: 'Codestral Latest (Coding)', context: 256000, recommended: true },
-          ],
-        },
-        {
-          id: 'openrouter',
-          name: 'OpenRouter',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://openrouter.ai/api/v1',
-          description: 'Unified gateway across all frontier models and providers',
-          models: [
-            { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet (OpenRouter)', context: 200000, recommended: true },
-            { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1 (OpenRouter)', context: 64000, recommended: true },
-          ],
-        },
-        {
-          id: 'ollama',
-          name: 'Ollama (Local Models)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'http://localhost:11434/v1',
-          description: 'Run open models entirely locally on your hardware without internet',
-          models: [
-            { id: 'llama3.3:latest', name: 'Llama 3.3 70B Local', context: 32768, recommended: true },
-            { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder 32B Local', context: 32768, recommended: true },
-          ],
-        },
-        {
-          id: 'openai_compatible',
-          name: 'OpenAI Compatible (Custom / Gateway)',
-          category: 'byok',
-          auth_type: 'api_key',
-          default_base_url: 'https://api.openai.com/v1',
-          description: 'Any OpenAI-compatible gateway: vLLM, LM Studio, LiteLLM, or custom proxies',
-          models: [
-            { id: 'gpt-4o', name: 'GPT-4o', context: 128000, recommended: true },
-            { id: 'gpt-4o-mini', name: 'GPT-4o Mini', context: 128000 },
-            { id: 'custom', name: 'Custom Model (Manual input)', context: 128000 },
-          ],
-        },
-      ]);
+      setProviders(FALLBACK_PROVIDERS);
     });
 
     // Load active OAuth accounts
@@ -389,7 +166,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           return next;
         });
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }, [isOpen]);
 
   const currentProvider = providers.find((p) => p.id === selectedProviderId) || providers[0];
@@ -436,7 +213,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             window.clearInterval(poll);
             setOauthAccounts((prev) => ({ ...prev, [providerId.toLowerCase()]: hit }));
             setOauthPrompt(null);
-            api.getModels().then((d) => d?.providers && setProviders(d.providers)).catch(() => {});
+            api.getModels().then((d) => d?.providers && setProviders(d.providers)).catch(() => { });
           }
         } catch {
           /* daemon briefly unreachable: keep polling */
@@ -510,7 +287,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (data?.providers?.length) {
         setProviders(data.providers);
       }
-    } catch {}
+    } catch { }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -547,21 +324,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex bg-neutral-100 dark:bg-neutral-800 p-1 rounded-lg text-xs font-medium">
               <button
                 onClick={() => setActiveTab('providers')}
-                className={`px-3 py-1 rounded-md transition-all ${
-                  activeTab === 'providers'
+                className={`px-3 py-1 rounded-md transition-all ${activeTab === 'providers'
                     ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
                     : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
-                }`}
+                  }`}
               >
                 Model Providers
               </button>
               <button
                 onClick={() => setActiveTab('system')}
-                className={`px-3 py-1 rounded-md transition-all ${
-                  activeTab === 'system'
+                className={`px-3 py-1 rounded-md transition-all ${activeTab === 'system'
                     ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
                     : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
-                }`}
+                  }`}
               >
                 System & Daemon
               </button>
@@ -604,11 +379,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             }
                             setKeyError(null);
                           }}
-                          className={`w-full text-left px-2.5 py-2 rounded-xl text-[12px] font-medium transition-all flex items-center justify-between ${
-                            selectedProviderId === p.id
+                          className={`w-full text-left px-2.5 py-2 rounded-xl text-[12px] font-medium transition-all flex items-center justify-between ${selectedProviderId === p.id
                               ? 'bg-blue-600 text-white shadow-xs font-semibold'
                               : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-800'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-center gap-2 truncate">
                             <ProviderLogo providerId={p.id} size={15} colored={selectedProviderId !== p.id} />
@@ -643,11 +417,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             setSelectedProviderId(p.id);
                             setKeyError(null);
                           }}
-                          className={`w-full text-left px-2.5 py-2 rounded-xl text-[12px] font-medium transition-all flex items-center justify-between ${
-                            selectedProviderId === p.id
+                          className={`w-full text-left px-2.5 py-2 rounded-xl text-[12px] font-medium transition-all flex items-center justify-between ${selectedProviderId === p.id
                               ? 'bg-blue-600 text-white shadow-xs font-semibold'
                               : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200/60 dark:hover:bg-neutral-800'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-center gap-2 truncate">
                             <ProviderLogo providerId={p.id} size={15} colored={selectedProviderId !== p.id} />
@@ -943,11 +716,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             }
                             onSelectModel?.(m.id);
                           }}
-                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
-                            isSelected
+                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${isSelected
                               ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30'
                               : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 bg-white dark:bg-neutral-850'
-                          }`}
+                            }`}
                         >
                           <div>
                             <div className="flex items-center gap-2">
@@ -1011,11 +783,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
-                      daemonConnected
+                    className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${daemonConnected
                         ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
                         : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
-                    }`}
+                      }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full ${daemonConnected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
                     {daemonConnected ? 'Online (Listening on port 4096)' : 'Offline / Connecting'}
