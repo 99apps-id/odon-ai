@@ -1,0 +1,22 @@
+# Rust / Cargo
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Node / Desktop
+node_modules
+/desktop/node_modules
+/desktop/dist
+.DS_Store
+*.local
+
+# SQLite local data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Env and keys
+.env
+.env.*
+!.env.example

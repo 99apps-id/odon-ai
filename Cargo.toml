@@ -1,0 +1,54 @@
+[workspace]
+members = [
+    "crates/odon-core",
+    "crates/odon-security",
+    "crates/odon-storage",
+    "crates/odon-provider",
+    "crates/odon-tools",
+    "crates/odon-channel",
+    "crates/odon-agent",
+    "crates/odon",
+    "crates/odond",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["ODON Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/99apps-id/odon-ai"
+description = "ODON - Open Digital Orchestration Network: Universal AI assistant & autonomous orchestration runtime"
+
+[workspace.dependencies]
+tokio = { version = "1.43", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.33", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+async-trait = "0.1"
+eventsource-stream = "0.2"
+uuid = { version = "1.13", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2.0"
+anyhow = "1.0"
+regex = "1.11"
+sha2 = "0.10"
+base64 = "0.22"
+ring = "0.17"
+url = "2.5"
+tokio-util = "0.7"
+colored = "2.2"
+dirs = "6.0"
+
+odon-core = { path = "crates/odon-core" }
+odon-security = { path = "crates/odon-security" }
+odon-storage = { path = "crates/odon-storage" }
+odon-provider = { path = "crates/odon-provider" }
+odon-tools = { path = "crates/odon-tools" }
+odon-channel = { path = "crates/odon-channel" }
+odon-agent = { path = "crates/odon-agent" }

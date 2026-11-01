@@ -1,0 +1,28 @@
+[package]
+name = "odond"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Headless agent daemon and background service for ODON"
+
+[[bin]]
+name = "odond"
+path = "src/main.rs"
+
+[dependencies]
+odon-core = { workspace = true }
+odon-security = { workspace = true }
+odon-storage = { workspace = true }
+odon-provider = { workspace = true }
+odon-tools = { workspace = true }
+odon-channel = { workspace = true }
+odon-agent = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

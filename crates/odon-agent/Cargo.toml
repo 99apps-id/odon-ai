@@ -1,0 +1,28 @@
+[package]
+name = "odon-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Headless autonomous agent runtime and conversational orchestrator for ODON"
+
+[dependencies]
+odon-core = { workspace = true }
+odon-security = { workspace = true }
+odon-storage = { workspace = true }
+odon-provider = { workspace = true }
+odon-tools = { workspace = true }
+odon-channel = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

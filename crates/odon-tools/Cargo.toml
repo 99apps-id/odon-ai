@@ -1,0 +1,21 @@
+[package]
+name = "odon-tools"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Structured tool execution engine, GitHub connectors, MCP client, and artifact synthesis"
+
+[dependencies]
+odon-core = { workspace = true }
+odon-security = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

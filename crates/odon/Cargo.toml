@@ -1,0 +1,27 @@
+[package]
+name = "odon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for ODON - Open Digital Orchestration Network"
+
+[[bin]]
+name = "odon"
+path = "src/main.rs"
+
+[dependencies]
+odon-core = { workspace = true }
+odon-security = { workspace = true }
+odon-storage = { workspace = true }
+odon-provider = { workspace = true }
+odon-tools = { workspace = true }
+odon-channel = { workspace = true }
+odon-agent = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+colored = { workspace = true }

@@ -1,0 +1,20 @@
+[package]
+name = "odon-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Durable SQLite storage engine for ODON sessions, messages, artifacts, and audit logs"
+
+[dependencies]
+odon-core = { workspace = true }
+odon-security = { workspace = true }
+rusqlite = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+dirs = { workspace = true }

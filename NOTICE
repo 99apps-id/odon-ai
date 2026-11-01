@@ -1,0 +1,13 @@
+ODON (Open Digital Orchestration Network)
+Copyright 2026 ODON Contributors
+
+This product includes software developed by and adapted from Termigo
+(https://github.com/99apps-id/termigo):
+Copyright 2026 99apps-id
+Copyright 2026 Crynta
+Licensed under the Apache License, Version 2.0.
+
+Portions of this software adapt and port concepts, security policy models,
+tool schemas, and protocol abstractions originally created for Termigo.
+Detailed module migration decisions and architectural differences are
+documented in AUDIT_TERMIGO_TO_ODON.md.
