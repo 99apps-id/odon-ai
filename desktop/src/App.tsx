@@ -1396,17 +1396,17 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     </div>
 
                     {msg.thought && (
-                      <div className="ml-7 my-2.5">
-                        <details className="group rounded-2xl bg-neutral-50/90 border border-neutral-200/80 overflow-hidden shadow-2xs">
-                          <summary className="px-3.5 py-2 cursor-pointer text-xs font-semibold text-neutral-700 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/60 hover:bg-neutral-100 transition-colors">
-                            <div className="flex items-center gap-2">
-                              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                              <span>Reasoning & Thought Process</span>
+                      <div className="ml-7 my-1.5">
+                        <details className="group rounded-xl bg-neutral-50/80 border border-neutral-200/80 overflow-hidden shadow-2xs">
+                          <summary className="px-3 py-1.5 cursor-pointer text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/50 hover:bg-neutral-100 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <Sparkles className="w-3 h-3 text-amber-500" />
+                              <span className="text-[11.5px] font-semibold text-neutral-700">Reasoning & Thought Process</span>
                             </div>
                             <span className="text-[10px] text-neutral-400 font-mono group-open:hidden">Click to expand</span>
                           </summary>
-                          <div className="p-4 border-t border-neutral-200/60 bg-white text-[13.5px] leading-relaxed text-neutral-700 select-text max-w-full min-w-0 overflow-x-hidden break-words">
-                            <MarkdownView content={msg.thought} />
+                          <div className="p-3 border-t border-neutral-200/60 bg-neutral-50/30 text-[11px] leading-snug text-neutral-600 select-text max-w-full min-w-0 overflow-x-hidden break-words">
+                            <MarkdownView content={msg.thought} dense />
                           </div>
                         </details>
                       </div>
@@ -1634,17 +1634,17 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     )}
 
                     {streamingThought && (
-                      <div className="ml-7 my-2.5">
-                        <div className="rounded-2xl bg-amber-50/50 border border-amber-200/80 overflow-hidden shadow-2xs">
-                          <div className="px-3.5 py-2 bg-amber-100/60 border-b border-amber-200/60 text-xs font-semibold text-amber-900 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                              <span>ODON is reasoning...</span>
+                      <div className="ml-7 my-1.5">
+                        <div className="rounded-xl bg-amber-50/40 border border-amber-200/70 overflow-hidden shadow-2xs">
+                          <div className="px-3 py-1.5 bg-amber-100/50 border-b border-amber-200/60 text-xs font-semibold text-amber-900 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <Sparkles className="w-3 h-3 text-amber-600 animate-spin" />
+                              <span className="text-[11.5px]">ODON is reasoning...</span>
                             </div>
                             <span className="text-[10px] text-amber-700 font-mono animate-pulse">Live</span>
                           </div>
-                          <div className="p-4 text-[13.5px] leading-relaxed text-neutral-700 max-h-64 overflow-y-auto select-text bg-white/70 max-w-full min-w-0 overflow-x-hidden break-words">
-                            <MarkdownView content={streamingThought} />
+                          <div className="p-3 text-[11px] leading-snug text-neutral-600 max-h-60 overflow-y-auto select-text bg-white/60 max-w-full min-w-0 overflow-x-hidden break-words">
+                            <MarkdownView content={streamingThought} dense />
                           </div>
                         </div>
                       </div>
