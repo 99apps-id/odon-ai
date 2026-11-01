@@ -33,7 +33,7 @@ pub enum ApprovalDecision {
 }
 
 struct PendingRequest {
-    _request: ApprovalRequest,
+    request: ApprovalRequest,
     sender: oneshot::Sender<ApprovalDecision>,
 }
 
@@ -106,7 +106,7 @@ impl ApprovalEngine {
 
         {
             let mut pending = self.pending.write().await;
-            pending.insert(id.clone(), PendingRequest { _request: req, sender: tx });
+            pending.insert(id.clone(), PendingRequest { request: req, sender: tx });
         }
 
         // Wait for decision or timeout
@@ -131,5 +131,19 @@ impl ApprovalEngine {
         } else {
             false
         }
+    }
+
+    pub async fn list_pending(&self) -> Vec<ApprovalRequest> {
+        let pending = self.pending.read().await;
+        pending.values().map(|p| p.request.clone()).collect()
+    }
+
+    pub async fn get_policy(&self) -> SecurityPolicy {
+        self.policy.read().await.clone()
+    }
+
+    pub async fn update_mode(&self, mode: ExecutionMode) {
+        let mut policy = self.policy.write().await;
+        policy.mode = mode;
     }
 }

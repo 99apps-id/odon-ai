@@ -90,6 +90,28 @@ impl Message {
         }
     }
 
+    pub fn new_tool(
+        session_id: impl Into<String>,
+        call_id: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        let cid = call_id.into();
+        Self {
+            id: cid.clone(),
+            session_id: session_id.into(),
+            role: MessageRole::Tool,
+            content: MessageContent {
+                text: content.into(),
+                thought: None,
+                tool_calls: Vec::new(),
+                artifact_ids: Vec::new(),
+                action_chips: Vec::new(),
+            },
+            model: None,
+            created_at: Utc::now(),
+        }
+    }
+
     pub fn with_artifact(mut self, artifact_id: impl Into<String>) -> Self {
         self.content.artifact_ids.push(artifact_id.into());
         self

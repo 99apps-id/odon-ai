@@ -65,16 +65,47 @@ impl ModelProvider for OpenAiCompatibleProvider {
         }
 
         for msg in request.messages {
-            let role_str = match msg.role {
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::System => "system",
-                MessageRole::Tool => "tool",
-            };
-            messages_payload.push(json!({
-                "role": role_str,
-                "content": msg.content.text,
-            }));
+            match msg.role {
+                MessageRole::User => {
+                    messages_payload.push(json!({
+                        "role": "user",
+                        "content": msg.content.text,
+                    }));
+                }
+                MessageRole::System => {
+                    messages_payload.push(json!({
+                        "role": "system",
+                        "content": msg.content.text,
+                    }));
+                }
+                MessageRole::Assistant => {
+                    let mut obj = json!({
+                        "role": "assistant",
+                        "content": if msg.content.text.is_empty() { serde_json::Value::Null } else { json!(msg.content.text) },
+                    });
+                    if !msg.content.tool_calls.is_empty() {
+                        let tcs: Vec<_> = msg.content.tool_calls.iter().map(|tc| {
+                            json!({
+                                "id": tc.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.tool_name,
+                                    "arguments": tc.arguments.to_string(),
+                                }
+                            })
+                        }).collect();
+                        obj["tool_calls"] = json!(tcs);
+                    }
+                    messages_payload.push(obj);
+                }
+                MessageRole::Tool => {
+                    messages_payload.push(json!({
+                        "role": "tool",
+                        "tool_call_id": msg.id,
+                        "content": msg.content.text,
+                    }));
+                }
+            }
         }
 
         let mut body = json!({
