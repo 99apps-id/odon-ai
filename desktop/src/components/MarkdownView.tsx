@@ -143,7 +143,7 @@ function formatInline(text: string): string {
     .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-neutral-900 dark:text-neutral-100">$1</strong>')
     .replace(/\*(.*?)\*/g, '<em class="italic">$1</em>')
     .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded text-[12.5px] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700">$1</code>')
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="my-2 rounded-lg max-h-80 object-contain border border-neutral-200" />')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<a href="$2" download="$1" target="_blank" rel="noreferrer" title="Click to open or save image"><img src="$2" alt="$1" class="my-2 rounded-lg max-h-80 object-contain border border-neutral-200 hover:shadow-md transition-shadow cursor-pointer" /></a>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer" class="text-neutral-900 dark:text-neutral-100 underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">$1</a>');
 }
 

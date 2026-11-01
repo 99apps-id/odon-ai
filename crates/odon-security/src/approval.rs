@@ -35,6 +35,20 @@ pub enum ApprovalDecision {
     Expired,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditRecord {
+    pub id: String,
+    pub session_id: String,
+    pub tool_name: String,
+    pub risk_tier: RiskTier,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub resolved_at: DateTime<Utc>,
+}
+
 struct PendingRequest {
     request: ApprovalRequest,
     sender: oneshot::Sender<ApprovalDecision>,
@@ -54,6 +68,7 @@ pub struct ApprovalEngine {
     policy: Arc<RwLock<SecurityPolicy>>,
     pending: Arc<RwLock<HashMap<String, PendingRequest>>>,
     always_allowed: Arc<RwLock<HashSet<String>>>,
+    audit_history: Arc<RwLock<Vec<AuditRecord>>>,
     policy_path: PathBuf,
     events: Option<EventSender>,
 }
@@ -75,6 +90,7 @@ impl ApprovalEngine {
             policy: Arc::new(RwLock::new(policy)),
             pending: Arc::new(RwLock::new(HashMap::new())),
             always_allowed: Arc::new(RwLock::new(always_allowed)),
+            audit_history: Arc::new(RwLock::new(Vec::new())),
             policy_path,
             events: None,
         }
@@ -94,13 +110,26 @@ impl ApprovalEngine {
 
     pub async fn check_risk(&self, tool_name: &str) -> RiskTier {
         match tool_name {
-            "fs_read" | "fs_list" | "fs_search" | "git_status" | "git_diff" | "git_log" | "github_list_issues" | "github_get_repo" | "mcp_list_tools" | "web_search" | "web_fetch" | "system_info" | "calc_eval" | "memory_recall" | "todo_write" | "todo_read" | "think" | "plan_mode" => {
+            "fs_read" | "fs_list" | "fs_search" | "fs_glob" | "fs_stat" | "fs_readlink" | "fs_diff" | "fs_tree" | "fs_du" | "fs_find"
+            | "termigo_copy_selection" | "termigo_paste_buffer_history" | "editor_open" | "editor_reveal" | "editor_reload"
+            | "read_file" | "list_directory" | "grep" | "glob"
+            | "git_status" | "git_diff" | "git_log" | "git_show" | "git_stash_list" | "git_blame" | "git_log_file" | "git_ls_files"
+            | "github_list_issues" | "github_get_repo" | "github_list_prs" | "github_list_comments" | "github_workflow_list"
+            | "web_search" | "web_fetch" | "web_search_news" | "web_search_code" | "web_scrape" | "probe_url" | "http_get" | "security_audit_headers" | "security_audit_cert" | "network_traceroute" | "url_preview" | "dns_lookup" | "port_scan"
+            | "system_info" | "calc_eval" | "env_get" | "env_list" | "process_list" | "disk_usage" | "file_hash" | "file_checksum" | "clipboard_read" | "clipboard_write" | "notification_send" | "terminal_info"
+            | "memory_recall" | "memory_search" | "todo_write" | "todo_read" | "todo_update" | "think" | "plan_mode" | "remember"
+            | "mcp_list_tools" | "mcp_list_servers" | "approval_list" | "session_list" | "session_export" | "relay_status" | "automation_list" | "settings_get" => {
                 RiskTier::Tier0ReadOnly
             }
-            "fs_write" | "fs_edit" | "git_commit" | "git_branch" | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "github_create_issue" | "memory_store" => {
+            "fs_write" | "fs_edit" | "fs_mkdir" | "fs_move" | "fs_copy" | "fs_chmod" | "fs_chown" | "fs_symlink_create" | "fs_patch" | "fs_copy_recursive" | "fs_move_recursive" | "fs_zip" | "fs_unzip" | "termigo_multi_paste" | "editor_save" | "multi_edit" | "write_file" | "edit" | "create_directory" | "move_file" | "copy_file"
+            | "git_commit" | "git_branch" | "git_add" | "git_checkout" | "git_stash" | "git_stash_pop" | "git_merge" | "git_rebase" | "git_cherry_pick" | "git_revert" | "git_tag" | "git_remote_add" | "git_remote_set_url"
+            | "github_create_issue" | "github_create_review"
+            | "http_post" | "http_put" | "http_patch" | "http_download" | "http_upload"
+            | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "artifact_update" | "artifact_delete" | "artifact_export"
+            | "memory_store" | "memory_forget" | "mcp_call" | "mcp_add_server" | "approval_decide" | "cron_add" | "cron_remove" | "automation_trigger" | "settings_set" => {
                 RiskTier::Tier1WorkspaceMutating
             }
-            _ => RiskTier::Tier2SystemMutating, // shell_exec, fs_delete, git_push, destructive actions
+            _ => RiskTier::Tier2SystemMutating, // shell_exec, bash_run, terminal_exec, fs_delete, git_push, git_pull, git_reset, git_reset_hard, git_clean, github_merge_pr, github_workflow_run, process_kill, exec_background, http_delete
         }
     }
 
@@ -202,6 +231,34 @@ impl ApprovalEngine {
             }
             let session_id = entry.request.session_id.clone();
             let label = decision_label(&decision);
+            let reason = match &decision {
+                ApprovalDecision::Rejected { reason } => Some(reason.clone()),
+                _ => None,
+            };
+
+            // Record into audit history
+            {
+                let mut audit = self.audit_history.write().await;
+                audit.insert(
+                    0,
+                    AuditRecord {
+                        id: entry.request.id.clone(),
+                        session_id: session_id.clone(),
+                        tool_name: entry.request.tool_name.clone(),
+                        risk_tier: entry.request.risk_tier,
+                        description: entry.request.description.clone(),
+                        parameters: entry.request.parameters.clone(),
+                        decision: label.to_string(),
+                        reason,
+                        created_at: entry.request.created_at,
+                        resolved_at: Utc::now(),
+                    },
+                );
+                if audit.len() > 500 {
+                    audit.truncate(500);
+                }
+            }
+
             let _ = entry.sender.send(decision);
             drop(pending);
             self.emit(AgentEvent::ApprovalResolved {
@@ -237,6 +294,27 @@ impl ApprovalEngine {
     pub async fn update_mode(&self, mode: ExecutionMode) {
         let mut policy = self.policy.write().await;
         policy.mode = mode;
+    }
+
+    pub async fn get_audit_history(&self) -> Vec<AuditRecord> {
+        self.audit_history.read().await.clone()
+    }
+
+    pub async fn get_always_allowed(&self) -> Vec<String> {
+        self.always_allowed.read().await.iter().cloned().collect()
+    }
+
+    pub async fn revoke_allowed(&self, key: &str) -> bool {
+        let mut allowed = self.always_allowed.write().await;
+        let removed = allowed.remove(key);
+        if removed {
+            let policies = allowed.clone();
+            drop(allowed);
+            if let Ok(data) = serde_json::to_vec_pretty(&policies) {
+                let _ = std::fs::write(&self.policy_path, data);
+            }
+        }
+        removed
     }
 }
 

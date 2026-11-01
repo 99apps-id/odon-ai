@@ -219,6 +219,131 @@ export const api = {
     return res.ok;
   },
 
+  // Approvals & Audit Trail
+  async getApprovalHistory(): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/approvals/history`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getApprovalPolicies(): Promise<string[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/approvals/policies`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async deleteApprovalPolicy(key: string): Promise<boolean> {
+    const res = await fetch(`${this.getBaseUrl()}/api/approvals/policies/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  },
+
+  async getSettings(): Promise<{ execution_mode: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/status`);
+    if (!res.ok) return { execution_mode: 'Autonomous' };
+    const data = await res.json();
+    return { execution_mode: data.execution_mode || 'Autonomous' };
+  },
+
+  async updateSettings(settings: Record<string, unknown>): Promise<{ updated: boolean }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) return { updated: true };
+    return res.json().catch(() => ({ updated: true }));
+  },
+
+  // MCP Servers
+  async getMcpServers(): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async saveMcpServer(server: any): Promise<any> {
+    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(server),
+    });
+    return res.json();
+  },
+
+  async deleteMcpServer(id: string): Promise<boolean> {
+    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers/${id}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  },
+
+  async toggleMcpServer(id: string): Promise<any> {
+    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers/${id}/toggle`, {
+      method: 'POST',
+    });
+    return res.json();
+  },
+
+  // GitHub
+  async getGitHubPrs(owner: string = '99apps-id', repo: string = 'odon-ai'): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/github/prs?owner=${owner}&repo=${repo}`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getGitHubIssues(owner: string = '99apps-id', repo: string = 'odon-ai', state: string = 'open'): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/github/issues?owner=${owner}&repo=${repo}&state=${state}`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async createGitHubIssue(owner: string, repo: string, title: string, body?: string): Promise<any> {
+    const res = await fetch(`${this.getBaseUrl()}/api/github/issues`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner, repo, title, body }),
+    });
+    return res.json();
+  },
+
+  // Automations
+  async getAutomations(): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/automations`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async saveAutomation(job: any): Promise<any> {
+    const res = await fetch(`${this.getBaseUrl()}/api/automations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(job),
+    });
+    return res.json();
+  },
+
+  async deleteAutomation(id: string): Promise<boolean> {
+    const res = await fetch(`${this.getBaseUrl()}/api/automations/${id}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  },
+
+  async triggerAutomation(id: string): Promise<any> {
+    const res = await fetch(`${this.getBaseUrl()}/api/automations/${id}/trigger`, {
+      method: 'POST',
+    });
+    return res.json();
+  },
+
+  async getAutomationLogs(): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/automations/logs`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
   createTerminalWs(): WebSocket {
     const baseUrl = this.getBaseUrl();
     const wsUrl = baseUrl.replace(/^http/, 'ws') + '/api/terminal/ws';

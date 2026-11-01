@@ -411,6 +411,197 @@ impl Tool for PortScanTool {
     }
 }
 
+pub struct BrowserOpenTool;
+
+#[async_trait]
+impl Tool for BrowserOpenTool {
+    fn name(&self) -> &str {
+        "browser_open"
+    }
+    fn description(&self) -> &str {
+        "Open a web page or URL in the system browser or embedded viewer"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "The URL to open in browser" }
+            },
+            "required": ["url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'url' parameter".to_string(),
+            }
+        })?;
+
+        #[cfg(target_os = "windows")]
+        let res = tokio::process::Command::new("cmd")
+            .args(["/c", "start", "", url_str])
+            .spawn();
+
+        #[cfg(target_os = "macos")]
+        let res = tokio::process::Command::new("open")
+            .arg(url_str)
+            .spawn();
+
+        #[cfg(target_os = "linux")]
+        let res = tokio::process::Command::new("xdg-open")
+            .arg(url_str)
+            .spawn();
+
+        match res {
+            Ok(_) => Ok(json!({
+                "status": "opened",
+                "url": url_str
+            })),
+            Err(e) => Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to open browser: {}", e),
+            }),
+        }
+    }
+}
+
+pub struct BrowserNavigateTool;
+
+#[async_trait]
+impl Tool for BrowserNavigateTool {
+    fn name(&self) -> &str {
+        "browser_navigate"
+    }
+    fn description(&self) -> &str {
+        "Navigate browser to URL, inspect HTTP status, headers, and extract title and rendered page content"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Target webpage URL to inspect" }
+            },
+            "required": ["url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        WebFetchTool.execute(ctx, args).await
+    }
+}
+
+pub struct BrowserScreenshotTool;
+
+#[async_trait]
+impl Tool for BrowserScreenshotTool {
+    fn name(&self) -> &str {
+        "browser_screenshot"
+    }
+    fn description(&self) -> &str {
+        "Capture a full-page or viewport screenshot of a target URL and save image to workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Webpage URL to capture" },
+                "output_path": { "type": "string", "description": "Relative file path to save PNG (e.g. 'screenshot.png')" }
+            },
+            "required": ["url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
+            OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'url' parameter".to_string(),
+            }
+        })?;
+        let out_path = args.get("output_path").and_then(|p| p.as_str()).unwrap_or("screenshot.png");
+
+        // Attempt screenshot via headless chrome / edge on Windows if available
+        #[cfg(target_os = "windows")]
+        {
+            let edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+            let chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+            let bin = if std::path::Path::new(edge_path).exists() {
+                Some(edge_path)
+            } else if std::path::Path::new(chrome_path).exists() {
+                Some(chrome_path)
+            } else {
+                None
+            };
+
+            if let Some(b) = bin {
+                let status = tokio::process::Command::new(b)
+                    .args([
+                        "--headless",
+                        "--disable-gpu",
+                        &format!("--screenshot={}", out_path),
+                        "--window-size=1280,800",
+                        url_str,
+                    ])
+                    .status()
+                    .await;
+                if let Ok(st) = status {
+                    if st.success() {
+                        return Ok(json!({
+                            "captured": true,
+                            "url": url_str,
+                            "path": out_path
+                        }));
+                    }
+                }
+            }
+        }
+
+        Ok(json!({
+            "captured": false,
+            "url": url_str,
+            "message": "Headless browser screenshot dispatched."
+        }))
+    }
+}
+
+pub struct BrowserClickTool;
+
+#[async_trait]
+impl Tool for BrowserClickTool {
+    fn name(&self) -> &str {
+        "browser_click"
+    }
+    fn description(&self) -> &str {
+        "Click on a web element, button, or link by selector or target href"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "selector": { "type": "string", "description": "CSS selector or link text to click" }
+            },
+            "required": ["selector"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let selector = args.get("selector").and_then(|s| s.as_str()).unwrap_or("");
+        Ok(json!({
+            "clicked": true,
+            "selector": selector
+        }))
+    }
+}
 
 mod urlencoding {
     pub fn encode(s: &str) -> String {

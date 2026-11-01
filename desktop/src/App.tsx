@@ -116,6 +116,17 @@ const REGISTERED_TOOLS = [
   { name: 'dns_lookup', category: 'Web & Security', tier: 'Tier 0', desc: 'Resolve domain hostnames to IP' },
   { name: 'port_scan', category: 'Web & Security', tier: 'Tier 1', desc: 'TCP connect port scan on target' },
 
+  // Browser Control
+  { name: 'browser_open', category: 'Browser', tier: 'Tier 1', desc: 'Open URL in system browser or preview' },
+  { name: 'browser_navigate', category: 'Browser', tier: 'Tier 0', desc: 'Navigate to URL and extract page content' },
+  { name: 'browser_screenshot', category: 'Browser', tier: 'Tier 1', desc: 'Capture screenshot of target web page' },
+  { name: 'browser_click', category: 'Browser', tier: 'Tier 1', desc: 'Click web element or link' },
+
+  // Skills System (.odon/skills)
+  { name: 'skill_list', category: 'Skills', tier: 'Tier 0', desc: 'List reusable autonomous skills' },
+  { name: 'skill_create', category: 'Skills', tier: 'Tier 1', desc: 'Record a new skill procedure in markdown' },
+  { name: 'skill_run', category: 'Skills', tier: 'Tier 0', desc: 'Execute an autonomous stored skill' },
+
   // System & Environment
   { name: 'system_info', category: 'System', tier: 'Tier 0', desc: 'Host OS, CPU, memory details' },
   { name: 'calc_eval', category: 'System', tier: 'Tier 0', desc: 'Safe math expression evaluator' },
@@ -172,6 +183,16 @@ export default function App() {
   const [showAllRecent, setShowAllRecent] = useState(false);
   const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  interface AttachedFile {
+    name: string;
+    type: string;
+    size: number;
+    dataUrl?: string;
+    textContent?: string;
+    isImage: boolean;
+  }
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
 
   const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
   const [quickModelInput, setQuickModelInput] = useState('');
@@ -505,8 +526,25 @@ export default function App() {
 
   // Submit prompt from input box or action cards
   const handleSendMessage = async (customText?: string, mode: string = 'general') => {
-    const textToSend = (customText || inputMessage).trim();
-    if (!textToSend || isGenerating) return;
+    let textToSend = (customText || inputMessage).trim();
+    if (!textToSend && attachedFiles.length === 0) return;
+    if (isGenerating) return;
+
+    if (attachedFiles.length > 0) {
+      const parts: string[] = [];
+      for (const file of attachedFiles) {
+        if (file.isImage && file.dataUrl) {
+          parts.push(`![${file.name}](${file.dataUrl})`);
+        } else if (file.textContent) {
+          const preview = file.textContent.length > 4000 ? file.textContent.slice(0, 4000) + '\n... (truncated)' : file.textContent;
+          parts.push(`[Attached Document: ${file.name}]\n\`\`\`\n${preview}\n\`\`\``);
+        }
+      }
+      if (parts.length > 0) {
+        textToSend = `${textToSend ? textToSend + '\n\n' : ''}${parts.join('\n\n')}`;
+      }
+      setAttachedFiles([]);
+    }
 
     const userMsg: ChatMessage = {
       id: `usr_${Date.now()}`,
@@ -588,18 +626,51 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
     handleSendMessage(promptText, mode);
   };
 
-  // File attachment handler
+  // File attachment handler (supports images and documents)
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = typeof reader.result === 'string' ? reader.result : '';
-      const snippet = text.length > 2000 ? text.slice(0, 2000) + '\n... (truncated)' : text;
-      setInputMessage((prev) => `${prev ? prev + '\n' : ''}[Attached file: ${file.name}]\n\`\`\`\n${snippet}\n\`\`\`\n`);
-    };
-    reader.readAsText(file);
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      const isImg = file.type.startsWith('image/');
+      const reader = new FileReader();
+      if (isImg) {
+        reader.onload = () => {
+          setAttachedFiles((prev) => [
+            ...prev,
+            {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
+              isImage: true,
+            },
+          ]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        reader.onload = () => {
+          const text = typeof reader.result === 'string' ? reader.result : '';
+          setAttachedFiles((prev) => [
+            ...prev,
+            {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              textContent: text,
+              isImage: false,
+            },
+          ]);
+        };
+        reader.readAsText(file);
+      }
+    });
+
     e.target.value = '';
+  };
+
+  const removeAttachedFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   // Dynamic input placeholder based on active navigation tab
@@ -673,6 +744,8 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
         type="file"
         ref={fileInputRef}
         onChange={handleFileAttach}
+        multiple
+        accept="image/*,.pdf,.txt,.md,.json,.csv,.py,.rs,.ts,.js,.html,.css,.yaml,.yml,.toml"
         className="hidden"
       />
 
@@ -984,7 +1057,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
           </div>
 
           {/* Center Content Area */}
-          <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-start">
+          <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-start select-text">
 
             {/* VIEW A: WELCOME HERO (EXACT MATCH TO DESIGN) */}
             {!inChatMode && (
@@ -1369,6 +1442,34 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
           {/* Bottom Prompt Input Box */}
           <div className="p-4 pt-0 shrink-0">
             <div className="w-full max-w-2xl mx-auto rounded-3xl border border-neutral-200/90 bg-white shadow-2xs p-3 focus-within:border-neutral-300 focus-within:shadow-xs transition-all">
+              {/* Attached Files Preview Chips */}
+              {attachedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2 pb-2 border-b border-neutral-100">
+                  {attachedFiles.map((file, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-100 border border-neutral-200 text-xs text-neutral-800"
+                    >
+                      {file.isImage && file.dataUrl ? (
+                        <img src={file.dataUrl} alt={file.name} className="w-5 h-5 rounded object-cover" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-blue-500" />
+                      )}
+                      <span className="truncate max-w-[140px] font-medium text-[11px]">{file.name}</span>
+                      <span className="text-[10px] text-neutral-400">({(file.size / 1024).toFixed(0)}kb)</span>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachedFile(idx)}
+                        className="text-neutral-400 hover:text-neutral-700 p-0.5 rounded-full cursor-pointer"
+                        title="Remove attachment"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Input Area */}
               <input
                 type="text"
@@ -1387,9 +1488,9 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer"
-                    title="Attach file to prompt"
+                    title="Attach document or image"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Paperclip className="w-4 h-4" />
                   </button>
 
                   {/* Tools Dropdown */}

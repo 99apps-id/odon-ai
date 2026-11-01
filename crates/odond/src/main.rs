@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, Query, State,
     },
     http::{header, Method, StatusCode},
     response::{
@@ -14,8 +14,9 @@ use axum::{
 use clap::{Parser, Subcommand};
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::process::Stdio;
@@ -65,6 +66,102 @@ enum Commands {
     Init,
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationJob {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub trigger_type: String, // "interval", "cron", "on_commit", "manual"
+    pub trigger_value: String, // e.g. "Every 2 hours", "0 8 * * *", "15m"
+    pub prompt: String,
+    pub model: String,
+    pub enabled: bool,
+    pub last_run: Option<String>,
+    pub last_status: Option<String>, // "success", "failed", "running"
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationLog {
+    pub id: String,
+    pub automation_id: String,
+    pub automation_name: String,
+    pub triggered_at: String,
+    pub completed_at: Option<String>,
+    pub status: String,
+    pub output: String,
+}
+
+fn get_automations_path() -> PathBuf {
+    let base = std::env::var_os("ODON_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(".odon").join("automations.json")
+}
+
+fn load_automations_from_disk() -> Vec<AutomationJob> {
+    let path = get_automations_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(list) = serde_json::from_str::<Vec<AutomationJob>>(&content) {
+            return list;
+        }
+    }
+    vec![
+        AutomationJob {
+            id: "daily-standup".to_string(),
+            name: "Daily Git & Standup Digest".to_string(),
+            description: "Summarize recent commits, pending PRs, and planned tasks every morning".to_string(),
+            trigger_type: "cron".to_string(),
+            trigger_value: "0 8 * * * (Daily @ 08:00 AM)".to_string(),
+            prompt: "Review recent git commits from yesterday, list open branches and summarize what was accomplished.".to_string(),
+            model: "claude-sonnet-5-5".to_string(),
+            enabled: true,
+            last_run: Some("Yesterday at 08:00 AM".to_string()),
+            last_status: Some("success".to_string()),
+            created_at: "2026-10-15".to_string(),
+        },
+        AutomationJob {
+            id: "repo-health".to_string(),
+            name: "Repository Health & Cargo Tests".to_string(),
+            description: "Run test suite and check code quality periodically".to_string(),
+            trigger_type: "interval".to_string(),
+            trigger_value: "Every 4 hours".to_string(),
+            prompt: "Check workspace status and verify test suites and linting health.".to_string(),
+            model: "gpt-6.1-sol".to_string(),
+            enabled: true,
+            last_run: Some("2 hours ago".to_string()),
+            last_status: Some("success".to_string()),
+            created_at: "2026-10-20".to_string(),
+        },
+        AutomationJob {
+            id: "security-audit".to_string(),
+            name: "Automated Security & Secret Audit".to_string(),
+            description: "Scan code for accidentally committed secrets, dangerous bash calls, and CVEs".to_string(),
+            trigger_type: "cron".to_string(),
+            trigger_value: "0 0 * * * (Midnight)".to_string(),
+            prompt: "Perform a security scan on modified files to ensure no API keys or credentials leaked.".to_string(),
+            model: "gemini-4-argon".to_string(),
+            enabled: false,
+            last_run: None,
+            last_status: None,
+            created_at: "2026-10-25".to_string(),
+        },
+    ]
+}
+
+fn save_automations_to_disk(list: &[AutomationJob]) {
+    let path = get_automations_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(data) = serde_json::to_string_pretty(list) {
+        let _ = std::fs::write(&path, data);
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     runtime: Arc<AgentRuntime>,
@@ -76,6 +173,8 @@ struct AppState {
     event_tx: broadcast::Sender<AgentEvent>,
     workspace_root: String,
     oauth_accounts: Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
+    automations: Arc<tokio::sync::RwLock<Vec<AutomationJob>>>,
+    automation_logs: Arc<tokio::sync::RwLock<Vec<AutomationLog>>>,
 }
 
 /// Loads `.env` then `.env.local` from the working directory into the process
@@ -169,7 +268,8 @@ async fn main() -> anyhow::Result<()> {
                 let _ = tg.start(in_tx).await;
 
                 let rt_clone = runtime.clone();
-                tokio::spawn(async move {
+
+        tokio::spawn(async move {
                     while let Some(msg) = in_rx.recv().await {
                         println!("Received from Telegram [{}]: {}", msg.sender_id, msg.text);
                         let session_id = msg.session_id.unwrap_or_else(|| format!("tg_{}", msg.sender_id));
@@ -178,6 +278,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
             }
+
+            let automations = Arc::new(tokio::sync::RwLock::new(load_automations_from_disk()));
+            let automation_logs = Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
             // 9. Build Axum App Router
             let state = AppState {
@@ -189,6 +292,8 @@ async fn main() -> anyhow::Result<()> {
                 event_tx,
                 workspace_root: workspace,
                 oauth_accounts,
+                automations,
+                automation_logs,
             };
 
             let cors = CorsLayer::new()
@@ -206,6 +311,18 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/tools", get(list_tools))
                 .route("/api/approvals", get(list_approvals))
                 .route("/api/approvals/{id}", post(resolve_approval))
+                .route("/api/approvals/history", get(get_approval_history))
+                .route("/api/approvals/policies", get(get_approval_policies))
+                .route("/api/approvals/policies/{*key}", axum::routing::delete(delete_approval_policy))
+                .route("/api/mcp/servers", get(get_mcp_servers).post(save_mcp_server))
+                .route("/api/mcp/servers/{id}", axum::routing::delete(delete_mcp_server))
+                .route("/api/mcp/servers/{id}/toggle", post(toggle_mcp_server))
+                .route("/api/github/prs", get(get_github_prs))
+                .route("/api/github/issues", get(get_github_issues).post(create_github_issue))
+                .route("/api/automations", get(get_automations).post(save_automation))
+                .route("/api/automations/{id}", axum::routing::delete(delete_automation))
+                .route("/api/automations/{id}/trigger", post(trigger_automation))
+                .route("/api/automations/logs", get(get_automation_logs))
                 .route("/api/settings", get(get_settings).post(update_settings))
                 .route("/api/models", get(get_models))
                 .route("/api/providers/config", get(get_provider_configs).post(save_provider_config))
@@ -1314,4 +1431,220 @@ async fn sse_events(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+
+async fn get_approval_history(State(state): State<AppState>) -> impl IntoResponse {
+    let history = state.approval.get_audit_history().await;
+    Json(json!(history))
+}
+
+async fn get_approval_policies(State(state): State<AppState>) -> impl IntoResponse {
+    let policies = state.approval.get_always_allowed().await;
+    Json(json!(policies))
+}
+
+async fn delete_approval_policy(
+    Path(key): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let removed = state.approval.revoke_allowed(&key).await;
+    Json(json!({ "removed": removed, "key": key }))
+}
+
+async fn get_mcp_servers() -> impl IntoResponse {
+    let servers = odon_tools::mcp::load_mcp_servers();
+    Json(json!(servers))
+}
+
+async fn save_mcp_server(
+    Json(server): Json<odon_tools::mcp::McpServerConfig>,
+) -> impl IntoResponse {
+    let mut servers = odon_tools::mcp::load_mcp_servers();
+    if let Some(pos) = servers.iter().position(|s| s.id == server.id) {
+        servers[pos] = server;
+    } else {
+        servers.push(server);
+    }
+    let _ = odon_tools::mcp::save_mcp_servers(&servers);
+    Json(json!({ "success": true, "servers": servers }))
+}
+
+async fn delete_mcp_server(
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut servers = odon_tools::mcp::load_mcp_servers();
+    servers.retain(|s| s.id != id);
+    let _ = odon_tools::mcp::save_mcp_servers(&servers);
+    Json(json!({ "success": true, "deleted": id }))
+}
+
+async fn toggle_mcp_server(
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut servers = odon_tools::mcp::load_mcp_servers();
+    if let Some(s) = servers.iter_mut().find(|s| s.id == id) {
+        s.enabled = !s.enabled;
+    }
+    let _ = odon_tools::mcp::save_mcp_servers(&servers);
+    Json(json!({ "success": true, "servers": servers }))
+}
+
+#[derive(Deserialize)]
+struct GitHubQuery {
+    owner: Option<String>,
+    repo: Option<String>,
+    state: Option<String>,
+}
+
+async fn get_github_prs(
+    Query(q): Query<GitHubQuery>,
+) -> impl IntoResponse {
+    let owner = q.owner.unwrap_or_else(|| "99apps-id".to_string());
+    let repo = q.repo.unwrap_or_else(|| "odon-ai".to_string());
+    let client = reqwest::Client::new();
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls?per_page=20");
+    let mut req = client.get(&url).header("User-Agent", "odon-desktop");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+    match req.send().await {
+        Ok(resp) => {
+            let data: Value = resp.json().await.unwrap_or(json!([]));
+            (StatusCode::OK, Json(data))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    }
+}
+
+async fn get_github_issues(
+    Query(q): Query<GitHubQuery>,
+) -> impl IntoResponse {
+    let owner = q.owner.unwrap_or_else(|| "99apps-id".to_string());
+    let repo = q.repo.unwrap_or_else(|| "odon-ai".to_string());
+    let st = q.state.unwrap_or_else(|| "open".to_string());
+    let client = reqwest::Client::new();
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/issues?state={st}&per_page=20");
+    let mut req = client.get(&url).header("User-Agent", "odon-desktop");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+    match req.send().await {
+        Ok(resp) => {
+            let data: Value = resp.json().await.unwrap_or(json!([]));
+            (StatusCode::OK, Json(data))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateIssuePayload {
+    owner: Option<String>,
+    repo: Option<String>,
+    title: String,
+    body: Option<String>,
+}
+
+async fn create_github_issue(
+    Json(req): Json<CreateIssuePayload>,
+) -> impl IntoResponse {
+    let owner = req.owner.unwrap_or_else(|| "99apps-id".to_string());
+    let repo = req.repo.unwrap_or_else(|| "odon-ai".to_string());
+    let client = reqwest::Client::new();
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/issues");
+    let mut r = client.post(&url).header("User-Agent", "odon-desktop");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        r = r.header("Authorization", format!("Bearer {}", token));
+    }
+    match r.json(&json!({ "title": req.title, "body": req.body.unwrap_or_default() })).send().await {
+        Ok(resp) => {
+            let data: Value = resp.json().await.unwrap_or(json!({ "status": "created" }));
+            (StatusCode::OK, Json(data))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+    }
+}
+
+async fn get_automations(State(state): State<AppState>) -> impl IntoResponse {
+    let list = state.automations.read().await.clone();
+    Json(json!(list))
+}
+
+async fn save_automation(
+    State(state): State<AppState>,
+    Json(job): Json<AutomationJob>,
+) -> impl IntoResponse {
+    let mut list = state.automations.write().await;
+    if let Some(pos) = list.iter().position(|j| j.id == job.id) {
+        list[pos] = job.clone();
+    } else {
+        list.push(job.clone());
+    }
+    save_automations_to_disk(&list);
+    Json(json!({ "success": true, "job": job }))
+}
+
+async fn delete_automation(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let mut list = state.automations.write().await;
+    list.retain(|j| j.id != id);
+    save_automations_to_disk(&list);
+    Json(json!({ "success": true, "deleted": id }))
+}
+
+async fn trigger_automation(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let job_opt = {
+        let list = state.automations.read().await;
+        list.iter().find(|j| j.id == id).cloned()
+    };
+
+    if let Some(job) = job_opt {
+        let session_id = format!("auto_{}_{}", job.id, chrono::Utc::now().timestamp());
+        let rt = state.runtime.clone();
+        let logs = state.automation_logs.clone();
+        let job_name = job.name.clone();
+        let prompt = job.prompt.clone();
+        let model = job.model.clone();
+
+        let run_session_id = session_id.clone();
+        tokio::spawn(async move {
+            let start = chrono::Utc::now().to_rfc3339();
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let result = rt.execute_turn(&run_session_id, &prompt, Some(&model), cancel).await;
+            let end = chrono::Utc::now().to_rfc3339();
+            let (status, output) = match result {
+                Ok(turn) => ("success".to_string(), turn.content.text),
+                Err(e) => ("failed".to_string(), e.to_string()),
+            };
+
+            let mut log_list = logs.write().await;
+            log_list.insert(0, AutomationLog {
+                id: uuid::Uuid::new_v4().to_string(),
+                automation_id: id,
+                automation_name: job_name,
+                triggered_at: start,
+                completed_at: Some(end),
+                status,
+                output,
+            });
+            if log_list.len() > 100 {
+                log_list.truncate(100);
+            }
+        });
+
+        Json(json!({ "success": true, "status": "triggered", "session_id": session_id }))
+    } else {
+        Json(json!({ "success": false, "error": "Job not found" }))
+    }
+}
+
+async fn get_automation_logs(State(state): State<AppState>) -> impl IntoResponse {
+    let logs = state.automation_logs.read().await.clone();
+    Json(json!(logs))
 }

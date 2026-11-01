@@ -7,10 +7,13 @@ import {
   Check,
   Trash2,
   FolderOpen,
-  Sparkles,
+  Plus,
+  X,
   Command,
   ArrowRight,
   Loader2,
+  ChevronDown,
+  Square,
 } from 'lucide-react';
 import { api } from '../api';
 import { TerminalInfo, TerminalExecResult } from '../types';
@@ -25,20 +28,55 @@ interface HistoryItem {
   timestamp: string;
 }
 
+interface TerminalTab {
+  id: string;
+  title: string;
+  shell: string;
+  cwd: string;
+  history: HistoryItem[];
+  commandHistory: string[];
+  historyIndex: number;
+  isRunning: boolean;
+}
+
 interface TerminalViewProps {
   onClose?: () => void;
 }
 
+const DEFAULT_CWD = 'C:/Project/odon-ai';
+
 export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
   const [terminalInfo, setTerminalInfo] = useState<TerminalInfo | null>(null);
-  const [currentCwd, setCurrentCwd] = useState<string>('');
-  const [inputVal, setInputVal] = useState<string>('');
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [copied, setCopied] = useState<boolean>(false);
   const [daemonOnline, setDaemonOnline] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
+
+  // Multi-Tab Terminal State
+  const [tabs, setTabs] = useState<TerminalTab[]>([
+    {
+      id: 'tab-1',
+      title: 'PowerShell #1',
+      shell: 'PowerShell',
+      cwd: DEFAULT_CWD,
+      history: [
+        {
+          id: 'init-1',
+          command: '# ODON Native PTY Terminal Session 1',
+          stdout: 'ODON Interactive Multi-Tab Terminal ready.\nType any PowerShell / CLI command and press Enter.\nUse Up/Down arrows to navigate command history.',
+          stderr: '',
+          exit_code: 0,
+          cwd: DEFAULT_CWD,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        },
+      ],
+      commandHistory: [],
+      historyIndex: -1,
+      isRunning: false,
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>('tab-1');
+  const [inputVal, setInputVal] = useState<string>('');
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -46,7 +84,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
   const checkConnection = () => {
     api.getTerminalInfo().then((info) => {
       setTerminalInfo(info);
-      if (info.default_cwd) setCurrentCwd(info.default_cwd);
       setDaemonOnline(true);
     }).catch(() => {
       setDaemonOnline(false);
@@ -54,277 +91,347 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
         shell: 'PowerShell',
         os: 'windows',
         arch: 'x86_64',
-        default_cwd: 'C:/Project/odon-ai',
+        default_cwd: DEFAULT_CWD,
         user: 'developer',
       });
-      if (!currentCwd) setCurrentCwd('C:/Project/odon-ai');
     });
   };
 
-  // Load terminal info & cwd on mount
   useEffect(() => {
     checkConnection();
-
-    // Initial banner
-    setHistory([
-      {
-        id: 'init',
-        command: '# Welcome to ODON Integrated Terminal',
-        stdout: 'ODON Terminal Environment ready.\nType any PowerShell / CLI command and press Enter.\nUse Up/Down arrows to navigate command history.',
-        stderr: '',
-        exit_code: 0,
-        cwd: 'C:/Project/odon-ai',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      },
-    ]);
   }, []);
 
   // Auto scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history, isRunning]);
+  }, [activeTab?.history, activeTab?.isRunning]);
 
-  const handleRunCommand = async (cmdToRun?: string) => {
-    const rawCmd = (cmdToRun !== undefined ? cmdToRun : inputVal).trim();
-    if (!rawCmd || isRunning) return;
-
-    setInputVal('');
-    setHistoryIndex(-1);
-
-    // Special command: cls / clear clears the screen immediately
-    if (rawCmd.toLowerCase() === 'cls' || rawCmd.toLowerCase() === 'clear') {
-      handleClear();
-      return;
-    }
-
-    setIsRunning(true);
-
-    // Save to command history
-    setCommandHistory((prev) => [rawCmd, ...prev.filter((c) => c !== rawCmd)]);
-
-    const cwdBefore = currentCwd || terminalInfo?.default_cwd || 'C:/Project/odon-ai';
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    try {
-      const result: TerminalExecResult = await api.executeTerminal(rawCmd, cwdBefore);
-      setDaemonOnline(true);
-      if (result.cwd) {
-        setCurrentCwd(result.cwd);
-      }
-
-      setHistory((prev) => [
-        ...prev,
+  const handleCreateTab = () => {
+    const newId = `tab-${Date.now()}`;
+    const newNumber = tabs.length + 1;
+    const newTab: TerminalTab = {
+      id: newId,
+      title: `Terminal #${newNumber}`,
+      shell: terminalInfo?.shell || 'PowerShell',
+      cwd: activeTab?.cwd || DEFAULT_CWD,
+      history: [
         {
-          id: `${Date.now()}-${Math.random()}`,
-          command: rawCmd,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          exit_code: result.exit_code,
-          cwd: result.cwd || cwdBefore,
-          timestamp: nowStr,
+          id: `init-${newId}`,
+          command: `# ODON Native PTY Terminal Session ${newNumber}`,
+          stdout: 'New interactive session initialized.',
+          stderr: '',
+          exit_code: 0,
+          cwd: activeTab?.cwd || DEFAULT_CWD,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         },
-      ]);
-    } catch (err: any) {
-      setDaemonOnline(false);
-      const isConnectionError = err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError');
-      const errorMsg = isConnectionError
-        ? `Failed to communicate with ODON daemon (http://127.0.0.1:4096). Please ensure 'odond serve' is running.\nDetails: ${err.message}`
-        : (err.message || 'Execution failed');
-
-      setHistory((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random()}`,
-          command: rawCmd,
-          stdout: '',
-          stderr: errorMsg,
-          exit_code: 1,
-          cwd: cwdBefore,
-          timestamp: nowStr,
-        },
-      ]);
-    } finally {
-      setIsRunning(false);
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
+      ],
+      commandHistory: [],
+      historyIndex: -1,
+      isRunning: false,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newId);
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleRunCommand();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (commandHistory.length === 0) return;
-      const nextIndex = historyIndex + 1;
-      if (nextIndex < commandHistory.length) {
-        setHistoryIndex(nextIndex);
-        setInputVal(commandHistory[nextIndex]);
-      }
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const prevIndex = historyIndex - 1;
-      if (prevIndex >= 0) {
-        setHistoryIndex(prevIndex);
-        setInputVal(commandHistory[prevIndex]);
-      } else {
-        setHistoryIndex(-1);
-        setInputVal('');
-      }
-    } else if (e.ctrlKey && e.key === 'c') {
-      e.preventDefault();
-      setInputVal('');
-    } else if (e.ctrlKey && e.key === 'l') {
-      e.preventDefault();
-      handleClear();
+  const handleCloseTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tabs.length === 1) return;
+    const nextTabs = tabs.filter((t) => t.id !== tabId);
+    setTabs(nextTabs);
+    if (activeTabId === tabId) {
+      setActiveTabId(nextTabs[0].id);
     }
   };
 
   const handleClear = () => {
-    setHistory([]);
-    setTimeout(() => inputRef.current?.focus(), 50);
+    setTabs((prev) =>
+      prev.map((t) => (t.id === activeTabId ? { ...t, history: [] } : t))
+    );
   };
 
-  const handleCopyAll = () => {
-    const text = history
-      .map((h) => `PS ${h.cwd}> ${h.command}\n${h.stdout}${h.stderr ? `\nSTDERR:\n${h.stderr}` : ''}`)
+  const handleCopyHistory = () => {
+    if (!activeTab) return;
+    const text = activeTab.history
+      .map((item) => `$ ${item.command}\n${item.stdout}${item.stderr ? '\n' + item.stderr : ''}`)
       .join('\n\n');
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const quickChips = [
-    { label: 'git status', cmd: 'git status' },
-    { label: 'cargo check', cmd: 'cargo check --workspace' },
-    { label: 'pnpm build', cmd: 'pnpm --filter desktop build' },
-    { label: 'Get-ChildItem', cmd: 'Get-ChildItem' },
-    { label: 'node -v', cmd: 'node -v' },
-  ];
+  const handleRunCommand = async (cmdToRun?: string) => {
+    const rawCmd = (cmdToRun !== undefined ? cmdToRun : inputVal).trim();
+    if (!rawCmd || activeTab?.isRunning) return;
+
+    setInputVal('');
+
+    if (rawCmd.toLowerCase() === 'cls' || rawCmd.toLowerCase() === 'clear') {
+      handleClear();
+      return;
+    }
+
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const cwdBefore = activeTab.cwd;
+
+    // Set running state on active tab
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === activeTabId
+          ? {
+              ...t,
+              isRunning: true,
+              commandHistory: [rawCmd, ...t.commandHistory.filter((c) => c !== rawCmd)],
+              historyIndex: -1,
+            }
+          : t
+      )
+    );
+
+    try {
+      const result: TerminalExecResult = await api.executeTerminal(rawCmd, cwdBefore);
+      setDaemonOnline(true);
+      const updatedCwd = result.cwd || cwdBefore;
+
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? {
+                ...t,
+                cwd: updatedCwd,
+                isRunning: false,
+                history: [
+                  ...t.history,
+                  {
+                    id: `${Date.now()}-${Math.random()}`,
+                    command: rawCmd,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    cwd: updatedCwd,
+                    timestamp: nowStr,
+                  },
+                ],
+              }
+            : t
+        )
+      );
+    } catch (err: any) {
+      setDaemonOnline(false);
+      const isConnectionError = err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError');
+      const errorMsg = isConnectionError
+        ? `Failed to communicate with ODON daemon (http://127.0.0.1:4096). Please ensure 'odond' is running.\nDetails: ${err.message}`
+        : (err.message || 'Execution failed');
+
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? {
+                ...t,
+                isRunning: false,
+                history: [
+                  ...t.history,
+                  {
+                    id: `${Date.now()}-${Math.random()}`,
+                    command: rawCmd,
+                    stdout: '',
+                    stderr: errorMsg,
+                    exit_code: 1,
+                    cwd: cwdBefore,
+                    timestamp: nowStr,
+                  },
+                ],
+              }
+            : t
+        )
+      );
+    } finally {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!activeTab) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleRunCommand();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const historyList = activeTab.commandHistory;
+      if (historyList.length === 0) return;
+      const nextIndex = Math.min(activeTab.historyIndex + 1, historyList.length - 1);
+      setTabs((prev) =>
+        prev.map((t) => (t.id === activeTabId ? { ...t, historyIndex: nextIndex } : t))
+      );
+      setInputVal(historyList[nextIndex]);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const nextIndex = activeTab.historyIndex - 1;
+      if (nextIndex < 0) {
+        setTabs((prev) =>
+          prev.map((t) => (t.id === activeTabId ? { ...t, historyIndex: -1 } : t))
+        );
+        setInputVal('');
+      } else {
+        setTabs((prev) =>
+          prev.map((t) => (t.id === activeTabId ? { ...t, historyIndex: nextIndex } : t))
+        );
+        setInputVal(activeTab.commandHistory[nextIndex]);
+      }
+    } else if (e.ctrlKey && e.key === 'c') {
+      // Interrupt signal
+      if (activeTab.isRunning) {
+        setTabs((prev) =>
+          prev.map((t) => (t.id === activeTabId ? { ...t, isRunning: false } : t))
+        );
+      }
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full bg-[#121316] text-neutral-200 font-mono text-xs select-text">
-      {/* Terminal Top Bar */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#18191d] border-b border-neutral-800 shrink-0">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 font-sans font-medium text-[11px]">
-            <TerminalIcon className="w-3.5 h-3.5 text-blue-400" />
-            <span>{terminalInfo?.shell || 'PowerShell'}</span>
-          </div>
-
+    <div className="flex flex-col h-full bg-[#0d1117] text-[#c9d1d9] font-mono text-xs select-text">
+      {/* Tab bar header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-[#161b22] border-b border-[#30363d] shrink-0">
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveTabId(tab.id);
+                  setTimeout(() => inputRef.current?.focus(), 50);
+                }}
+                className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all font-medium border ${
+                  isActive
+                    ? 'bg-[#0d1117] text-white border-[#388bfd] shadow-sm'
+                    : 'bg-[#21262d] text-[#8b949e] border-transparent hover:text-[#c9d1d9] hover:bg-[#30363d]'
+                }`}
+              >
+                <TerminalIcon className={`w-3.5 h-3.5 ${isActive ? 'text-[#58a6ff]' : 'text-[#8b949e]'}`} />
+                <span>{tab.title}</span>
+                {tabs.length > 1 && (
+                  <span
+                    onClick={(e) => handleCloseTab(tab.id, e)}
+                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 rounded p-0.5 ml-1 transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </span>
+                )}
+              </button>
+            );
+          })}
           <button
-            onClick={checkConnection}
-            title={daemonOnline ? 'ODON Daemon is online on port 4096' : 'Click to re-check connection to daemon'}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-sans transition-all ${
-              daemonOnline
-                ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/40'
-                : 'bg-amber-950/70 text-amber-400 border border-amber-800/40 hover:bg-amber-900/60'
-            }`}
+            type="button"
+            onClick={handleCreateTab}
+            title="New Terminal Tab"
+            className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#21262d] text-[#8b949e] hover:text-white hover:bg-[#30363d] transition-all"
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${daemonOnline ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
-            <span>{daemonOnline ? 'Daemon Online' : 'Daemon Offline'}</span>
+            <Plus className="w-3.5 h-3.5" />
           </button>
-
-          <div className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-neutral-400 font-mono truncate max-w-[180px]" title={currentCwd}>
-            <FolderOpen className="w-3 h-3 text-neutral-500 shrink-0" />
-            <span className="truncate">{currentCwd || '...'}</span>
-          </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        {/* Toolbar actions */}
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          <span className="text-[10px] text-[#8b949e] bg-[#21262d] px-2 py-0.5 rounded border border-[#30363d]">
+            {activeTab?.shell || 'PowerShell'}
+          </span>
           <button
-            onClick={checkConnection}
-            className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
-            title="Reconnect daemon"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={handleCopyAll}
-            className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
-            title="Copy all output"
+            type="button"
+            onClick={handleCopyHistory}
+            title="Copy Output"
+            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
           <button
+            type="button"
             onClick={handleClear}
-            className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
-            title="Clear terminal (Ctrl+L / cls)"
+            title="Clear Buffer"
+            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="Close Terminal"
+              className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors ml-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Quick Command Chips */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#151619] border-b border-neutral-800/60 overflow-x-auto no-scrollbar shrink-0">
-        <span className="text-[10px] text-neutral-500 font-sans uppercase tracking-wider font-semibold mr-1">Quick:</span>
-        {quickChips.map((chip) => (
-          <button
-            key={chip.label}
-            onClick={() => handleRunCommand(chip.cmd)}
-            disabled={isRunning}
-            className="px-2 py-0.5 rounded bg-neutral-800/80 hover:bg-neutral-700/80 text-neutral-300 hover:text-white text-[11px] whitespace-nowrap transition-colors flex items-center gap-1 border border-neutral-700/40"
-          >
-            <span>{chip.label}</span>
-          </button>
-        ))}
+      {/* Quick Execution Presets Bar */}
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-[#090d13] border-b border-[#21262d] overflow-x-auto text-[11px] shrink-0">
+        <span className="text-[#8b949e] uppercase tracking-wider text-[10px]">Quick:</span>
+        <button
+          onClick={() => handleRunCommand('cargo test -p odon-tools')}
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#58a6ff] border border-[#30363d] transition-colors"
+        >
+          cargo test
+        </button>
+        <button
+          onClick={() => handleRunCommand('git status -s')}
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#7ee787] border border-[#30363d] transition-colors"
+        >
+          git status
+        </button>
+        <button
+          onClick={() => handleRunCommand('git log -5 --oneline')}
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#d2a8ff] border border-[#30363d] transition-colors"
+        >
+          git log
+        </button>
+        <button
+          onClick={() => handleRunCommand('ls')}
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#ffa657] border border-[#30363d] transition-colors"
+        >
+          ls
+        </button>
       </div>
 
-      {/* Scrollable Output Stream */}
-      <div
-        className="flex-1 p-3.5 overflow-y-auto font-mono text-[11.5px] leading-relaxed space-y-3 cursor-text selection:bg-blue-600/40"
-        onClick={() => inputRef.current?.focus()}
-      >
-        {history.map((item) => (
+      {/* Terminal Output Log Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {activeTab?.history.map((item) => (
           <div key={item.id} className="space-y-1">
-            {/* Command Header line */}
-            <div className="flex items-center gap-1.5 text-neutral-400">
-              <span className="text-blue-400 font-semibold">PS</span>
-              <span className="text-neutral-500 truncate max-w-[220px]">{item.cwd}&gt;</span>
-              <span className="text-neutral-100 font-medium">{item.command}</span>
-              <span className="text-[10px] text-neutral-600 ml-auto font-sans">{item.timestamp}</span>
+            <div className="flex items-center gap-2 text-[#8b949e]">
+              <span className="text-[#58a6ff] font-semibold">❯</span>
+              <span className="text-[#e6edf3] font-semibold">{item.command}</span>
+              <span className="text-[10px] ml-auto opacity-60">{item.timestamp}</span>
             </div>
-
-            {/* STDOUT */}
             {item.stdout && (
-              <pre className="text-neutral-300 whitespace-pre-wrap font-mono pl-4 border-l border-neutral-700/50">
+              <pre className="text-[#c9d1d9] whitespace-pre-wrap break-all pl-4 border-l border-[#30363d]/60 leading-relaxed">
                 {item.stdout}
               </pre>
             )}
-
-            {/* STDERR */}
             {item.stderr && (
-              <pre className="text-rose-400 whitespace-pre-wrap font-mono pl-4 border-l-2 border-rose-500/60 bg-rose-950/20 py-1 rounded-r">
+              <pre className="text-[#ff7b72] whitespace-pre-wrap break-all pl-4 border-l border-[#ff7b72]/40 leading-relaxed">
                 {item.stderr}
               </pre>
-            )}
-
-            {/* Exit status badge if not zero */}
-            {item.exit_code !== 0 && (
-              <div className="text-[10px] text-rose-400 pl-4 font-sans">
-                Process exited with status code {item.exit_code}
-              </div>
             )}
           </div>
         ))}
 
-        {/* Currently Running Command */}
-        {isRunning && (
-          <div className="flex items-center gap-2 text-blue-400 pl-4 py-1">
+        {activeTab?.isRunning && (
+          <div className="flex items-center gap-2 text-[#58a6ff] py-1">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span className="text-neutral-400 italic text-[11px]">Executing command...</span>
+            <span className="text-xs">Executing command...</span>
           </div>
         )}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* Prompt Input Line */}
-      <div className="flex items-center gap-2 px-3.5 py-2.5 bg-[#18191d] border-t border-neutral-800 shrink-0">
-        <div className="flex items-center gap-1 text-blue-400 font-semibold select-none">
-          <span>PS</span>
-          <span className="text-neutral-500">&gt;</span>
+      {/* Terminal Interactive Prompt Bar */}
+      <div className="flex items-center gap-2 p-2.5 bg-[#161b22] border-t border-[#30363d] shrink-0">
+        <div className="flex items-center gap-1 text-[#58a6ff] shrink-0 font-semibold text-xs">
+          <span>{activeTab?.cwd ? activeTab.cwd.split('/').pop() || activeTab.cwd : 'odon'}</span>
+          <span>❯</span>
         </div>
         <input
           ref={inputRef}
@@ -332,18 +439,18 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={isRunning}
-          placeholder={isRunning ? 'Command running...' : 'Type PowerShell command (e.g. dir, git status)...'}
-          className="flex-1 bg-transparent text-neutral-100 font-mono text-[11.5px] outline-none placeholder:text-neutral-600 disabled:opacity-50"
+          disabled={activeTab?.isRunning}
+          placeholder={activeTab?.isRunning ? 'Running process...' : 'Type CLI / PowerShell command...'}
+          className="flex-1 bg-transparent border-none text-[#e6edf3] focus:outline-none text-xs font-mono placeholder-[#6e7681]"
           autoFocus
         />
         <button
+          type="button"
           onClick={() => handleRunCommand()}
-          disabled={!inputVal.trim() || isRunning}
-          className="p-1 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 text-white disabled:text-neutral-600 transition-colors"
-          title="Run command (Enter)"
+          disabled={!inputVal.trim() || activeTab?.isRunning}
+          className="p-1.5 rounded-md bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:hover:bg-[#238636] text-white transition-colors"
         >
-          <Play className="w-3 h-3 fill-current" />
+          <Play className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>

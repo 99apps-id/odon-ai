@@ -19,9 +19,11 @@ import {
   AlertCircle,
   LogOut,
   Radio,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { api, OAuthAccountInfo, OAuthLoginResponse } from '../api';
-import { ProviderItem, ModelItem, FALLBACK_PROVIDERS } from '../types';
+import { ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from '../types';
 import { ProviderLogo } from './ProviderLogo';
 
 interface SettingsModalProps {
@@ -118,6 +120,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
+
+  // Custom models state for OpenAI-Compatible provider
+  const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
+  const [newModelId, setNewModelId] = useState('');
+  const [newModelName, setNewModelName] = useState('');
+  const [newModelContext, setNewModelContext] = useState(128000);
+
+  const handleAddCustomModel = () => {
+    const trimmedId = newModelId.trim();
+    if (!trimmedId) return;
+    const model: ModelItem = {
+      id: trimmedId,
+      name: newModelName.trim() || trimmedId,
+      context: Number(newModelContext) || 128000,
+      recommended: false,
+    };
+    const updated = [...customOpenAiModels.filter((m) => m.id !== model.id), model];
+    setCustomOpenAiModels(updated);
+    saveCustomOpenAiModels(updated);
+    setNewModelId('');
+    setNewModelName('');
+  };
+
+  const handleDeleteCustomModel = (id: string) => {
+    const updated = customOpenAiModels.filter((m) => m.id !== id);
+    setCustomOpenAiModels(updated);
+    saveCustomOpenAiModels(updated);
+  };
 
   // Probe daemon and fetch model catalog
   useEffect(() => {
@@ -692,80 +722,215 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
 
                 {/* Available Models in this provider */}
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-                      Official Provider Models ({currentProvider.models.length})
-                    </span>
-                    <span className="text-[11px] text-neutral-400">Click to set as active session model</span>
-                  </div>
+                {currentProvider.id === 'openai-compatible' ? (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-850 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 dark:text-neutral-200">
+                          Tambah Model Kustom (OpenAI-Compatible)
+                        </span>
+                        <span className="text-[11px] text-neutral-400">vLLM, Ollama, LM Studio, LiteLLM</span>
+                      </div>
 
-                  <div className="grid grid-cols-1 gap-2">
-                    {currentProvider.models.map((m) => {
-                      const wireId = `${currentProvider.id}::${m.id}`;
-                      const isSelected = currentModel === m.id || currentModel === wireId || currentModel === m.name;
-                      return (
-                        <div
-                          key={m.id}
-                          onClick={() => {
-                            setSelectedProviderId(currentProvider.id);
-                            onSelectProvider?.(currentProvider.id);
-                            if (typeof window !== 'undefined') {
-                              localStorage.setItem('odon_active_provider', currentProvider.id);
-                              localStorage.setItem('odon_selected_model', m.id);
-                            }
-                            onSelectModel?.(m.id);
-                          }}
-                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${isSelected
-                              ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30'
-                              : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 bg-white dark:bg-neutral-850'
-                            }`}
-                        >
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-xs text-neutral-900 dark:text-white">
-                                {m.name}
-                              </span>
-                              {m.recommended && (
-                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                                  Recommended
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-2">
-                              <span>wire: <strong className="text-neutral-600 dark:text-neutral-300">{m.id}</strong></span>
-                              <span>·</span>
-                              <span>{(m.context / 1000).toFixed(0)}k context</span>
-                            </div>
-                          </div>
-
-                          {isSelected ? (
-                            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1">
-                              <Check className="w-3.5 h-3.5" />
-                              Active
-                            </span>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedProviderId(currentProvider.id);
-                                onSelectProvider?.(currentProvider.id);
-                                if (typeof window !== 'undefined') {
-                                  localStorage.setItem('odon_active_provider', currentProvider.id);
-                                  localStorage.setItem('odon_selected_model', m.id);
-                                }
-                                onSelectModel?.(m.id);
-                              }}
-                              className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
-                            >
-                              Use Model
-                            </button>
-                          )}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="sm:col-span-1">
+                          <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Model ID *</label>
+                          <input
+                            type="text"
+                            value={newModelId}
+                            onChange={(e) => setNewModelId(e.target.value)}
+                            placeholder="misal: deepseek-r1:32b"
+                            className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono outline-none focus:border-blue-500"
+                          />
                         </div>
-                      );
-                    })}
+                        <div className="sm:col-span-1">
+                          <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Nama Tampilan</label>
+                          <input
+                            type="text"
+                            value={newModelName}
+                            onChange={(e) => setNewModelName(e.target.value)}
+                            placeholder="misal: Local DeepSeek R1"
+                            className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="sm:col-span-1">
+                          <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Context Window</label>
+                          <input
+                            type="number"
+                            value={newModelContext}
+                            onChange={(e) => setNewModelContext(Number(e.target.value))}
+                            placeholder="128000"
+                            className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAddCustomModel}
+                        disabled={!newModelId.trim()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Tambah Baris Model</span>
+                      </button>
+                    </div>
+
+                    {/* Table of custom models */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                          Daftar Model Terkonfigurasi ({customOpenAiModels.length})
+                        </span>
+                        <span className="text-[11px] text-neutral-400">Klik model untuk menjadikannya model aktif</span>
+                      </div>
+
+                      {customOpenAiModels.length === 0 ? (
+                        <div className="p-4 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-400">
+                          Belum ada model kustom. Masukkan Model ID di atas lalu klik Tambah Baris Model.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2">
+                          {customOpenAiModels.map((m) => {
+                            const isSelected = currentModel === m.id || currentModel === `openai-compatible::${m.id}`;
+                            return (
+                              <div
+                                key={m.id}
+                                className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
+                                  isSelected
+                                    ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30'
+                                    : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-850'
+                                }`}
+                              >
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-xs text-neutral-900 dark:text-white">
+                                      {m.name}
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-2">
+                                    <span>id: <strong className="text-neutral-600 dark:text-neutral-300">{m.id}</strong></span>
+                                    <span>·</span>
+                                    <span>{(m.context / 1000).toFixed(0)}k context</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {isSelected ? (
+                                    <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                                      <Check className="w-3.5 h-3.5" />
+                                      Active
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedProviderId('openai-compatible');
+                                        onSelectProvider?.('openai-compatible');
+                                        if (typeof window !== 'undefined') {
+                                          localStorage.setItem('odon_active_provider', 'openai-compatible');
+                                          localStorage.setItem('odon_selected_model', m.id);
+                                        }
+                                        onSelectModel?.(m.id);
+                                      }}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors cursor-pointer"
+                                    >
+                                      Use Model
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteCustomModel(m.id)}
+                                    className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                                    title="Hapus model baris ini"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                        Official Provider Models ({currentProvider.models.length})
+                      </span>
+                      <span className="text-[11px] text-neutral-400">Click to set as active session model</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2">
+                      {currentProvider.models.map((m) => {
+                        const wireId = `${currentProvider.id}::${m.id}`;
+                        const isSelected = currentModel === m.id || currentModel === wireId || currentModel === m.name;
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              setSelectedProviderId(currentProvider.id);
+                              onSelectProvider?.(currentProvider.id);
+                              if (typeof window !== 'undefined') {
+                                localStorage.setItem('odon_active_provider', currentProvider.id);
+                                localStorage.setItem('odon_selected_model', m.id);
+                              }
+                              onSelectModel?.(m.id);
+                            }}
+                            className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30'
+                                : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 bg-white dark:bg-neutral-850'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-xs text-neutral-900 dark:text-white">
+                                  {m.name}
+                                </span>
+                                {m.recommended && (
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                                    Recommended
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-2">
+                                <span>wire: <strong className="text-neutral-600 dark:text-neutral-300">{m.id}</strong></span>
+                                <span>·</span>
+                                <span>{(m.context / 1000).toFixed(0)}k context</span>
+                              </div>
+                            </div>
+
+                            {isSelected ? (
+                              <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" />
+                                Active
+                              </span>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedProviderId(currentProvider.id);
+                                  onSelectProvider?.(currentProvider.id);
+                                  if (typeof window !== 'undefined') {
+                                    localStorage.setItem('odon_active_provider', currentProvider.id);
+                                    localStorage.setItem('odon_selected_model', m.id);
+                                  }
+                                  onSelectModel?.(m.id);
+                                }}
+                                className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
+                              >
+                                Use Model
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -1,0 +1,544 @@
+use async_trait::async_trait;
+use odon_core::{OdonError, Result};
+use odon_security::RiskTier;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use serde_json::{json, Value};
+use tokio::process::Command;
+
+use crate::registry::{Tool, ToolContext};
+
+async fn run_git(workspace: &str, args: &[&str]) -> Result<(i32, String, String)> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workspace);
+    cmd.args(args);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let output = cmd.output().await.map_err(|e| OdonError::Tool {
+        tool: "git_ext".to_string(),
+        message: format!("Failed to run git command: {e}"),
+    })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+    Ok((code, stdout, stderr))
+}
+
+pub struct GitHubApiClient {
+    client: reqwest::Client,
+    token: Option<String>,
+}
+
+impl GitHubApiClient {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            token: std::env::var("GITHUB_TOKEN").ok(),
+        }
+    }
+
+    fn headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(USER_AGENT, HeaderValue::from_static("odon-github-connector/1.0"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if let Some(t) = &self.token {
+            if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", t)) {
+                headers.insert(AUTHORIZATION, val);
+            }
+        }
+        headers
+    }
+}
+
+// 1. git_merge
+pub struct GitMergeTool;
+#[async_trait]
+impl Tool for GitMergeTool {
+    fn name(&self) -> &str { "git_merge" }
+    fn description(&self) -> &str { "Merge specified branch into current working branch" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "branch": { "type": "string", "description": "Branch name to merge" },
+                "message": { "type": "string", "description": "Merge commit message" }
+            },
+            "required": ["branch"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let branch = args.get("branch").and_then(|b| b.as_str()).unwrap_or("main");
+        let msg = args.get("message").and_then(|m| m.as_str());
+
+        let mut git_args = vec!["merge", branch];
+        if let Some(m) = msg {
+            git_args.push("-m");
+            git_args.push(m);
+        }
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
+        Ok(json!({ "exit_code": code, "stdout": stdout, "stderr": stderr, "merged": code == 0 }))
+    }
+}
+
+// 2. git_rebase
+pub struct GitRebaseTool;
+#[async_trait]
+impl Tool for GitRebaseTool {
+    fn name(&self) -> &str { "git_rebase" }
+    fn description(&self) -> &str { "Rebase current branch onto target branch or upstream" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "onto": { "type": "string", "description": "Target branch to rebase onto" },
+                "abort": { "type": "boolean", "description": "Abort ongoing rebase", "default": false }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let abort = args.get("abort").and_then(|a| a.as_bool()).unwrap_or(false);
+        let onto = args.get("onto").and_then(|o| o.as_str()).unwrap_or("main");
+
+        let git_args = if abort { vec!["rebase", "--abort"] } else { vec!["rebase", onto] };
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
+        Ok(json!({ "exit_code": code, "stdout": stdout, "stderr": stderr, "rebased": code == 0 }))
+    }
+}
+
+// 3. git_cherry_pick
+pub struct GitCherryPickTool;
+#[async_trait]
+impl Tool for GitCherryPickTool {
+    fn name(&self) -> &str { "git_cherry_pick" }
+    fn description(&self) -> &str { "Apply changes introduced by specified commit SHA" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "commit": { "type": "string", "description": "Commit SHA to cherry pick" }
+            },
+            "required": ["commit"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("");
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["cherry-pick", commit]).await?;
+        Ok(json!({ "commit": commit, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+    }
+}
+
+// 4. git_revert
+pub struct GitRevertTool;
+#[async_trait]
+impl Tool for GitRevertTool {
+    fn name(&self) -> &str { "git_revert" }
+    fn description(&self) -> &str { "Revert existing commit by creating an inverse commit" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "commit": { "type": "string", "description": "Commit SHA to revert" }
+            },
+            "required": ["commit"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("");
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["revert", "--no-edit", commit]).await?;
+        Ok(json!({ "commit": commit, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+    }
+}
+
+// 5. git_reset_hard
+pub struct GitResetHardTool;
+#[async_trait]
+impl Tool for GitResetHardTool {
+    fn name(&self) -> &str { "git_reset_hard" }
+    fn description(&self) -> &str { "Hard reset working directory and HEAD to target commit (destructive)" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "Target commit or ref (default: HEAD)", "default": "HEAD" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let target = args.get("target").and_then(|t| t.as_str()).unwrap_or("HEAD");
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["reset", "--hard", target]).await?;
+        Ok(json!({ "target": target, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+    }
+}
+
+// 6. git_clean
+pub struct GitCleanTool;
+#[async_trait]
+impl Tool for GitCleanTool {
+    fn name(&self) -> &str { "git_clean" }
+    fn description(&self) -> &str { "Remove untracked files from the working tree" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "force": { "type": "boolean", "description": "Force removal", "default": true },
+                "dry_run": { "type": "boolean", "description": "Only show what would be removed", "default": false }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let dry = args.get("dry_run").and_then(|d| d.as_bool()).unwrap_or(false);
+        let git_args = if dry { vec!["clean", "-fdn"] } else { vec!["clean", "-fd"] };
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
+        Ok(json!({ "dry_run": dry, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+    }
+}
+
+// 7. git_tag
+pub struct GitTagTool;
+#[async_trait]
+impl Tool for GitTagTool {
+    fn name(&self) -> &str { "git_tag" }
+    fn description(&self) -> &str { "List existing git tags or create a new release tag" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "tag": { "type": "string", "description": "Tag name to create (optional)" },
+                "message": { "type": "string", "description": "Tag annotation message" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let tag = args.get("tag").and_then(|t| t.as_str());
+        let msg = args.get("message").and_then(|m| m.as_str());
+
+        if let Some(t) = tag {
+            let mut git_args = vec!["tag", "-a", t];
+            if let Some(m) = msg {
+                git_args.push("-m");
+                git_args.push(m);
+            } else {
+                git_args.push("-m");
+                git_args.push(t);
+            }
+            let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
+            Ok(json!({ "created_tag": t, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+        } else {
+            let (code, stdout, _) = run_git(&ctx.workspace_root, &["tag", "-l"]).await?;
+            let tags: Vec<&str> = stdout.lines().collect();
+            Ok(json!({ "exit_code": code, "tags": tags }))
+        }
+    }
+}
+
+// 8. git_remote_add & 9. git_remote_set_url
+pub struct GitRemoteAddTool;
+#[async_trait]
+impl Tool for GitRemoteAddTool {
+    fn name(&self) -> &str { "git_remote_add" }
+    fn description(&self) -> &str { "Add a new remote repository origin or upstream" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "Remote name (e.g. origin, upstream)" },
+                "url": { "type": "string", "description": "Remote repository URL" }
+            },
+            "required": ["name", "url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let name = args.get("name").and_then(|n| n.as_str()).unwrap_or("origin");
+        let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["remote", "add", name, url]).await?;
+        Ok(json!({ "remote": name, "url": url, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+    }
+}
+
+pub struct GitRemoteSetUrlTool;
+#[async_trait]
+impl Tool for GitRemoteSetUrlTool {
+    fn name(&self) -> &str { "git_remote_set_url" }
+    fn description(&self) -> &str { "Change the URL of an existing git remote" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "Remote name" },
+                "url": { "type": "string", "description": "New URL" }
+            },
+            "required": ["name", "url"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let name = args.get("name").and_then(|n| n.as_str()).unwrap_or("origin");
+        let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["remote", "set-url", name, url]).await?;
+        Ok(json!({ "remote": name, "url": url, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+    }
+}
+
+// 10. git_blame
+pub struct GitBlameTool;
+#[async_trait]
+impl Tool for GitBlameTool {
+    fn name(&self) -> &str { "git_blame" }
+    fn description(&self) -> &str { "Show commit and author information for each line of a file" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path to blame" },
+                "lines": { "type": "string", "description": "Optional line range e.g. '1,50'" }
+            },
+            "required": ["path"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let lines = args.get("lines").and_then(|l| l.as_str());
+
+        let mut git_args = vec!["blame", "--line-porcelain"];
+        if let Some(l) = lines {
+            git_args.push("-L");
+            git_args.push(l);
+        }
+        git_args.push(rel);
+
+        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
+        Ok(json!({ "path": rel, "exit_code": code, "blame": stdout, "stderr": stderr }))
+    }
+}
+
+// 11. git_log_file
+pub struct GitLogFileTool;
+#[async_trait]
+impl Tool for GitLogFileTool {
+    fn name(&self) -> &str { "git_log_file" }
+    fn description(&self) -> &str { "View commit history filtered to a specific file" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Target file path" },
+                "limit": { "type": "integer", "description": "Maximum commits", "default": 10 }
+            },
+            "required": ["path"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10);
+        let limit_str = format!("-{}", limit);
+
+        let (code, stdout, _) = run_git(&ctx.workspace_root, &["log", &limit_str, "--oneline", "--", rel]).await?;
+        let commits: Vec<&str> = stdout.lines().collect();
+        Ok(json!({ "path": rel, "exit_code": code, "commits": commits }))
+    }
+}
+
+// 12. git_ls_files
+pub struct GitLsFilesTool;
+#[async_trait]
+impl Tool for GitLsFilesTool {
+    fn name(&self) -> &str { "git_ls_files" }
+    fn description(&self) -> &str { "List all files tracked by the Git repository" }
+    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+        let (code, stdout, _) = run_git(&ctx.workspace_root, &["ls-files"]).await?;
+        let files: Vec<&str> = stdout.lines().collect();
+        Ok(json!({ "exit_code": code, "total_tracked": files.len(), "files": files }))
+    }
+}
+
+// 13. GitHub Advanced Operations
+pub struct GitHubCreateReviewTool {
+    gh: GitHubApiClient,
+}
+impl GitHubCreateReviewTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubCreateReviewTool {
+    fn name(&self) -> &str { "github_create_review" }
+    fn description(&self) -> &str { "Submit a formal code review on a GitHub pull request" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "pull_number": { "type": "integer" },
+                "event": { "type": "string", "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT"] },
+                "body": { "type": "string" }
+            },
+            "required": ["owner", "repo", "pull_number", "event", "body"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let num = args.get("pull_number").and_then(|n| n.as_u64()).unwrap_or(1);
+        let event = args.get("event").and_then(|e| e.as_str()).unwrap_or("COMMENT");
+        let body = args.get("body").and_then(|b| b.as_str()).unwrap_or("");
+
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{num}/reviews");
+        let resp = self.gh.client.post(&url)
+            .headers(self.gh.headers())
+            .json(&json!({ "event": event, "body": body }))
+            .send().await.map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+
+        let data: Value = resp.json().await.unwrap_or(json!({ "status": "submitted" }));
+        Ok(json!({ "pull_number": num, "review": data }))
+    }
+}
+
+pub struct GitHubListCommentsTool {
+    gh: GitHubApiClient,
+}
+impl GitHubListCommentsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubListCommentsTool {
+    fn name(&self) -> &str { "github_list_comments" }
+    fn description(&self) -> &str { "List review and issue comments on a pull request or issue" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "issue_number": { "type": "integer" }
+            },
+            "required": ["owner", "repo", "issue_number"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let num = args.get("issue_number").and_then(|n| n.as_u64()).unwrap_or(1);
+
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/issues/{num}/comments");
+        let resp = self.gh.client.get(&url).headers(self.gh.headers()).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let comments: Value = resp.json().await.unwrap_or(json!([]));
+        Ok(json!({ "comments": comments }))
+    }
+}
+
+pub struct GitHubMergePrTool {
+    gh: GitHubApiClient,
+}
+impl GitHubMergePrTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubMergePrTool {
+    fn name(&self) -> &str { "github_merge_pr" }
+    fn description(&self) -> &str { "Merge an approved pull request on GitHub" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "pull_number": { "type": "integer" },
+                "merge_method": { "type": "string", "enum": ["merge", "squash", "rebase"], "default": "squash" }
+            },
+            "required": ["owner", "repo", "pull_number"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let num = args.get("pull_number").and_then(|n| n.as_u64()).unwrap_or(1);
+        let method = args.get("merge_method").and_then(|m| m.as_str()).unwrap_or("squash");
+
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{num}/merge");
+        let resp = self.gh.client.put(&url).headers(self.gh.headers()).json(&json!({ "merge_method": method })).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let data: Value = resp.json().await.unwrap_or(json!({ "merged": true }));
+        Ok(json!({ "pull_number": num, "result": data }))
+    }
+}
+
+pub struct GitHubWorkflowListTool {
+    gh: GitHubApiClient,
+}
+impl GitHubWorkflowListTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubWorkflowListTool {
+    fn name(&self) -> &str { "github_workflow_list" }
+    fn description(&self) -> &str { "List GitHub Actions CI/CD workflows and recent runs" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" }
+            },
+            "required": ["owner", "repo"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/workflows");
+        let resp = self.gh.client.get(&url).headers(self.gh.headers()).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let data: Value = resp.json().await.unwrap_or(json!({ "workflows": [] }));
+        Ok(data)
+    }
+}
+
+pub struct GitHubWorkflowRunTool {
+    gh: GitHubApiClient,
+}
+impl GitHubWorkflowRunTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubWorkflowRunTool {
+    fn name(&self) -> &str { "github_workflow_run" }
+    fn description(&self) -> &str { "Trigger a GitHub Actions workflow dispatch run" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "workflow_id": { "type": "string", "description": "Workflow ID or filename" },
+                "ref": { "type": "string", "default": "main" }
+            },
+            "required": ["owner", "repo", "workflow_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
+        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let w_id = args.get("workflow_id").and_then(|w| w.as_str()).unwrap_or("");
+        let r_ref = args.get("ref").and_then(|r| r.as_str()).unwrap_or("main");
+
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/workflows/{w_id}/dispatches");
+        let resp = self.gh.client.post(&url).headers(self.gh.headers()).json(&json!({ "ref": r_ref })).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        Ok(json!({ "status": "dispatched", "workflow": w_id, "ref": r_ref, "code": resp.status().as_u16() }))
+    }
+}

@@ -44,7 +44,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
   };
 
   return (
-    <aside className="w-[420px] shrink-0 border-l border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#181818] flex flex-col h-full overflow-hidden select-none">
+    <aside className="w-[420px] shrink-0 border-l border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#181818] flex flex-col h-full overflow-hidden select-text">
       {/* Top Header & Tabs */}
       <div className="border-b border-neutral-200 dark:border-neutral-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-0.5 rounded-lg text-[12px] font-medium text-neutral-600 dark:text-neutral-400">
