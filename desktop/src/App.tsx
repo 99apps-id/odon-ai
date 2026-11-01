@@ -434,7 +434,16 @@ export default function App() {
           arguments: { description: event.payload.description },
         });
       } else if (event.type === 'tool_call_started') {
-        setStreamingTool(event.payload.tool_name);
+        const toolName = event.payload.tool_name;
+        setStreamingTool(toolName);
+        if (['terminal_exec', 'bash_run', 'shell_exec', 'exec_background', 'exec_stream_stdout'].includes(toolName)) {
+          window.dispatchEvent(new CustomEvent('odon:agent-terminal-event', { detail: event.payload }));
+        } else if (['browser_open', 'url_preview', 'probe_url', 'web_fetch'].includes(toolName)) {
+          const u = event.payload.arguments?.url;
+          if (u) {
+            window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { url: u } }));
+          }
+        }
       } else if (event.type === 'tool_call_finished') {
         setStreamingTool(null);
       } else if (event.type === 'artifact_created') {
@@ -456,6 +465,36 @@ export default function App() {
       unsubscribe();
     };
   }, [currentSessionId]);
+
+  // Cross-panel integration event listeners (Terminal, Browser, Agent interaction)
+  useEffect(() => {
+    const handleOpenBrowser = (e: any) => {
+      setRightPanelView('browser');
+      setIsRightPanelOpen(true);
+    };
+
+    const handleRunTerminal = (e: any) => {
+      setRightPanelView('terminal');
+      setIsRightPanelOpen(true);
+    };
+
+    const handleSendToAgent = (e: any) => {
+      if (e.detail?.text) {
+        setActiveNav('chat');
+        setInputMessage(e.detail.text);
+      }
+    };
+
+    window.addEventListener('odon:open-browser', handleOpenBrowser);
+    window.addEventListener('odon:run-terminal', handleRunTerminal);
+    window.addEventListener('odon:send-to-agent', handleSendToAgent);
+
+    return () => {
+      window.removeEventListener('odon:open-browser', handleOpenBrowser);
+      window.removeEventListener('odon:run-terminal', handleRunTerminal);
+      window.removeEventListener('odon:send-to-agent', handleSendToAgent);
+    };
+  }, []);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -1367,28 +1406,60 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     </div>
 
                     {msg.thought && (
-                      <details className="ml-7 rounded-xl bg-neutral-100/70 border border-neutral-200/70 p-2.5 text-xs text-neutral-600">
-                        <summary className="cursor-pointer text-[11px] font-medium text-neutral-500 hover:text-neutral-800 flex items-center gap-1.5 select-none">
-                          <Sparkles className="w-3 h-3 text-amber-500" />
-                          <span>Thought process</span>
-                        </summary>
-                        <div className="mt-2 text-[11.5px] italic text-neutral-600 leading-relaxed pl-1 border-l-2 border-neutral-300 ml-1 select-text">
-                          {msg.thought}
-                        </div>
-                      </details>
+                      <div className="ml-7 my-2.5">
+                        <details className="group rounded-2xl bg-neutral-50/90 border border-neutral-200/80 overflow-hidden shadow-2xs">
+                          <summary className="px-3.5 py-2 cursor-pointer text-xs font-semibold text-neutral-700 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/60 hover:bg-neutral-100 transition-colors">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                              <span>Reasoning & Thought Process</span>
+                            </div>
+                            <span className="text-[10px] text-neutral-400 font-mono group-open:hidden">Click to expand</span>
+                          </summary>
+                          <div className="p-4 border-t border-neutral-200/60 bg-white text-[13.5px] leading-relaxed text-neutral-700 select-text">
+                            <MarkdownView content={msg.thought} />
+                          </div>
+                        </details>
+                      </div>
                     )}
 
                     {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div className="ml-7 flex flex-wrap items-center gap-1.5 py-0.5">
-                        {msg.toolCalls.map((tc, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 text-[10.5px] font-mono text-neutral-600"
-                          >
-                            <Terminal className="w-2.5 h-2.5 text-neutral-400" />
-                            {tc}
-                          </span>
-                        ))}
+                      <div className="ml-7 flex flex-wrap items-center gap-2 py-1">
+                        {msg.toolCalls.map((tc, idx) => {
+                          const tcLower = tc.toLowerCase();
+                          const isTerm = ['terminal', 'bash', 'shell', 'exec', 'kill'].some(k => tcLower.includes(k));
+                          const isWeb = ['browser', 'web', 'fetch', 'url', 'http'].some(k => tcLower.includes(k));
+                          return (
+                            <span
+                              key={idx}
+                              onClick={() => {
+                                if (isTerm) {
+                                  setRightPanelView('terminal');
+                                  setIsRightPanelOpen(true);
+                                } else if (isWeb) {
+                                  setRightPanelView('browser');
+                                  setIsRightPanelOpen(true);
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-all cursor-pointer ${
+                                isTerm
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200/80 hover:bg-emerald-100'
+                                  : isWeb
+                                  ? 'bg-blue-50 text-blue-800 border-blue-200/80 hover:bg-blue-100'
+                                  : 'bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200'
+                              }`}
+                              title={isTerm ? "Click to view in Terminal panel" : isWeb ? "Click to view in Browser Preview" : tc}
+                            >
+                              {isTerm ? (
+                                <Terminal className="w-3 h-3 text-emerald-600" />
+                              ) : isWeb ? (
+                                <Globe className="w-3 h-3 text-blue-600" />
+                              ) : (
+                                <Terminal className="w-3 h-3 text-neutral-500" />
+                              )}
+                              <span>{tc}</span>
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -1573,15 +1644,20 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     )}
 
                     {streamingThought && (
-                      <details open className="ml-7 rounded-xl bg-neutral-50 border border-neutral-200/60 p-2.5 text-xs text-neutral-600">
-                        <summary className="cursor-pointer text-[11px] font-medium text-neutral-500 hover:text-neutral-800 flex items-center gap-1.5 select-none">
-                          <Sparkles className="w-3 h-3 text-amber-500 animate-spin" />
-                          <span>Thinking...</span>
-                        </summary>
-                        <div className="mt-2 text-[11.5px] italic text-neutral-600 leading-relaxed pl-1 border-l-2 border-neutral-300 ml-1 select-text">
-                          {streamingThought}
+                      <div className="ml-7 my-2.5">
+                        <div className="rounded-2xl bg-amber-50/50 border border-amber-200/80 overflow-hidden shadow-2xs">
+                          <div className="px-3.5 py-2 bg-amber-100/60 border-b border-amber-200/60 text-xs font-semibold text-amber-900 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                              <span>ODON is reasoning...</span>
+                            </div>
+                            <span className="text-[10px] text-amber-700 font-mono animate-pulse">Live</span>
+                          </div>
+                          <div className="p-4 text-[13.5px] leading-relaxed text-neutral-700 max-h-64 overflow-y-auto select-text bg-white/70">
+                            <MarkdownView content={streamingThought} />
+                          </div>
                         </div>
-                      </details>
+                      </div>
                     )}
 
                     <div className="pl-7 select-text">
