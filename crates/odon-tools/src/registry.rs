@@ -20,6 +20,7 @@ pub struct ToolContext {
     pub workspace_root: String,
     pub approval_engine: Arc<ApprovalEngine>,
     pub audit_logger: Arc<AuditLogger>,
+    pub storage: Option<Arc<odon_storage::StorageEngine>>,
 }
 
 #[async_trait]

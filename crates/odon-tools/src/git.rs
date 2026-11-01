@@ -144,3 +144,109 @@ impl Tool for GitCommitTool {
         }))
     }
 }
+
+pub struct GitLogTool;
+
+#[async_trait]
+impl Tool for GitLogTool {
+    fn name(&self) -> &str {
+        "git_log"
+    }
+    fn description(&self) -> &str {
+        "View recent git commit history"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": { "type": "integer", "description": "Number of commits to retrieve (default 10)" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10);
+        let output = Command::new("git")
+            .arg("log")
+            .arg(format!("-n{}", limit))
+            .arg("--oneline")
+            .current_dir(&ctx.workspace_root)
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to run git log: {}", e),
+            })?;
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let commits: Vec<String> = text.lines().map(|s| s.to_string()).collect();
+        Ok(json!({
+            "commits_count": commits.len(),
+            "commits": commits
+        }))
+    }
+}
+
+pub struct GitBranchTool;
+
+#[async_trait]
+impl Tool for GitBranchTool {
+    fn name(&self) -> &str {
+        "git_branch"
+    }
+    fn description(&self) -> &str {
+        "List repository branches or create a new branch"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "create": { "type": "string", "description": "New branch name to create and checkout" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        if let Some(new_branch) = args.get("create").and_then(|b| b.as_str()) {
+            let output = Command::new("git")
+                .arg("checkout")
+                .arg("-b")
+                .arg(new_branch)
+                .current_dir(&ctx.workspace_root)
+                .output()
+                .await
+                .map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Failed to create git branch {}: {}", new_branch, e),
+                })?;
+
+            Ok(json!({
+                "action": "create",
+                "branch": new_branch,
+                "success": output.status.success()
+            }))
+        } else {
+            let output = Command::new("git")
+                .arg("branch")
+                .arg("-a")
+                .current_dir(&ctx.workspace_root)
+                .output()
+                .await
+                .map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Failed to list git branches: {}", e),
+                })?;
+
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            let branches: Vec<String> = text.lines().map(|s| s.trim().to_string()).collect();
+            Ok(json!({
+                "action": "list",
+                "branches": branches
+            }))
+        }
+    }
+}

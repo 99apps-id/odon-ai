@@ -2,50 +2,43 @@ import React, { useState } from 'react';
 import {
   MessageSquare,
   Code2,
-  Sparkles,
   FileText,
   FolderOpen,
   Bot,
   Zap,
   Radio,
-  Search,
   SlidersHorizontal,
   ChevronDown,
-  Bell,
   Settings,
   Paperclip,
   Image as ImageIcon,
   Globe,
-  Mic,
-  Send,
+  ArrowUp,
   Plus,
   Play,
   GitBranch,
   CheckCircle2,
-  Clock,
-  MoreVertical,
+  MoreHorizontal,
   Layers,
   FileCode,
-  FileCheck,
   ExternalLink,
-  ShieldCheck,
-  Terminal,
   PanelRightClose,
   PanelRightOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Maximize2,
   Minimize2,
   X,
-  Eye,
-  Check,
+  Share2,
 } from 'lucide-react';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView } from './components/BrowserPreviewView';
 
 export default function App() {
-  const [activeWorkspace, setActiveWorkspace] = useState<'chat' | 'code' | 'create' | 'documents' | 'files' | 'agents' | 'automations'>('chat');
   const [activeRightTab, setActiveRightTab] = useState<'artifacts' | 'editor' | 'browser' | 'relays'>('artifacts');
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [isRightPanelWide, setIsRightPanelWide] = useState(false);
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
   const [selectedModel, setSelectedModel] = useState('ODON Auto');
   const [inputMessage, setInputMessage] = useState('');
   const [hasTurn, setHasTurn] = useState(true);
@@ -57,190 +50,144 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#fbfbfc] text-[#1c1d22] font-sans antialiased">
+    <div className="flex h-screen w-screen overflow-hidden bg-white text-neutral-900 font-sans antialiased">
       {/* ─────────────────────────────────────────────────────────────
-          LEFT SIDEBAR: NAVIGATION & RECENT CHATS
+          LEFT SIDEBAR: MINIMALIST CHATGPT STYLE
       ───────────────────────────────────────────────────────────── */}
-      <aside className="w-[280px] shrink-0 border-r border-[#eef0f3] bg-[#ffffff] flex flex-col justify-between select-none">
-        {/* Top Header */}
-        <div className="p-4 border-b border-[#f1f3f6]">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white shadow-sm shadow-indigo-100">
-                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                  <path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.35 5L2 22l5.2-1.3c1.42.8 3.07 1.3 4.8 1.3 5.52 0 10-4.48 10-10S17.52 2 12 2zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/>
-                </svg>
+      {isLeftSidebarOpen && (
+        <aside className="w-[260px] shrink-0 border-r border-neutral-200 bg-[#f9f9f9] flex flex-col justify-between select-none">
+          {/* Top Actions */}
+          <div className="p-3 border-b border-neutral-200/80 flex items-center justify-between">
+            <button
+              onClick={() => setHasTurn(false)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-800 hover:bg-neutral-200/60 transition-colors"
+            >
+              <div className="w-5 h-5 rounded-md bg-neutral-900 text-white flex items-center justify-center font-bold text-[11px]">
+                O
               </div>
-              <div>
-                <h1 className="font-bold text-[15px] tracking-tight text-[#111217]">ODON</h1>
-                <p className="text-[10px] text-[#8a8f9d] font-medium leading-none">Open Digital Orchestration</p>
-              </div>
-            </div>
-            <button className="p-1.5 text-[#8a8f9d] hover:text-[#111217] hover:bg-[#f3f4f6] rounded-md transition-colors" title="Settings">
-              <SlidersHorizontal className="w-4 h-4" />
+              <span className="font-semibold text-neutral-900">New Chat</span>
+            </button>
+
+            <button
+              onClick={() => setIsLeftSidebarOpen(false)}
+              className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/60 rounded-md transition-colors"
+              title="Close sidebar"
+            >
+              <PanelLeftClose className="w-4 h-4" />
             </button>
           </div>
-        </div>
 
-        {/* Scrollable Workspaces & History */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
-          {/* New Chat Button */}
-          <button
-            onClick={() => setHasTurn(false)}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg border border-[#e4e7ec] bg-[#ffffff] hover:bg-[#f8f9fb] text-[13px] font-semibold text-[#272932] shadow-xs transition-all active:scale-[0.99]"
-          >
-            <Plus className="w-4 h-4 text-[#6366f1]" />
-            New Chat
-          </button>
-
-          {/* Workspaces Menu */}
-          <div>
-            <div className="text-[11px] font-bold tracking-wider text-[#9aa0ac] uppercase px-2 mb-2">Workspaces</div>
-            <nav className="space-y-0.5">
-              {[
-                { id: 'chat', label: 'AI Chat', icon: MessageSquare },
-                { id: 'code', label: 'Code', icon: Code2 },
-                { id: 'create', label: 'Create', icon: Sparkles },
-                { id: 'documents', label: 'Documents', icon: FileText },
-                { id: 'files', label: 'Files', icon: FolderOpen },
-                { id: 'agents', label: 'Agents', icon: Bot },
-                { id: 'automations', label: 'Automations', icon: Zap },
-              ].map((item) => {
-                const Icon = item.icon;
-                const isActive = activeWorkspace === item.id;
-                return (
+          {/* History List */}
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+            <div>
+              <div className="text-[11px] font-medium text-neutral-400 px-2 mb-1.5">Today</div>
+              <div className="space-y-0.5">
+                {[
+                  { title: 'Personal knowledge hub app', active: true },
+                  { title: 'Refactor SQLite storage engine', active: false },
+                ].map((c, i) => (
                   <button
-                    key={item.id}
-                    onClick={() => {
-                      setActiveWorkspace(item.id as any);
-                      if (item.id === 'chat') setHasTurn(true);
-                      if (item.id === 'code') openRightView('editor');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
-                      isActive
-                        ? 'bg-[#eff2fe] text-[#4f46e5] font-semibold'
-                        : 'text-[#4b5162] hover:bg-[#f5f6f9] hover:text-[#111217]'
+                    key={i}
+                    onClick={() => setHasTurn(true)}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs truncate transition-colors ${
+                      c.active
+                        ? 'bg-neutral-200/70 text-neutral-900 font-medium'
+                        : 'text-neutral-600 hover:bg-neutral-200/40 hover:text-neutral-900'
                     }`}
                   >
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-[#4f46e5]' : 'text-[#848a9b]'}`} />
-                    {item.label}
+                    {c.title}
                   </button>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Recent Chats */}
-          <div>
-            <div className="flex items-center justify-between px-2 mb-2">
-              <span className="text-[11px] font-bold tracking-wider text-[#9aa0ac] uppercase">Recent Chats</span>
-              <button className="text-[#848a9b] hover:text-[#111217]">
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="space-y-1">
-              {[
-                { title: 'Build a project with code, doc...', time: 'Now', active: true },
-                { title: 'Design product landing images', time: '2h', active: false },
-                { title: 'Automate daily report', time: '5h', active: false },
-                { title: 'Integrate Telegram & WhatsApp', time: '1d', active: false },
-                { title: 'ODON product brief', time: '2d', active: false },
-              ].map((c, i) => (
-                <button
-                  key={i}
-                  onClick={() => setHasTurn(true)}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md text-[12.5px] transition-colors text-left ${
-                    c.active
-                      ? 'bg-[#eff2fe]/60 text-[#4f46e5] font-medium'
-                      : 'text-[#4b5162] hover:bg-[#f7f8fa] hover:text-[#111217]'
-                  }`}
-                >
-                  <span className="truncate flex-1 mr-2">{c.title}</span>
-                  <span className="text-[11px] text-[#9ca3af] shrink-0">{c.time}</span>
-                </button>
-              ))}
-              <button className="w-full text-left px-2.5 py-1.5 text-[11.5px] text-[#6366f1] font-semibold hover:underline">
-                View All Chats &rarr;
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* User Profile */}
-        <div className="p-3 border-t border-[#f1f3f6]">
-          <div className="flex items-center justify-between p-1.5 rounded-lg hover:bg-[#f7f8fa] cursor-pointer transition-colors">
-            <div className="flex items-center gap-2.5">
-              <div className="relative">
-                <img
-                  src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80"
-                  alt="Avatar"
-                  className="w-8 h-8 rounded-full object-cover"
-                />
-                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"></span>
+                ))}
               </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] font-semibold text-[#1c1d22]">Alex Chen</span>
-                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#eff2fe] text-[#4f46e5]">Pro</span>
+            </div>
+
+            <div>
+              <div className="text-[11px] font-medium text-neutral-400 px-2 mb-1.5">Previous 7 Days</div>
+              <div className="space-y-0.5">
+                {[
+                  { title: 'Telegram relay integration', active: false },
+                  { title: 'Security policy risk tiers', active: false },
+                  { title: 'Cloud Code OAuth PKCE test', active: false },
+                  { title: 'React 19 Server Actions audit', active: false },
+                ].map((c, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setHasTurn(true)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-neutral-600 hover:bg-neutral-200/40 hover:text-neutral-900 truncate transition-colors"
+                  >
+                    {c.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Account Row */}
+          <div className="p-3 border-t border-neutral-200/80">
+            <div className="flex items-center justify-between p-1.5 rounded-lg hover:bg-neutral-200/60 cursor-pointer transition-colors">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-full bg-neutral-800 text-white flex items-center justify-center text-xs font-semibold">
+                  AC
                 </div>
-                <span className="text-[11px] text-[#8a8f9d]">alex@odon.network</span>
+                <div>
+                  <div className="text-xs font-medium text-neutral-900 leading-none">Alex Chen</div>
+                  <span className="text-[11px] text-neutral-500">Pro plan</span>
+                </div>
               </div>
+              <Settings className="w-3.5 h-3.5 text-neutral-400" />
             </div>
-            <ChevronDown className="w-4 h-4 text-[#8a8f9d]" />
           </div>
-        </div>
-      </aside>
+        </aside>
+      )}
 
       {/* ─────────────────────────────────────────────────────────────
-          CENTER COLUMN: AI CONVERSATION & WORKSPACE
+          CENTER COLUMN: CHATGPT-GRADE CONVERSATIONAL WORKSPACE
       ───────────────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col bg-[#ffffff] overflow-hidden min-w-0">
-        {/* Header */}
-        <header className="h-14 border-b border-[#eef0f3] px-6 flex items-center justify-between shrink-0 bg-[#ffffff]">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-[#1c1d22]">
-              <MessageSquare className="w-4 h-4 text-[#6366f1]" />
-              <h2 className="text-[14px] font-bold text-[#111217]">AI Chat</h2>
-            </div>
-            <span className="text-[#d0d5dd]">|</span>
-            <p className="text-[12px] text-[#6b7280] hidden md:block truncate">Collaborate with ODON to code, create, write, and automate — all in one place.</p>
+      <main className="flex-1 flex flex-col bg-white overflow-hidden min-w-0">
+        {/* Top Header */}
+        <header className="h-12 border-b border-neutral-200/80 px-4 flex items-center justify-between shrink-0 bg-white">
+          <div className="flex items-center gap-2">
+            {!isLeftSidebarOpen && (
+              <button
+                onClick={() => setIsLeftSidebarOpen(true)}
+                className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-md transition-colors mr-1"
+                title="Open sidebar"
+              >
+                <PanelLeftOpen className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Model Selector Pill */}
+            <button className="flex items-center gap-1 px-2.5 py-1 rounded-md hover:bg-neutral-100 text-xs font-semibold text-neutral-900 transition-colors">
+              <span>{selectedModel}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-neutral-500" />
+            </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Model Selector */}
-            <div className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-[#ffffff] hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] cursor-pointer shadow-2xs">
-              <Sparkles className="w-3.5 h-3.5 text-[#6366f1]" />
-              <span>Model: {selectedModel}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#98a2b3] ml-1" />
-            </div>
-
-            <button className="p-2 text-[#667085] hover:text-[#111217] hover:bg-[#f2f4f7] rounded-lg transition-colors">
-              <Bell className="w-4 h-4" />
-            </button>
-            <button className="p-2 text-[#667085] hover:text-[#111217] hover:bg-[#f2f4f7] rounded-lg transition-colors">
-              <Settings className="w-4 h-4" />
+          <div className="flex items-center gap-1.5">
+            <button className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-md transition-colors" title="Share chat">
+              <Share2 className="w-4 h-4" />
             </button>
 
-            {/* Toggle Right Panel Button */}
-            <div className="h-4 w-[1px] bg-[#e5e7eb] mx-1"></div>
+            {/* Toggle Canvas / Right Panel */}
             <button
               onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[12px] font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
                 isRightPanelOpen
-                  ? 'bg-[#f0f2f5] border-[#d1d5db] text-[#111217]'
-                  : 'bg-white border-[#e4e7ec] text-[#6366f1] hover:bg-[#eff2fe]'
+                  ? 'bg-neutral-100 text-neutral-900'
+                  : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
               }`}
-              title={isRightPanelOpen ? 'Hide Right Panel' : 'Show Right Panel'}
+              title={isRightPanelOpen ? 'Hide right panel' : 'Open right panel'}
             >
               {isRightPanelOpen ? (
                 <>
-                  <PanelRightClose className="w-4 h-4 text-[#4b5563]" />
-                  <span className="hidden sm:inline">Hide Panel</span>
+                  <PanelRightClose className="w-4 h-4 text-neutral-600" />
+                  <span className="hidden sm:inline">Close Canvas</span>
                 </>
               ) : (
                 <>
-                  <PanelRightOpen className="w-4 h-4 text-[#6366f1]" />
-                  <span className="hidden sm:inline">Open Panel</span>
+                  <PanelRightOpen className="w-4 h-4 text-neutral-600" />
+                  <span className="hidden sm:inline">Open Canvas</span>
                 </>
               )}
             </button>
@@ -248,187 +195,149 @@ export default function App() {
         </header>
 
         {/* Chat Feed */}
-        <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {!hasTurn ? (
             /* Empty State */
-            <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto text-center space-y-8 my-auto">
-              <div>
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-[#6366f1] mx-auto mb-4">
-                  <Sparkles className="w-6 h-6" />
-                </div>
-                <h2 className="text-2xl font-bold text-[#111217] mb-2 tracking-tight">What can ODON do for you?</h2>
-                <p className="text-[14px] text-[#6b7280]">Code, create, automate, and more with autonomous orchestration.</p>
+            <div className="h-full flex flex-col items-center justify-center max-w-xl mx-auto text-center space-y-6 my-auto">
+              <div className="w-10 h-10 rounded-full bg-neutral-900 text-white flex items-center justify-center text-sm font-bold mx-auto">
+                O
               </div>
+              <h2 className="text-xl font-semibold text-neutral-900 tracking-tight">What do you want to build today?</h2>
 
-              <div className="grid grid-cols-2 gap-3.5 w-full">
+              <div className="grid grid-cols-2 gap-2.5 w-full text-left">
                 {[
-                  { title: 'Build an app', desc: 'React 19, Rust, TypeScript fullstack', icon: Code2, prompt: 'Build a minimal web app with React 19' },
-                  { title: 'Create an image', desc: 'Prompts to 4K Flux / Midjourney cards', icon: ImageIcon, prompt: 'Generate high quality project landing assets' },
-                  { title: 'Make a report', desc: 'PRD, competitive audit, executive brief', icon: FileText, prompt: 'Write a comprehensive PRD for our product' },
-                  { title: 'Run an agent', desc: 'Autonomous multi-step research pipeline', icon: Bot, prompt: 'Run a research agent on knowledge graphs' },
-                ].map((card, i) => {
-                  const Icon = card.icon;
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setInputMessage(card.prompt);
-                        setHasTurn(true);
-                      }}
-                      className="p-4 rounded-xl border border-[#e4e7ec] bg-[#ffffff] hover:border-[#6366f1]/40 hover:shadow-sm text-left transition-all group"
-                    >
-                      <Icon className="w-5 h-5 text-[#6366f1] mb-2.5 group-hover:scale-105 transition-transform" />
-                      <div className="text-[13.5px] font-bold text-[#111217]">{card.title}</div>
-                      <div className="text-[12px] text-[#6b7280] mt-0.5">{card.desc}</div>
-                    </button>
-                  );
-                })}
+                  { title: 'Build React 19 app', desc: 'Minimal note manager with Vite', prompt: 'Build a minimal web app with React 19' },
+                  { title: 'Generate project assets', desc: 'Hero illustration & UI preview cards', prompt: 'Generate high quality project landing assets' },
+                  { title: 'Write product PRD', desc: 'Requirements, scope, and technical design', prompt: 'Write a comprehensive PRD for our product' },
+                  { title: 'Orchestrate agents', desc: 'Autonomous research and sync pipelines', prompt: 'Run a research agent on knowledge graphs' },
+                ].map((card, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setInputMessage(card.prompt);
+                      setHasTurn(true);
+                    }}
+                    className="p-3.5 rounded-xl border border-neutral-200 bg-white hover:border-neutral-400 hover:bg-neutral-50/50 transition-all text-left"
+                  >
+                    <div className="text-xs font-semibold text-neutral-900">{card.title}</div>
+                    <div className="text-[11px] text-neutral-500 mt-0.5">{card.desc}</div>
+                  </button>
+                ))}
               </div>
             </div>
           ) : (
             /* Active Conversational Turn */
-            <div className="max-w-3xl mx-auto space-y-6">
-              {/* User Bubble */}
-              <div className="flex items-start gap-3.5 justify-end">
-                <div className="max-w-xl bg-[#f4f5f8] text-[#1f242e] rounded-2xl rounded-tr-xs px-4 py-3 text-[13.5px] leading-relaxed shadow-2xs">
-                  <div className="font-semibold text-[11.5px] text-[#6b7280] mb-1">Alex Chen • 10:24 AM</div>
-                  <p>
-                    I want to build a small "personal knowledge hub" project. Please:
-                    <br />1) Write the core code (a minimal web app with React 19) for managing notes.
-                    <br />2) Create a product requirement document (PRD) for it.
-                    <br />3) Generate a few high-quality images for the project (e.g., a hero illustration and a UI preview).
-                    <br />Organize the outputs clearly and let me know what you've done.
-                  </p>
-                </div>
-                <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 mt-1">
-                  <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" alt="Alex" />
+            <div className="max-w-2xl mx-auto space-y-6">
+              {/* User Message */}
+              <div className="flex justify-end">
+                <div className="bg-[#f4f4f4] text-neutral-900 rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed max-w-[85%] select-text">
+                  I want to build a small "personal knowledge hub" project. Please:
+                  <br />1) Write the core code (a minimal web app with React 19) for managing notes.
+                  <br />2) Create a product requirement document (PRD) for it.
+                  <br />3) Generate a few high-quality images for the project (hero illustration and UI preview).
+                  <br />Organize the outputs clearly and let me know what you've done.
                 </div>
               </div>
 
-              {/* ODON Assistant Response */}
-              <div className="flex items-start gap-3.5">
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white shrink-0 mt-1 shadow-sm shadow-indigo-100">
-                  <Bot className="w-4 h-4" />
+              {/* Assistant Message */}
+              <div className="flex items-start gap-3 select-text">
+                <div className="w-7 h-7 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                  O
                 </div>
-                <div className="flex-1 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-bold text-[#111217]">ODON</span>
-                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#eff2fe] text-[#4f46e5]">AI</span>
-                    <span className="text-[11px] text-[#9ca3af]">10:24 AM</span>
-                  </div>
-
-                  {/* Flowing conversational text */}
-                  <div className="text-[13.5px] text-[#2c3240] leading-relaxed space-y-3">
+                <div className="flex-1 space-y-3.5">
+                  <div className="text-[14px] text-neutral-900 leading-relaxed space-y-3">
                     <p>
-                      Got it! I've orchestrated the "Personal Knowledge Hub" solution — including the React 19 source code, product requirements (PRD), and high-resolution visuals. Here's what's ready:
+                      I have structured the "Personal Knowledge Hub" solution across code, product requirements, and visuals. Here is a summary of what has been created:
                     </p>
 
-                    <div className="space-y-2 py-1">
-                      <div className="flex items-start gap-2.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                        <div><strong className="text-[#111217]">Code</strong>: A minimal React 19 app (Vite + TypeScript) for managing notes, with search, tags, and local storage.</div>
-                      </div>
-                      <div className="flex items-start gap-2.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                        <div><strong className="text-[#111217]">Document</strong>: A complete PRD covering product goals, features, user flows, and technical scope.</div>
-                      </div>
-                      <div className="flex items-start gap-2.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                        <div><strong className="text-[#111217]">Images</strong>: Generated a hero illustration and UI preview cards for the project.</div>
-                      </div>
-                    </div>
+                    <ul className="space-y-1.5 pl-1">
+                      <li className="flex items-start gap-2">
+                        <span className="text-neutral-400 select-none">•</span>
+                        <span><strong>Code</strong>: React 19 application with Vite and TypeScript, featuring note creation, local persistence, and filtering.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-neutral-400 select-none">•</span>
+                        <span><strong>PRD</strong>: Detailed product requirements document covering specifications, data models, and milestones.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-neutral-400 select-none">•</span>
+                        <span><strong>Visual Assets</strong>: Concept illustration and UI layout preview ready for production.</span>
+                      </li>
+                    </ul>
 
+                    {/* Clean Action Cards (Canvas Trigger) */}
                     <div className="pt-2">
-                      <div className="flex items-center justify-between text-[12px] font-bold text-[#6b7280] uppercase tracking-wider mb-2">
-                        <div className="flex items-center gap-1.5">
-                          <Layers className="w-3.5 h-3.5 text-[#6366f1]" />
-                          Interactive Outputs
-                        </div>
-                        <span className="text-[11px] font-normal lowercase text-[#9ca3af]">Click any card to inspect in right panel</span>
-                      </div>
-
-                      {/* Interactive Output Cards */}
-                      <div className="grid grid-cols-3 gap-2.5">
-                        {/* Code Card -> Opens Editor */}
+                      <div className="text-xs font-semibold text-neutral-500 mb-2">Project Artifacts</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {/* Card 1: Code -> Editor */}
                         <div
                           onClick={() => openRightView('editor')}
-                          className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-[#6366f1] hover:bg-white hover:shadow-sm transition-all cursor-pointer group"
+                          className="p-3 rounded-lg border border-neutral-200 bg-white hover:border-neutral-900 hover:shadow-2xs transition-all cursor-pointer group"
                         >
                           <div className="flex items-center justify-between mb-1.5">
-                            <Code2 className="w-4 h-4 text-[#6366f1] group-hover:scale-110 transition-transform" />
-                            <span className="text-[10px] font-semibold text-[#6366f1] bg-indigo-50 px-1.5 py-0.2 rounded">Inspect Code</span>
+                            <Code2 className="w-4 h-4 text-neutral-700" />
+                            <span className="text-[10px] font-mono text-neutral-400 group-hover:text-neutral-900">Code</span>
                           </div>
-                          <div className="text-[12.5px] font-bold text-[#111217] truncate">Code: personal-knowledge-hub</div>
-                          <div className="text-[11px] text-[#6b7280] mt-0.5">React 19 • TypeScript • Vite</div>
+                          <div className="text-xs font-semibold text-neutral-900 truncate">personal-notes</div>
+                          <div className="text-[11px] text-neutral-500">React 19 • TypeScript</div>
                         </div>
 
-                        {/* Document Card -> Opens Artifacts */}
+                        {/* Card 2: Document -> Artifacts */}
                         <div
                           onClick={() => openRightView('artifacts')}
-                          className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-blue-500 hover:bg-white hover:shadow-sm transition-all cursor-pointer group"
+                          className="p-3 rounded-lg border border-neutral-200 bg-white hover:border-neutral-900 hover:shadow-2xs transition-all cursor-pointer group"
                         >
                           <div className="flex items-center justify-between mb-1.5">
-                            <FileText className="w-4 h-4 text-blue-500 group-hover:scale-110 transition-transform" />
-                            <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded">Read PRD</span>
+                            <FileText className="w-4 h-4 text-neutral-700" />
+                            <span className="text-[10px] font-mono text-neutral-400 group-hover:text-neutral-900">Doc</span>
                           </div>
-                          <div className="text-[12.5px] font-bold text-[#111217] truncate">PRD: Personal Knowledge Hub</div>
-                          <div className="text-[11px] text-[#6b7280] mt-0.5">Product Requirements Document</div>
+                          <div className="text-xs font-semibold text-neutral-900 truncate">PRD.md</div>
+                          <div className="text-[11px] text-neutral-500">12.4 KB • Markdown</div>
                         </div>
 
-                        {/* Images Card -> Opens Artifacts */}
+                        {/* Card 3: Images -> Artifacts */}
                         <div
                           onClick={() => openRightView('artifacts')}
-                          className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-purple-500 hover:bg-white hover:shadow-sm transition-all cursor-pointer group"
+                          className="p-3 rounded-lg border border-neutral-200 bg-white hover:border-neutral-900 hover:shadow-2xs transition-all cursor-pointer group"
                         >
                           <div className="flex items-center justify-between mb-1.5">
-                            <ImageIcon className="w-4 h-4 text-purple-500 group-hover:scale-110 transition-transform" />
-                            <span className="text-[10px] font-semibold text-purple-600 bg-purple-50 px-1.5 py-0.2 rounded">View Images</span>
+                            <ImageIcon className="w-4 h-4 text-neutral-700" />
+                            <span className="text-[10px] font-mono text-neutral-400 group-hover:text-neutral-900">Image</span>
                           </div>
-                          <div className="text-[12.5px] font-bold text-[#111217] truncate">Images (2)</div>
-                          <div className="text-[11px] text-[#6b7280] mt-0.5">Hero • UI Preview</div>
+                          <div className="text-xs font-semibold text-neutral-900 truncate">hero-concept.png</div>
+                          <div className="text-[11px] text-neutral-500">1920 × 1080 • PNG</div>
                         </div>
                       </div>
                     </div>
 
-                    <p className="text-[13px] text-[#4b5563] pt-2">
-                      You can view, edit, or test the code and live preview. Would you like me to:
+                    <p className="text-xs text-neutral-600 pt-1">
+                      Choose an action to inspect or preview:
                     </p>
 
-                    {/* Action Chips */}
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {/* Run & Preview -> Opens Browser */}
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap gap-2 pt-0.5">
                       <button
                         onClick={() => openRightView('browser')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#6366f1]/30 bg-indigo-50/50 hover:bg-indigo-50 text-[12.5px] font-semibold text-[#4f46e5] shadow-2xs transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-900 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium transition-colors shadow-2xs"
                       >
-                        <Play className="w-3.5 h-3.5 fill-current text-[#4f46e5]" />
-                        Run project & preview in browser
+                        <Play className="w-3 h-3 fill-current" />
+                        Preview in Browser
                       </button>
 
-                      {/* Code Editor */}
                       <button
                         onClick={() => openRightView('editor')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-300 hover:border-neutral-900 text-neutral-800 text-xs font-medium transition-colors"
                       >
-                        <Code2 className="w-3.5 h-3.5 text-[#111217]" />
+                        <Code2 className="w-3 h-3" />
                         Open Code Editor
                       </button>
 
-                      {/* Git Commit */}
                       <button
                         onClick={() => openRightView('artifacts')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-300 hover:border-neutral-900 text-neutral-800 text-xs font-medium transition-colors"
                       >
-                        <GitBranch className="w-3.5 h-3.5 text-emerald-600" />
-                        Inspect Git patch & diff
-                      </button>
-
-                      <button
-                        onClick={() => openRightView('artifacts')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors"
-                      >
-                        <Zap className="w-3.5 h-3.5 text-amber-500" />
-                        Turn this into an automation
+                        <GitBranch className="w-3 h-3 text-neutral-600" />
+                        View Git Patch
                       </button>
                     </div>
                   </div>
@@ -438,63 +347,47 @@ export default function App() {
           )}
         </div>
 
-        {/* Bottom Input Area */}
-        <div className="p-4 border-t border-[#eef0f3] bg-[#ffffff]">
-          <div className="max-w-3xl mx-auto rounded-2xl border border-[#e4e7ec] bg-[#ffffff] shadow-sm focus-within:border-[#6366f1] focus-within:ring-2 focus-within:ring-indigo-100 transition-all p-3">
-            {/* Top Toolbar in Input */}
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#f3f4f6]">
-              <div className="flex items-center gap-2">
-                <button className="flex items-center gap-1 px-2 py-1 rounded text-[11.5px] font-semibold text-[#4b5563] hover:bg-[#f3f4f6]">
-                  <SlidersHorizontal className="w-3 h-3 text-[#6366f1]" />
-                  Tools
-                  <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
-                </button>
-                <button className="flex items-center gap-1 px-2 py-1 rounded text-[11.5px] font-semibold text-[#4b5563] hover:bg-[#f3f4f6]">
-                  <Sparkles className="w-3 h-3 text-purple-500" />
-                  Mode: General
-                  <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
-                </button>
-              </div>
+        {/* Floating Input Area (ChatGPT Style) */}
+        <div className="p-4 bg-white border-t border-neutral-100">
+          <div className="max-w-2xl mx-auto">
+            <div className="rounded-3xl border border-neutral-200 bg-[#f4f4f4] focus-within:border-neutral-400 focus-within:bg-white transition-all px-4 py-2.5 shadow-2xs">
+              <textarea
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                placeholder="Ask ODON anything or write code..."
+                className="w-full resize-none outline-none text-[14px] text-neutral-900 placeholder-neutral-400 bg-transparent min-h-[44px]"
+                rows={1}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (inputMessage.trim()) {
+                      setHasTurn(true);
+                      setInputMessage('');
+                    }
+                  }
+                }}
+              />
 
-              <span className="flex items-center gap-1 text-[11px] font-semibold text-[#6366f1] bg-indigo-50/80 px-2 py-0.5 rounded-full">
-                React 19 Ready
-              </span>
-            </div>
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-1 text-neutral-500">
+                  <button className="p-1.5 hover:text-neutral-900 hover:bg-neutral-200/60 rounded-full transition-colors" title="Attach file">
+                    <Paperclip className="w-4 h-4" />
+                  </button>
+                  <button className="p-1.5 hover:text-neutral-900 hover:bg-neutral-200/60 rounded-full transition-colors" title="Generate image">
+                    <ImageIcon className="w-4 h-4" />
+                  </button>
+                  <button className="p-1.5 hover:text-neutral-900 hover:bg-neutral-200/60 rounded-full transition-colors" title="Web search">
+                    <Globe className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => openRightView('editor')}
+                    className="p-1.5 hover:text-neutral-900 hover:bg-neutral-200/60 rounded-full transition-colors"
+                    title="Code editor"
+                  >
+                    <Code2 className="w-4 h-4" />
+                  </button>
+                </div>
 
-            {/* Textarea */}
-            <textarea
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              placeholder="Message ODON... (e.g., build, create, analyze, automate...)"
-              className="w-full resize-none outline-none text-[13.5px] text-[#111217] placeholder-[#9ca3af] bg-transparent min-h-[50px]"
-              rows={2}
-            />
-
-            {/* Bottom Actions Bar */}
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center gap-1 text-[#667085]">
-                <button className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors" title="Attach file">
-                  <Paperclip className="w-4 h-4" />
-                </button>
-                <button className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors" title="Generate or upload image">
-                  <ImageIcon className="w-4 h-4" />
-                </button>
-                <button className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors" title="Search web">
-                  <Globe className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => openRightView('editor')}
-                  className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors"
-                  title="Open code editor"
-                >
-                  <Code2 className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button className="p-1.5 text-[#667085] hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors">
-                  <Mic className="w-4 h-4" />
-                </button>
                 <button
                   onClick={() => {
                     if (inputMessage.trim()) {
@@ -502,33 +395,37 @@ export default function App() {
                       setInputMessage('');
                     }
                   }}
-                  className="w-8 h-8 rounded-lg bg-[#4f46e5] hover:bg-[#4338ca] text-white flex items-center justify-center transition-all shadow-xs"
+                  disabled={!inputMessage.trim()}
+                  className="w-7 h-7 rounded-full bg-neutral-900 disabled:opacity-20 text-white flex items-center justify-center hover:bg-neutral-800 transition-colors"
                 >
-                  <Send className="w-4 h-4" />
+                  <ArrowUp className="w-4 h-4" />
                 </button>
               </div>
+            </div>
+            <div className="text-center text-[11px] text-neutral-400 mt-2">
+              ODON can make mistakes. Verify important information.
             </div>
           </div>
         </div>
       </main>
 
       {/* ─────────────────────────────────────────────────────────────
-          RIGHT DRAWER: ARTIFACTS, CODE EDITOR, BROWSER & RELAYS
+          RIGHT DRAWER (CANVAS): CODE EDITOR, BROWSER, ARTIFACTS
       ───────────────────────────────────────────────────────────── */}
       {isRightPanelOpen && (
         <aside
-          className={`shrink-0 border-l border-[#eef0f3] bg-[#fcfdfe] flex flex-col justify-between overflow-hidden transition-all duration-200 ${
-            isRightPanelWide ? 'w-[560px]' : 'w-[420px]'
+          className={`shrink-0 border-l border-neutral-200 bg-white flex flex-col justify-between overflow-hidden transition-all duration-200 ${
+            isRightPanelWide ? 'w-[580px]' : 'w-[440px]'
           }`}
         >
-          {/* Top Tab Bar & Panel Controls */}
-          <div className="p-2.5 border-b border-[#eef0f3] bg-[#ffffff] flex items-center justify-between gap-2 shrink-0">
-            {/* Tab switchers */}
-            <div className="flex-1 flex items-center p-0.5 bg-[#f2f4f7] rounded-lg">
+          {/* Top Canvas Bar */}
+          <div className="p-2.5 border-b border-neutral-200 bg-white flex items-center justify-between gap-2 shrink-0">
+            {/* Segmented Tab Control */}
+            <div className="flex-1 flex items-center p-0.5 bg-neutral-100 rounded-lg">
               {[
-                { id: 'artifacts', label: 'Artifacts', icon: Layers, badge: 3 },
-                { id: 'editor', label: 'Editor', icon: Code2 },
                 { id: 'browser', label: 'Browser', icon: Globe },
+                { id: 'editor', label: 'Code', icon: Code2 },
+                { id: 'artifacts', label: 'Artifacts', icon: Layers, badge: 3 },
                 { id: 'relays', label: 'Relays', icon: Radio },
               ].map((tab) => {
                 const Icon = tab.icon;
@@ -537,16 +434,16 @@ export default function App() {
                   <button
                     key={tab.id}
                     onClick={() => setActiveRightTab(tab.id as any)}
-                    className={`flex-1 py-1.5 px-2 rounded-md text-[11.5px] font-semibold transition-all text-center flex items-center justify-center gap-1.5 ${
+                    className={`flex-1 py-1 px-2 rounded-md text-xs font-medium transition-all text-center flex items-center justify-center gap-1.5 ${
                       isActive
-                        ? 'bg-white text-[#111217] shadow-xs'
-                        : 'text-[#667085] hover:text-[#111217]'
+                        ? 'bg-white text-neutral-900 shadow-2xs'
+                        : 'text-neutral-500 hover:text-neutral-800'
                     }`}
                   >
-                    <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#6366f1]' : 'text-[#848a9b]'}`} />
+                    <Icon className="w-3.5 h-3.5" />
                     <span>{tab.label}</span>
                     {tab.badge && (
-                      <span className="w-3.5 h-3.5 rounded-full bg-[#6366f1] text-white text-[9px] flex items-center justify-center font-bold">
+                      <span className="w-3.5 h-3.5 rounded-full bg-neutral-900 text-white text-[9px] flex items-center justify-center font-bold">
                         {tab.badge}
                       </span>
                     )}
@@ -555,214 +452,152 @@ export default function App() {
               })}
             </div>
 
-            {/* Resize & Close Controls */}
+            {/* Resize & Close */}
             <div className="flex items-center gap-1 shrink-0 pl-1">
               <button
                 onClick={() => setIsRightPanelWide(!isRightPanelWide)}
-                className="p-1.5 text-[#6b7280] hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors"
-                title={isRightPanelWide ? 'Standard width (420px)' : 'Wider width (560px)'}
+                className="p-1.5 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded-md transition-colors"
+                title={isRightPanelWide ? 'Standard width (440px)' : 'Wider width (580px)'}
               >
                 {isRightPanelWide ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               </button>
               <button
                 onClick={() => setIsRightPanelOpen(false)}
-                className="p-1.5 text-[#6b7280] hover:text-rose-600 hover:bg-[#fef2f2] rounded-md transition-colors"
-                title="Hide right panel"
+                className="p-1.5 text-neutral-400 hover:text-neutral-900 hover:bg-neutral-100 rounded-md transition-colors"
+                title="Close canvas"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
 
-          {/* Drawer Content */}
+          {/* Canvas Content */}
           <div className="flex-1 overflow-y-auto p-4">
-            {/* TAB 1: CODE EDITOR */}
-            {activeRightTab === 'editor' && (
-              <div className="h-full">
-                <CodeEditorView onRunPreview={() => setActiveRightTab('browser')} />
-              </div>
-            )}
-
-            {/* TAB 2: IN-APP BROWSER PREVIEW */}
+            {/* VIEW 1: IN-APP BROWSER PREVIEW */}
             {activeRightTab === 'browser' && (
               <div className="h-full">
                 <BrowserPreviewView />
               </div>
             )}
 
-            {/* TAB 3: ARTIFACTS OVERVIEW */}
+            {/* VIEW 2: CODE EDITOR */}
+            {activeRightTab === 'editor' && (
+              <div className="h-full">
+                <CodeEditorView onRunPreview={() => setActiveRightTab('browser')} />
+              </div>
+            )}
+
+            {/* VIEW 3: ARTIFACTS OVERVIEW */}
             {activeRightTab === 'artifacts' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-[12px] font-bold text-[#111217]">Turn Artifacts (3 items)</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setActiveRightTab('browser')}
-                      className="text-[11px] text-[#6366f1] font-semibold hover:underline flex items-center gap-1"
-                    >
-                      <Play className="w-3 h-3 fill-current" />
-                      Preview
-                    </button>
-                    <span className="text-gray-300">|</span>
-                    <button className="text-[11px] text-[#6366f1] font-semibold hover:underline">Download All</button>
-                  </div>
+                  <span className="text-xs font-semibold text-neutral-900">Generated Artifacts (3)</span>
+                  <button
+                    onClick={() => setActiveRightTab('browser')}
+                    className="text-xs text-neutral-600 hover:text-neutral-900 font-medium underline"
+                  >
+                    Open Live Preview &rarr;
+                  </button>
                 </div>
 
-                {/* Artifact 1: Image Card */}
-                <div className="rounded-xl border border-[#e4e7ec] bg-white overflow-hidden shadow-2xs group hover:border-[#6366f1]/40 transition-all">
-                  <div className="h-32 bg-gradient-to-tr from-[#6366f1] via-[#8b5cf6] to-[#ec4899] relative flex items-center justify-center overflow-hidden">
-                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-400/30 via-transparent to-black/40"></div>
-                    <div className="text-white text-center z-10 px-4">
-                      <span className="text-2xl font-bold tracking-tight">Personal Hub</span>
-                      <p className="text-[11px] text-white/80">Hero Concept Illustration</p>
+                {/* Artifact 1: Hero Concept */}
+                <div className="rounded-lg border border-neutral-200 bg-white overflow-hidden shadow-2xs">
+                  <div className="h-28 bg-neutral-900 relative flex items-center justify-center overflow-hidden">
+                    <div className="text-neutral-200 text-center px-4">
+                      <span className="text-lg font-semibold tracking-tight">Personal Notes Hub</span>
+                      <p className="text-[11px] text-neutral-400">Concept Architecture</p>
                     </div>
                   </div>
                   <div className="p-3 flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                      <ImageIcon className="w-4 h-4 text-purple-500" />
+                      <ImageIcon className="w-4 h-4 text-neutral-600" />
                       <div>
-                        <div className="text-[12.5px] font-bold text-[#111217]">hero-illustration.png</div>
-                        <div className="text-[11px] text-[#8a8f9d]">1920 × 1080 • PNG • 1.8 MB</div>
+                        <div className="text-xs font-medium text-neutral-900">hero-concept.png</div>
+                        <div className="text-[11px] text-neutral-400">1920 × 1080 • PNG • 1.8 MB</div>
                       </div>
                     </div>
-                    <button className="p-1 text-[#8a8f9d] hover:text-[#111217]">
-                      <MoreVertical className="w-4 h-4" />
+                    <button className="p-1 text-neutral-400 hover:text-neutral-900">
+                      <ExternalLink className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
 
-                {/* Artifact 2: Document Card */}
-                <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white hover:border-[#6366f1]/40 transition-all shadow-2xs flex items-center justify-between">
+                {/* Artifact 2: Document */}
+                <div className="p-3.5 rounded-lg border border-neutral-200 bg-white hover:border-neutral-400 transition-colors shadow-2xs flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                      <FileText className="w-4 h-4" />
+                    <div className="w-7 h-7 rounded bg-neutral-100 text-neutral-700 flex items-center justify-center shrink-0">
+                      <FileText className="w-3.5 h-3.5" />
                     </div>
                     <div>
-                      <div className="text-[12.5px] font-bold text-[#111217]">Personal Knowledge Hub - PRD.md</div>
-                      <div className="text-[11px] text-[#8a8f9d]">Product Requirements Document • 12.4 KB</div>
+                      <div className="text-xs font-medium text-neutral-900">Personal Knowledge Hub - PRD.md</div>
+                      <div className="text-[11px] text-neutral-400">Product Requirements • 12.4 KB</div>
                     </div>
                   </div>
-                  <ExternalLink className="w-3.5 h-3.5 text-[#9ca3af] hover:text-[#111217]" />
+                  <ExternalLink className="w-3.5 h-3.5 text-neutral-400 hover:text-neutral-900" />
                 </div>
 
-                {/* Artifact 3: Git Patch / Code Card -> Click switches to editor */}
+                {/* Artifact 3: Git Patch */}
                 <div
                   onClick={() => setActiveRightTab('editor')}
-                  className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white hover:border-[#6366f1] transition-all shadow-2xs space-y-2 cursor-pointer group"
+                  className="p-3.5 rounded-lg border border-neutral-200 bg-white hover:border-neutral-400 transition-colors shadow-2xs space-y-2 cursor-pointer"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <GitBranch className="w-4 h-4 text-emerald-600" />
-                      <span className="text-[12.5px] font-bold text-[#111217] group-hover:text-[#4f46e5] transition-colors">
-                        feat: personal knowledge hub
-                      </span>
+                      <GitBranch className="w-3.5 h-3.5 text-neutral-700" />
+                      <span className="text-xs font-medium text-neutral-900">feat: personal knowledge hub</span>
                     </div>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-700">
                       +212 -8 lines
                     </span>
                   </div>
-                  <div className="bg-[#18191f] text-[#d4d4d8] font-mono text-[11px] p-2.5 rounded-lg space-y-0.5 overflow-x-auto">
+                  <div className="bg-neutral-900 text-neutral-300 font-mono text-[11px] p-2.5 rounded space-y-0.5 overflow-x-auto">
                     <div className="text-emerald-400">+ src/App.tsx</div>
                     <div className="text-emerald-400">+ src/features/notes/NoteList.tsx</div>
                     <div className="text-rose-400">- src/utils/mock.ts</div>
                   </div>
-                  <div className="text-[11px] text-[#6366f1] font-semibold flex items-center gap-1 justify-end pt-0.5">
-                    Open in Editor &rarr;
-                  </div>
-                </div>
-
-                {/* Quick Relay Banner */}
-                <div className="p-3 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />
-                    <span className="text-[12px] font-bold text-[#111217]">Telegram & WhatsApp Relays</span>
-                  </div>
-                  <button
-                    onClick={() => setActiveRightTab('relays')}
-                    className="text-[11px] font-semibold text-[#6366f1] hover:underline"
-                  >
-                    View Status &rarr;
-                  </button>
                 </div>
               </div>
             )}
 
-            {/* TAB 4: RELAYS & AGENTS DETAILED VIEW */}
+            {/* VIEW 4: RELAYS OVERVIEW */}
             {activeRightTab === 'relays' && (
-              <div className="space-y-4">
-                {/* Relay Status Panel */}
-                <div className="p-4 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-3">
+              <div className="space-y-3">
+                <div className="p-4 rounded-lg border border-neutral-200 bg-white shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />
-                      <span className="text-[12px] font-bold text-[#111217]">Relay Status</span>
+                      <Radio className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                      <span className="text-xs font-semibold text-neutral-900">Relay Channels</span>
                     </div>
-                    <span className="text-[10.5px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      All Online
+                    <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                      ONLINE
                     </span>
                   </div>
 
-                  <div className="space-y-2 pt-1">
-                    <div className="flex items-center justify-between text-[12px]">
+                  <div className="space-y-2 pt-1 text-xs">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                        <span className="font-semibold text-[#111217]">Telegram</span>
-                        <span className="text-[11px] text-[#6b7280]">@odon_bot</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        <span className="font-medium text-neutral-900">Telegram</span>
+                        <span className="text-neutral-400">@odon_bot</span>
                       </div>
-                      <span className="text-[11px] text-emerald-600 font-medium">Online</span>
+                      <span className="text-neutral-500">Connected</span>
                     </div>
 
-                    <div className="flex items-center justify-between text-[12px]">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                        <span className="font-semibold text-[#111217]">WhatsApp</span>
-                        <span className="text-[11px] text-[#6b7280]">+1 415-xxx-7218</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        <span className="font-medium text-neutral-900">WhatsApp</span>
+                        <span className="text-neutral-400">+1 415-xxx-7218</span>
                       </div>
-                      <span className="text-[11px] text-emerald-600 font-medium">Online</span>
+                      <span className="text-neutral-500">Connected</span>
                     </div>
                   </div>
 
-                  {/* Live activity log */}
-                  <div className="pt-2 border-t border-[#f3f4f6] text-[10.5px] font-mono text-[#6b7280] space-y-1">
+                  <div className="pt-2 border-t border-neutral-100 text-[10.5px] font-mono text-neutral-400 space-y-1">
                     <div>[10:21:08] Telegram relay: message sent (OK)</div>
                     <div>[10:21:09] WhatsApp relay: message sent (OK)</div>
-                    <div>[10:24:12] Artifact created: hero-illustration.png</div>
+                    <div>[10:24:12] Artifact created: hero-concept.png</div>
                   </div>
-                </div>
-
-                {/* Active Agents Mini-card */}
-                <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Bot className="w-4 h-4 text-[#6366f1]" />
-                      <span className="text-[12px] font-bold text-[#111217]">Active Agents</span>
-                    </div>
-                    <span className="text-[10.5px] font-semibold text-[#6366f1]">2 Active</span>
-                  </div>
-                  <div className="space-y-1.5 text-[12px]">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#374151]">Research Agent</span>
-                      <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.2 rounded">Running</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#374151]">Content Agent</span>
-                      <span className="text-[10px] font-semibold text-[#6b7280] bg-gray-50 px-1.5 py-0.2 rounded">Idle</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Automations Mini-card */}
-                <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      <span className="text-[12px] font-bold text-[#111217]">Daily Knowledge Sync</span>
-                    </div>
-                    <div className="w-7 h-4 bg-[#6366f1] rounded-full relative cursor-pointer">
-                      <div className="w-3 h-3 bg-white rounded-full absolute right-0.5 top-0.5"></div>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-[#6b7280]">Next run: Today 20:00 (Cron)</p>
                 </div>
               </div>
             )}

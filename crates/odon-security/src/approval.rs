@@ -53,13 +53,13 @@ impl ApprovalEngine {
 
     pub async fn check_risk(&self, tool_name: &str) -> RiskTier {
         match tool_name {
-            "fs_read" | "fs_list" | "git_status" | "git_diff" | "git_log" | "github_list_issues" | "github_get_repo" | "mcp_list_tools" => {
+            "fs_read" | "fs_list" | "fs_search" | "git_status" | "git_diff" | "git_log" | "github_list_issues" | "github_get_repo" | "mcp_list_tools" | "web_search" | "web_fetch" | "system_info" | "calc_eval" | "memory_recall" => {
                 RiskTier::Tier0ReadOnly
             }
-            "fs_write" | "fs_edit" | "git_commit" | "git_branch" | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "github_create_issue" => {
+            "fs_write" | "fs_edit" | "git_commit" | "git_branch" | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "github_create_issue" | "memory_store" => {
                 RiskTier::Tier1WorkspaceMutating
             }
-            _ => RiskTier::Tier2SystemMutating, // shell_exec, delete_file, git_push, destructive actions
+            _ => RiskTier::Tier2SystemMutating, // shell_exec, fs_delete, git_push, destructive actions
         }
     }
 
