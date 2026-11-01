@@ -28,10 +28,22 @@ impl ModelProvider for MockConversationalProvider {
 
     async fn stream_chat(
         &self,
-        _request: ChatRequest,
+        request: ChatRequest,
         event_sender: Sender<StreamEvent>,
         _cancellation: CancellationToken,
     ) -> Result<()> {
+        let has_tools = request.messages.iter().any(|m| m.role == odon_core::MessageRole::Tool);
+        if has_tools {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta(
+                    "All requested artifacts (Code, PRD, and Visuals) for Personal Knowledge Hub have been created successfully."
+                        .to_string(),
+                ))
+                .await;
+            let _ = event_sender.send(StreamEvent::Done).await;
+            return Ok(());
+        }
+
         let _ = event_sender
             .send(StreamEvent::ThoughtDelta(
                 "Analyzing user request for Personal Knowledge Hub and planning components...".to_string(),
@@ -206,4 +218,69 @@ async fn test_conversational_agent_turn_with_artifacts() {
     assert_eq!(artifacts[0].kind, ArtifactKind::Code);
     assert_eq!(artifacts[1].kind, ArtifactKind::Document);
     assert_eq!(artifacts[2].kind, ArtifactKind::Image);
+}
+
+#[tokio::test]
+async fn test_extended_tools_execution() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let policy = SecurityPolicy::default();
+    let approval = Arc::new(ApprovalEngine::new(policy));
+    let audit = Arc::new(AuditLogger::new());
+
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let workspace = temp_dir.path().to_string_lossy().to_string();
+
+    let ctx = odon_tools::ToolContext {
+        session_id: "test_tools".to_string(),
+        workspace_root: workspace.clone(),
+        approval_engine: approval.clone(),
+        audit_logger: audit.clone(),
+        storage: Some(storage.clone()),
+    };
+
+    // 1. fs_write
+    let write_res = registry.execute_tool("fs_write", &ctx, serde_json::json!({
+        "path": "hello.txt",
+        "content": "Hello world from ODON agent runtime!"
+    })).await.unwrap();
+    assert_eq!(write_res.get("path").and_then(|p| p.as_str()), Some("hello.txt"));
+
+    // 2. fs_edit
+    let edit_res = registry.execute_tool("fs_edit", &ctx, serde_json::json!({
+        "path": "hello.txt",
+        "target": "ODON agent runtime",
+        "replacement": "ODON full agentic harness"
+    })).await.unwrap();
+    assert_eq!(edit_res.get("status").and_then(|s| s.as_str()), Some("success"));
+
+    // 3. fs_search
+    let search_res = registry.execute_tool("fs_search", &ctx, serde_json::json!({
+        "query": "harness"
+    })).await.unwrap();
+    assert!(search_res.get("results_count").and_then(|c| c.as_u64()).unwrap_or(0) >= 1);
+
+    // 4. system_info
+    let sys_res = registry.execute_tool("system_info", &ctx, serde_json::json!({})).await.unwrap();
+    assert!(sys_res.get("os").is_some());
+    assert!(sys_res.get("architecture").is_some());
+
+    // 5. calc_eval
+    let calc_res = registry.execute_tool("calc_eval", &ctx, serde_json::json!({
+        "expression": "(100 * 2) + 50"
+    })).await.unwrap();
+    assert_eq!(calc_res.get("result").and_then(|r| r.as_f64()), Some(250.0));
+
+    // 6. memory_store & recall
+    let store_res = registry.execute_tool("memory_store", &ctx, serde_json::json!({
+        "key": "user_ui_preference",
+        "value": "Clean ChatGPT style, no AI slop",
+        "category": "preferences"
+    })).await.unwrap();
+    assert_eq!(store_res.get("status").and_then(|s| s.as_str()), Some("stored"));
+
+    let recall_res = registry.execute_tool("memory_recall", &ctx, serde_json::json!({
+        "key": "user_ui_preference"
+    })).await.unwrap();
+    assert!(recall_res.get("memory").is_some());
 }

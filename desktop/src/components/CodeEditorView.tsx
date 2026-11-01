@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, Check, FileCode, Play, Terminal } from 'lucide-react';
+import { Copy, Check, FileCode, Play } from 'lucide-react';
 
 interface CodeFile {
   name: string;
@@ -139,9 +139,9 @@ export function CodeEditorView({ onRunPreview }: CodeEditorViewProps) {
   const lines = currentFile.content.split('\n');
 
   return (
-    <div className="h-full flex flex-col bg-[#1e1e1e] text-[#d4d4d4] rounded-lg overflow-hidden border border-neutral-800 font-mono text-[13px] select-text">
+    <div className="h-full flex flex-col bg-slate-50/70 text-slate-800 rounded-xl overflow-hidden border border-slate-200 font-mono text-[13px] select-text">
       {/* File Tabs & Actions */}
-      <div className="flex items-center justify-between bg-[#181818] px-2 border-b border-neutral-800 shrink-0">
+      <div className="flex items-center justify-between bg-white px-2 border-b border-slate-200 shrink-0">
         <div className="flex items-center overflow-x-auto scrollbar-none">
           {SAMPLE_FILES.map((file, idx) => {
             const isActive = idx === activeFileIndex;
@@ -151,11 +151,11 @@ export function CodeEditorView({ onRunPreview }: CodeEditorViewProps) {
                 onClick={() => setActiveFileIndex(idx)}
                 className={`flex items-center gap-1.5 px-3 py-2 text-xs border-b-2 transition-colors whitespace-nowrap ${
                   isActive
-                    ? 'border-white bg-[#1e1e1e] text-white font-medium'
-                    : 'border-transparent text-neutral-400 hover:text-neutral-200'
+                    ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-semibold'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
                 }`}
               >
-                <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-neutral-500'}`} />
+                <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
                 {file.name}
               </button>
             );
@@ -166,23 +166,23 @@ export function CodeEditorView({ onRunPreview }: CodeEditorViewProps) {
           {onRunPreview && (
             <button
               onClick={onRunPreview}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-sans font-medium transition-colors border border-neutral-700"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-sans font-medium transition-colors border border-blue-200"
               title="Preview in Browser"
             >
-              <Play className="w-3 h-3 fill-current text-emerald-400" />
+              <Play className="w-3 h-3 fill-current text-blue-600" />
               Preview
             </button>
           )}
 
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-neutral-800 text-neutral-300 text-xs font-sans transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-slate-100 text-slate-600 text-xs font-sans transition-colors"
             title="Copy code"
           >
             {copied ? (
               <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400 text-xs">Copied</span>
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-emerald-600 text-xs font-medium">Copied</span>
               </>
             ) : (
               <>
@@ -195,15 +195,15 @@ export function CodeEditorView({ onRunPreview }: CodeEditorViewProps) {
       </div>
 
       {/* Code Area */}
-      <div className="flex-1 overflow-auto bg-[#1e1e1e] p-3 leading-relaxed">
+      <div className="flex-1 overflow-auto bg-slate-50/50 p-3 leading-relaxed">
         <table className="w-full border-collapse">
           <tbody>
             {lines.map((line, i) => (
-              <tr key={i} className="hover:bg-neutral-800/40">
-                <td className="w-9 text-right pr-4 select-none text-neutral-600 text-xs align-top">
+              <tr key={i} className="hover:bg-blue-50/40">
+                <td className="w-9 text-right pr-4 select-none text-slate-400 text-xs align-top">
                   {i + 1}
                 </td>
-                <td className="whitespace-pre overflow-x-visible align-top">
+                <td className="whitespace-pre overflow-x-visible align-top font-mono">
                   {renderSyntaxLine(line)}
                 </td>
               </tr>
@@ -213,7 +213,7 @@ export function CodeEditorView({ onRunPreview }: CodeEditorViewProps) {
       </div>
 
       {/* Editor Footer */}
-      <div className="h-6 bg-[#181818] border-t border-neutral-800 px-3 flex items-center justify-between text-[11px] text-neutral-500 shrink-0 font-sans">
+      <div className="h-6 bg-white border-t border-slate-200 px-3 flex items-center justify-between text-[11px] text-slate-500 shrink-0 font-sans">
         <span className="truncate">{currentFile.path}</span>
         <div className="flex items-center gap-3">
           <span className="uppercase">{currentFile.language}</span>
@@ -226,7 +226,7 @@ export function CodeEditorView({ onRunPreview }: CodeEditorViewProps) {
 
 function renderSyntaxLine(line: string) {
   if (line.trim().startsWith('//')) {
-    return <span className="text-[#6a9955] italic">{line}</span>;
+    return <span className="text-emerald-600 italic">{line}</span>;
   }
 
   const tokens = line.split(/(\b(?:import|from|export|default|function|const|let|return|interface|type)\b|'[^']*'|"[^"]*"|`[^`]*`)/g);
@@ -235,15 +235,15 @@ function renderSyntaxLine(line: string) {
     <span>
       {tokens.map((token, idx) => {
         if (/^(import|from|export|default|function|const|let|return|interface|type)$/.test(token)) {
-          return <span key={idx} className="text-[#c586c0]">{token}</span>;
+          return <span key={idx} className="text-blue-700 font-semibold">{token}</span>;
         }
         if (/^['"`]/.test(token)) {
-          return <span key={idx} className="text-[#ce9178]">{token}</span>;
+          return <span key={idx} className="text-amber-700">{token}</span>;
         }
         if (/^[A-Z][a-zA-Z0-9]+/.test(token)) {
-          return <span key={idx} className="text-[#4ec9b0]">{token}</span>;
+          return <span key={idx} className="text-teal-700 font-medium">{token}</span>;
         }
-        return <span key={idx} className="text-[#d4d4d4]">{token}</span>;
+        return <span key={idx} className="text-slate-700">{token}</span>;
       })}
     </span>
   );

@@ -8,16 +8,9 @@ use odon_agent::AgentRuntime;
 use odon_channel::{ChannelAdapter, CliChannel};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
-use odon_provider::OpenAiCompatibleProvider;
+use odon_provider::{OpenAiCompatibleProvider, SimulatedProvider};
 use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
 use odon_storage::StorageEngine;
-use odon_tools::artifact_gen::{ArtifactCreateCodeTool, ArtifactCreateDocumentTool, ArtifactCreateImageTool};
-use odon_tools::fs::{FsListTool, FsReadTool, FsWriteTool};
-use odon_tools::git::{GitCommitTool, GitDiffTool, GitStatusTool};
-use odon_tools::github::{GitHubGetRepoTool, GitHubListIssuesTool};
-use odon_tools::mcp::McpListToolsTool;
-use odon_tools::shell::ShellExecTool;
-use odon_tools::ToolRegistry;
 
 #[derive(Parser)]
 #[command(name = "odon")]
@@ -64,21 +57,7 @@ async fn main() -> anyhow::Result<()> {
     let (event_tx, mut event_rx) = create_event_bus(128);
 
     // 4. Tools
-    let mut registry = ToolRegistry::new();
-    registry.register(Box::new(FsReadTool));
-    registry.register(Box::new(FsWriteTool));
-    registry.register(Box::new(FsListTool));
-    registry.register(Box::new(GitStatusTool));
-    registry.register(Box::new(GitDiffTool));
-    registry.register(Box::new(GitCommitTool));
-    registry.register(Box::new(ShellExecTool));
-    registry.register(Box::new(GitHubGetRepoTool::new()));
-    registry.register(Box::new(GitHubListIssuesTool::new()));
-    registry.register(Box::new(McpListToolsTool));
-    registry.register(Box::new(ArtifactCreateCodeTool));
-    registry.register(Box::new(ArtifactCreateDocumentTool));
-    registry.register(Box::new(ArtifactCreateImageTool));
-    let tools = Arc::new(registry);
+    let tools = Arc::new(odon_tools::build_full_tool_registry());
 
     // 5. Agent Runtime
     let workspace = std::env::current_dir()?.to_string_lossy().to_string();
@@ -91,13 +70,18 @@ async fn main() -> anyhow::Result<()> {
         workspace,
     ));
 
-    // 6. Register default model provider (BYOK / OpenAI compatible / Ollama)
+    // 6. Register model providers (BYOK / OpenAI / Ollama / Fallback)
     let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".to_string());
     let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
     let default_model = std::env::var("ODON_MODEL").unwrap_or_else(|_| "odon-auto".to_string());
 
-    let provider = Arc::new(OpenAiCompatibleProvider::new(base_url, api_key, Some("openai-compatible")));
-    runtime.register_provider("default", provider, true).await;
+    if !api_key.is_empty() || std::env::var("OPENAI_BASE_URL").is_ok() {
+        let provider = Arc::new(OpenAiCompatibleProvider::new(base_url, api_key, Some("openai-compatible")));
+        runtime.register_provider("default", provider, true).await;
+    } else {
+        let sim_provider = Arc::new(SimulatedProvider::default());
+        runtime.register_provider("default", sim_provider, true).await;
+    }
 
     let cli_channel = CliChannel::new();
 
