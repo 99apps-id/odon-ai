@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use odon_core::{MessageRole, OdonError, Result};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
@@ -69,6 +69,12 @@ impl ModelProvider for OpenAiCompatibleProvider {
             if let Ok(val) = HeaderValue::from_str(&auth_val) {
                 headers.insert(AUTHORIZATION, val);
             }
+        }
+
+        if self.provider_label == "github-copilot" {
+            headers.insert("Editor-Version", HeaderValue::from_static("vscode/1.90.0"));
+            headers.insert("Editor-Plugin-Version", HeaderValue::from_static("copilot-chat/0.38.0"));
+            headers.insert(USER_AGENT, HeaderValue::from_static("GitHubCopilotChat/0.38.0"));
         }
 
         // Format messages

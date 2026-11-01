@@ -89,10 +89,16 @@ impl AgentRuntime {
             if let Some(p) = providers.get(n) {
                 return Some(p.clone());
             }
+            // Strict routing: do not silently fall back if a specific provider was requested
+            return None;
         }
         let def = self.default_provider.read().await;
         providers.get(&*def).cloned().or_else(|| {
-            providers.values().next().cloned()
+            // Pick first non-simulated provider if available
+            providers
+                .iter()
+                .find(|(k, _)| k.as_str() != "odon-simulated")
+                .map(|(_, v)| v.clone())
         })
     }
 
@@ -189,13 +195,26 @@ impl AgentRuntime {
             .and_then(|value| value.split_once("::"))
             .map(|(provider, model)| (Some(provider), model))
             .unwrap_or((None, model_override.unwrap_or("odon-auto")));
-        let provider = self
-            .get_provider(provider_override)
-            .await
-            .ok_or_else(|| OdonError::Provider {
-                provider: "unknown".to_string(),
-                message: "No active model provider configured".to_string(),
-            })?;
+        let provider = match self.get_provider(provider_override).await {
+            Some(p) => {
+                if p.provider_name() == "odon-simulated" && requested_model != "odon-simulated" {
+                    return Err(OdonError::Provider {
+                        provider: provider_override.unwrap_or("default").to_string(),
+                        message: "Mock provider is disabled. Please configure your API key in Settings (BYOK) or sign in with GitHub Copilot / Antigravity to chat with real AI models.".to_string(),
+                    });
+                }
+                p
+            }
+            None => {
+                return Err(OdonError::Provider {
+                    provider: provider_override.unwrap_or("default").to_string(),
+                    message: format!(
+                        "Provider '{}' is not configured or missing an API key. Please open Settings and configure your credentials to enable real AI responses.",
+                        provider_override.unwrap_or("default")
+                    ),
+                });
+            }
+        };
 
         // 4. Build Tools list
         let tool_schemas = self.tools.schemas();

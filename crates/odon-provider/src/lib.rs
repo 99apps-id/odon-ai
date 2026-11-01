@@ -1,5 +1,7 @@
+pub mod anthropic;
 pub mod antigravity;
 pub mod codex;
+pub mod host_creds;
 pub mod muse;
 pub mod oauth;
 pub mod openai;
@@ -7,6 +9,7 @@ pub mod simulated;
 pub mod stream;
 pub mod trait_def;
 
+pub use anthropic::AnthropicProvider;
 pub use antigravity::AntigravityProvider;
 pub use codex::OpenAiCodexProvider;
 pub use muse::MuseProvider;

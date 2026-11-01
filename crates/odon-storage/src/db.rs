@@ -125,6 +125,14 @@ impl StorageEngine {
                 items_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS provider_configs (
+                provider_id TEXT PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                base_url TEXT,
+                is_default INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
             ",
         )?;
         Ok(())
@@ -547,6 +555,94 @@ impl StorageEngine {
         let count = conn.execute("DELETE FROM memories WHERE key = ?1", params![key])?;
         Ok(count > 0)
     }
+
+    // --- Provider Config Operations (BYOK persistence) ---
+
+    pub fn save_provider_config(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+        base_url: Option<&str>,
+        is_default: bool,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO provider_configs (provider_id, api_key, base_url, is_default, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(provider_id) DO UPDATE SET
+                api_key = excluded.api_key,
+                base_url = excluded.base_url,
+                is_default = excluded.is_default,
+                updated_at = excluded.updated_at",
+            params![provider_id, api_key, base_url, if is_default { 1 } else { 0 }, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_provider_config(&self, provider_id: &str) -> Result<Option<ProviderConfigRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT provider_id, api_key, base_url, is_default, updated_at
+             FROM provider_configs WHERE provider_id = ?1"
+        )?;
+        let mut rows = stmt.query_map(params![provider_id], |row| {
+            let def_int: i32 = row.get(3)?;
+            Ok(ProviderConfigRecord {
+                provider_id: row.get(0)?,
+                api_key: row.get(1)?,
+                base_url: row.get(2)?,
+                is_default: def_int != 0,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        if let Some(r) = rows.next() {
+            Ok(Some(r?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_provider_configs(&self) -> Result<Vec<ProviderConfigRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT provider_id, api_key, base_url, is_default, updated_at
+             FROM provider_configs ORDER BY provider_id ASC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let def_int: i32 = row.get(3)?;
+            Ok(ProviderConfigRecord {
+                provider_id: row.get(0)?,
+                api_key: row.get(1)?,
+                base_url: row.get(2)?,
+                is_default: def_int != 0,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    pub fn delete_provider_config(&self, provider_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute(
+            "DELETE FROM provider_configs WHERE provider_id = ?1",
+            params![provider_id],
+        )?;
+        Ok(count > 0)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProviderConfigRecord {
+    pub provider_id: String,
+    pub api_key: String,
+    pub base_url: Option<String>,
+    pub is_default: bool,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
