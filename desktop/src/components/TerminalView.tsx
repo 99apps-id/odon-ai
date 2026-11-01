@@ -1,44 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   Terminal as TerminalIcon,
-  Play,
   RotateCcw,
   Copy,
   Check,
-  Trash2,
-  FolderOpen,
   Plus,
   X,
-  Command,
-  ArrowRight,
-  Loader2,
   ChevronDown,
-  Square,
   Sparkles,
-  Send,
+  Command,
 } from 'lucide-react';
-import { api } from '../api';
-import { TerminalInfo, TerminalExecResult } from '../types';
-
-interface HistoryItem {
-  id: string;
-  command: string;
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-  cwd: string;
-  timestamp: string;
-}
+import { NativeTerminal } from './NativeTerminal';
 
 interface TerminalTab {
   id: string;
   title: string;
   shell: string;
-  cwd: string;
-  history: HistoryItem[];
-  commandHistory: string[];
-  historyIndex: number;
-  isRunning: boolean;
+  cwd?: string;
 }
 
 interface TerminalViewProps {
@@ -46,495 +24,162 @@ interface TerminalViewProps {
   onSendToAgent?: (text: string) => void;
 }
 
-const DEFAULT_CWD = 'C:/Project/odon-ai';
-
 export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAgent }) => {
-  const [terminalInfo, setTerminalInfo] = useState<TerminalInfo | null>(null);
-  const [daemonOnline, setDaemonOnline] = useState<boolean>(false);
-  const [copied, setCopied] = useState<boolean>(false);
-
-  // Multi-Tab Terminal State
   const [tabs, setTabs] = useState<TerminalTab[]>([
     {
-      id: 'tab-1',
+      id: 'tab-ps-1',
       title: 'PowerShell #1',
-      shell: 'PowerShell',
-      cwd: DEFAULT_CWD,
-      history: [
-        {
-          id: 'init-1',
-          command: '# ODON Native PTY Terminal Session 1',
-          stdout: 'ODON Interactive Multi-Tab Terminal ready.\nType any PowerShell / CLI command and press Enter.\nUse Up/Down arrows to navigate command history.',
-          stderr: '',
-          exit_code: 0,
-          cwd: DEFAULT_CWD,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        },
-      ],
-      commandHistory: [],
-      historyIndex: -1,
-      isRunning: false,
+      shell: 'powershell',
     },
   ]);
-  const [activeTabId, setActiveTabId] = useState<string>('tab-1');
-  const [inputVal, setInputVal] = useState<string>('');
+  const [activeTabId, setActiveTabId] = useState<string>('tab-ps-1');
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState<boolean>(false);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const checkConnection = () => {
-    api.getTerminalInfo().then((info) => {
-      setTerminalInfo(info);
-      setDaemonOnline(true);
-    }).catch(() => {
-      setDaemonOnline(false);
-      setTerminalInfo({
-        shell: 'PowerShell',
-        os: 'windows',
-        arch: 'x86_64',
-        default_cwd: DEFAULT_CWD,
-        user: 'developer',
-      });
-    });
-  };
-
-  useEffect(() => {
-    checkConnection();
-  }, []);
-
-  // Auto scroll to bottom
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeTab?.history, activeTab?.isRunning]);
-
-  // Listen for global custom events to run command in terminal or receive agent tool calls
-  useEffect(() => {
-    const handleRunTerminalEvent = (e: Event) => {
-      const customEvent = e as CustomEvent<{ command: string; focusPanel?: boolean }>;
-      if (customEvent.detail?.command) {
-        handleRunCommand(customEvent.detail.command);
-      }
-    };
-
-    const handleAgentTerminalEvent = (e: Event) => {
-      const customEvent = e as CustomEvent<any>;
-      const p = customEvent.detail;
-      if (!p) return;
-      const cmd = p.arguments?.command || p.arguments?.script || p.tool_name || 'Agent Command';
-      const output = p.result ? (typeof p.result === 'string' ? p.result : JSON.stringify(p.result, null, 2)) : '';
-      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-      setTabs((prev) => {
-        let agentTab = prev.find((t) => t.id === 'tab-agent');
-        if (!agentTab) {
-          agentTab = {
-            id: 'tab-agent',
-            title: '🤖 Agent Terminal',
-            shell: 'Agent Runner',
-            cwd: DEFAULT_CWD,
-            history: [],
-            commandHistory: [],
-            historyIndex: -1,
-            isRunning: false,
-          };
-          prev = [...prev, agentTab];
-        }
-
-        return prev.map((t) =>
-          t.id === 'tab-agent'
-            ? {
-                ...t,
-                history: [
-                  ...t.history,
-                  {
-                    id: `${Date.now()}-${Math.random()}`,
-                    command: cmd,
-                    stdout: output,
-                    stderr: '',
-                    exit_code: 0,
-                    cwd: DEFAULT_CWD,
-                    timestamp: nowStr,
-                  },
-                ],
-              }
-            : t
-        );
-      });
-    };
-
-    window.addEventListener('odon:run-terminal', handleRunTerminalEvent);
-    window.addEventListener('odon:agent-terminal-event', handleAgentTerminalEvent);
-    return () => {
-      window.removeEventListener('odon:run-terminal', handleRunTerminalEvent);
-      window.removeEventListener('odon:agent-terminal-event', handleAgentTerminalEvent);
-    };
-  }, [activeTabId, tabs]);
-
-  const handleCreateTab = () => {
-    const newId = `tab-${Date.now()}`;
-    const newNumber = tabs.length + 1;
+  const handleAddTab = (shell: string, name: string) => {
+    const newId = `tab-${shell}-${Date.now()}`;
+    const count = tabs.filter((t) => t.shell === shell).length + 1;
     const newTab: TerminalTab = {
       id: newId,
-      title: `Terminal #${newNumber}`,
-      shell: terminalInfo?.shell || 'PowerShell',
-      cwd: activeTab?.cwd || DEFAULT_CWD,
-      history: [
-        {
-          id: `init-${newId}`,
-          command: `# ODON Native PTY Terminal Session ${newNumber}`,
-          stdout: 'New interactive session initialized.',
-          stderr: '',
-          exit_code: 0,
-          cwd: activeTab?.cwd || DEFAULT_CWD,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        },
-      ],
-      commandHistory: [],
-      historyIndex: -1,
-      isRunning: false,
+      title: `${name} #${count}`,
+      shell,
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newId);
-    setTimeout(() => inputRef.current?.focus(), 50);
+    setIsAddMenuOpen(false);
   };
 
-  const handleCloseTab = (tabId: string, e: React.MouseEvent) => {
+  const handleCloseTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (tabs.length === 1) return;
-    const nextTabs = tabs.filter((t) => t.id !== tabId);
+    const nextTabs = tabs.filter((t) => t.id !== id);
     setTabs(nextTabs);
-    if (activeTabId === tabId) {
+    if (activeTabId === id) {
       setActiveTabId(nextTabs[0].id);
     }
   };
 
-  const handleClear = () => {
-    setTabs((prev) =>
-      prev.map((t) => (t.id === activeTabId ? { ...t, history: [] } : t))
-    );
-  };
-
-  const handleCopyHistory = () => {
-    if (!activeTab) return;
-    const text = activeTab.history
-      .map((item) => `$ ${item.command}\n${item.stdout}${item.stderr ? '\n' + item.stderr : ''}`)
-      .join('\n\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleSendOutputToAgent = (item: HistoryItem) => {
-    const prompt = `Berikut hasil eksekusi terminal untuk perintah \`${item.command}\`:\n\n\`\`\`\n${item.stdout}${item.stderr ? '\n' + item.stderr : ''}\n\`\`\`\nMohon analisa output ini dan berikan rekomendasi atau tindakan selanjutnya.`;
-    if (onSendToAgent) {
-      onSendToAgent(prompt);
-    } else {
-      window.dispatchEvent(new CustomEvent('odon:send-to-agent', { detail: { text: prompt } }));
-    }
-  };
-
-  const handleRunCommand = async (cmdToRun?: string) => {
-    const rawCmd = (cmdToRun !== undefined ? cmdToRun : inputVal).trim();
-    if (!rawCmd || activeTab?.isRunning) return;
-
-    setInputVal('');
-
-    if (rawCmd.toLowerCase() === 'cls' || rawCmd.toLowerCase() === 'clear') {
-      handleClear();
-      return;
-    }
-
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const cwdBefore = activeTab.cwd;
-
-    // Set running state on active tab
-    setTabs((prev) =>
-      prev.map((t) =>
-        t.id === activeTabId
-          ? {
-              ...t,
-              isRunning: true,
-              commandHistory: [rawCmd, ...t.commandHistory.filter((c) => c !== rawCmd)],
-              historyIndex: -1,
-            }
-          : t
-      )
-    );
-
-    try {
-      const result: TerminalExecResult = await api.executeTerminal(rawCmd, cwdBefore);
-      setDaemonOnline(true);
-      const updatedCwd = result.cwd || cwdBefore;
-
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === activeTabId
-            ? {
-                ...t,
-                cwd: updatedCwd,
-                isRunning: false,
-                history: [
-                  ...t.history,
-                  {
-                    id: `${Date.now()}-${Math.random()}`,
-                    command: rawCmd,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    cwd: updatedCwd,
-                    timestamp: nowStr,
-                  },
-                ],
-              }
-            : t
-        )
-      );
-    } catch (err: any) {
-      setDaemonOnline(false);
-      const isConnectionError = err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError');
-      const errorMsg = isConnectionError
-        ? `Failed to communicate with ODON daemon (http://127.0.0.1:4096). Please ensure 'odond' is running.\nDetails: ${err.message}`
-        : (err.message || 'Execution failed');
-
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === activeTabId
-            ? {
-                ...t,
-                isRunning: false,
-                history: [
-                  ...t.history,
-                  {
-                    id: `${Date.now()}-${Math.random()}`,
-                    command: rawCmd,
-                    stdout: '',
-                    stderr: errorMsg,
-                    exit_code: 1,
-                    cwd: cwdBefore,
-                    timestamp: nowStr,
-                  },
-                ],
-              }
-            : t
-        )
-      );
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleRunCommand();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const historyList = activeTab.commandHistory;
-      if (historyList.length === 0) return;
-      const nextIndex = Math.min(activeTab.historyIndex + 1, historyList.length - 1);
-      setTabs((prev) =>
-        prev.map((t) => (t.id === activeTabId ? { ...t, historyIndex: nextIndex } : t))
-      );
-      setInputVal(historyList[nextIndex]);
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const nextIndex = activeTab.historyIndex - 1;
-      if (nextIndex < 0) {
-        setTabs((prev) =>
-          prev.map((t) => (t.id === activeTabId ? { ...t, historyIndex: -1 } : t))
-        );
-        setInputVal('');
-      } else {
-        setTabs((prev) =>
-          prev.map((t) => (t.id === activeTabId ? { ...t, historyIndex: nextIndex } : t))
-        );
-        setInputVal(activeTab.commandHistory[nextIndex]);
-      }
-    } else if (e.ctrlKey && e.key === 'c') {
-      // Interrupt signal
-      if (activeTab.isRunning) {
-        setTabs((prev) =>
-          prev.map((t) => (t.id === activeTabId ? { ...t, isRunning: false } : t))
-        );
-      }
-    }
-  };
-
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] text-[#c9d1d9] font-mono text-xs select-text rounded-2xl overflow-hidden border border-neutral-800">
-      {/* Tab bar header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-[#161b22] border-b border-[#30363d] shrink-0">
-        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+    <div className="flex-1 flex flex-col h-full bg-[#0d1117] rounded-2xl overflow-hidden border border-neutral-800 shadow-2xs font-sans">
+      {/* ───────────────────────────────────────────────────────────
+          TOP TAB BAR & CONTROLS
+      ─────────────────────────────────────────────────────────── */}
+      <div className="h-10 bg-[#161b22] border-b border-neutral-800 flex items-center justify-between px-2 shrink-0 select-none">
+        {/* Tab list */}
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none h-full">
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             return (
-              <button
+              <div
                 key={tab.id}
-                type="button"
-                onClick={() => {
-                  setActiveTabId(tab.id);
-                  setTimeout(() => inputRef.current?.focus(), 50);
-                }}
-                className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all font-medium border cursor-pointer ${
+                onClick={() => setActiveTabId(tab.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all cursor-pointer border ${
                   isActive
-                    ? 'bg-[#0d1117] text-white border-[#388bfd] shadow-sm'
-                    : 'bg-[#21262d] text-[#8b949e] border-transparent hover:text-[#c9d1d9] hover:bg-[#30363d]'
+                    ? 'bg-[#0d1117] text-white border-neutral-700 shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 border-transparent'
                 }`}
               >
-                <TerminalIcon className={`w-3.5 h-3.5 ${isActive ? 'text-[#58a6ff]' : 'text-[#8b949e]'}`} />
-                <span>{tab.title}</span>
+                <TerminalIcon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-400' : 'text-neutral-500'}`} />
+                <span className="truncate max-w-[120px]">{tab.title}</span>
+
                 {tabs.length > 1 && (
-                  <span
+                  <button
                     onClick={(e) => handleCloseTab(tab.id, e)}
-                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 rounded p-0.5 ml-1 transition-opacity cursor-pointer"
+                    className="p-0.5 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/60 cursor-pointer"
+                    title="Close Tab"
                   >
                     <X className="w-3 h-3" />
-                  </span>
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
-          <button
-            type="button"
-            onClick={handleCreateTab}
-            title="New Terminal Tab"
-            className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#21262d] text-[#8b949e] hover:text-white hover:bg-[#30363d] transition-all cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
+
+          {/* Add Tab Button with Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+              className="flex items-center gap-1 p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+              title="Open New Terminal Shell"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <ChevronDown className="w-3 h-3" />
+            </button>
+
+            {isAddMenuOpen && (
+              <div className="absolute left-0 top-full mt-1 w-44 bg-[#1f242c] border border-neutral-700 rounded-xl shadow-xl p-1 z-30 text-xs font-mono text-neutral-200 space-y-0.5">
+                <button
+                  onClick={() => handleAddTab('powershell', 'PowerShell')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                >
+                  <span>PowerShell</span>
+                  <span className="text-[10px] text-neutral-400 font-sans">Default</span>
+                </button>
+                <button
+                  onClick={() => handleAddTab('cmd', 'Command Prompt')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                >
+                  <span>Command Prompt</span>
+                  <span className="text-[10px] text-neutral-400 font-sans">CMD</span>
+                </button>
+                <button
+                  onClick={() => handleAddTab('wsl', 'WSL / Linux')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                >
+                  <span>WSL / Linux</span>
+                  <span className="text-[10px] text-neutral-400 font-sans">Bash</span>
+                </button>
+                <button
+                  onClick={() => handleAddTab('bash', 'Git Bash')}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                >
+                  <span>Git Bash</span>
+                  <span className="text-[10px] text-neutral-400 font-sans">sh</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Toolbar actions */}
-        <div className="flex items-center gap-1.5 shrink-0 ml-2">
-          <span className="text-[10px] text-[#8b949e] bg-[#21262d] px-2 py-0.5 rounded border border-[#30363d]">
-            {activeTab?.shell || 'PowerShell'}
+        {/* Right Info Controls */}
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono text-neutral-400 bg-neutral-800/80 px-2 py-0.5 rounded-md hidden sm:inline">
+            Native ConPTY Engine
           </span>
-          <button
-            type="button"
-            onClick={handleCopyHistory}
-            title="Copy Output"
-            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors cursor-pointer"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-          <button
-            type="button"
-            onClick={handleClear}
-            title="Clear Buffer"
-            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+
           {onClose && (
             <button
-              type="button"
               onClick={onClose}
-              title="Close Terminal"
-              className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors ml-1 cursor-pointer"
+              className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+              title="Close Terminal Pane"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Quick Execution Presets Bar */}
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-[#090d13] border-b border-[#21262d] overflow-x-auto text-[11px] shrink-0">
-        <span className="text-[#8b949e] uppercase tracking-wider text-[10px]">Quick:</span>
-        <button
-          onClick={() => handleRunCommand('cargo test -p odon-tools')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#58a6ff] border border-[#30363d] transition-colors cursor-pointer"
-        >
-          cargo test
-        </button>
-        <button
-          onClick={() => handleRunCommand('git status -s')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#7ee787] border border-[#30363d] transition-colors cursor-pointer"
-        >
-          git status
-        </button>
-        <button
-          onClick={() => handleRunCommand('git log -5 --oneline')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#d2a8ff] border border-[#30363d] transition-colors cursor-pointer"
-        >
-          git log
-        </button>
-        <button
-          onClick={() => handleRunCommand('Get-Process -Name odond')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#ffa657] border border-[#30363d] transition-colors cursor-pointer"
-        >
-          check odond
-        </button>
-      </div>
-
-      {/* Terminal Output Log Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {activeTab?.history.map((item) => (
-          <div key={item.id} className="space-y-1.5 group">
-            <div className="flex items-center justify-between text-[#8b949e]">
-              <div className="flex items-center gap-2">
-                <span className="text-[#58a6ff] font-semibold">❯</span>
-                <span className="text-[#e6edf3] font-semibold">{item.command}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleSendOutputToAgent(item)}
-                  className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded text-[10.5px] text-[#58a6ff] hover:text-white bg-[#21262d] hover:bg-[#388bfd]/30 border border-[#30363d] transition-all flex items-center gap-1 cursor-pointer font-sans"
-                  title="Send terminal command and output to ODON agent for explanation or troubleshooting"
-                >
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                  <span>Send to Agent</span>
-                </button>
-                <span className="text-[10px] opacity-60 font-mono">{item.timestamp}</span>
-              </div>
+      {/* ───────────────────────────────────────────────────────────
+          TERMINAL BODIES (Cached per tab for persistent sessions)
+      ─────────────────────────────────────────────────────────── */}
+      <div className="flex-1 relative overflow-hidden">
+        {tabs.map((tab) => {
+          const isVisible = tab.id === activeTabId;
+          return (
+            <div
+              key={tab.id}
+              className={`w-full h-full absolute inset-0 ${isVisible ? 'block z-10' : 'hidden z-0'}`}
+            >
+              <NativeTerminal
+                shell={tab.shell}
+                cwd={tab.cwd}
+                title={tab.title}
+                className="w-full h-full rounded-none border-none"
+              />
             </div>
-            {item.stdout && (
-              <pre className="text-[#c9d1d9] whitespace-pre-wrap break-all pl-4 border-l-2 border-[#30363d] leading-relaxed font-mono">
-                {item.stdout}
-              </pre>
-            )}
-            {item.stderr && (
-              <pre className="text-[#ff7b72] whitespace-pre-wrap break-all pl-4 border-l-2 border-[#ff7b72]/60 leading-relaxed font-mono">
-                {item.stderr}
-              </pre>
-            )}
-          </div>
-        ))}
-
-        {activeTab?.isRunning && (
-          <div className="flex items-center gap-2 text-[#58a6ff] py-1 font-sans text-xs">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>Executing command in native session...</span>
-          </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Terminal Interactive Prompt Bar */}
-      <div className="flex items-center gap-2 p-2.5 bg-[#161b22] border-t border-[#30363d] shrink-0">
-        <div className="flex items-center gap-1 text-[#58a6ff] shrink-0 font-semibold text-xs">
-          <span>{activeTab?.cwd ? activeTab.cwd.split('/').pop() || activeTab.cwd : 'odon'}</span>
-          <span>❯</span>
-        </div>
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputVal}
-          onChange={(e) => setInputVal(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={activeTab?.isRunning}
-          placeholder={activeTab?.isRunning ? 'Running process...' : 'Type CLI / PowerShell command...'}
-          className="flex-1 bg-transparent border-none text-[#e6edf3] focus:outline-none text-xs font-mono placeholder-[#6e7681]"
-          autoFocus
-        />
-        <button
-          type="button"
-          onClick={() => handleRunCommand()}
-          disabled={!inputVal.trim() || activeTab?.isRunning}
-          className="p-1.5 rounded-md bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:hover:bg-[#238636] text-white transition-colors cursor-pointer"
-        >
-          <Play className="w-3.5 h-3.5" />
-        </button>
+          );
+        })}
       </div>
     </div>
   );

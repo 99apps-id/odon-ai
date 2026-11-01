@@ -61,6 +61,8 @@ export interface SshProfile {
   port: number;
   user: string;
   key_path?: string;
+  certificate_filename?: string;
+  certificate_data?: string;
   auth_type: string;
   description?: string;
   created_at: string;
@@ -468,6 +470,31 @@ export const api = {
       return { exit_code: 1, stdout: '', stderr: 'SSH execution request failed', success: false, cwd: '' };
     }
     return res.json();
+  },
+
+  async importSshCertificate(filename: string, content: string, profile_id?: string): Promise<{ success: boolean; saved_path: string; filename: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/ssh/certificates/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, content, profile_id }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Import certificate failed with status ${res.status}`);
+    }
+    return res.json();
+  },
+
+  getTerminalWsUrl(params?: { shell?: string; cwd?: string; ssh_profile_id?: string; cols?: number; rows?: number }): string {
+    const base = this.getBaseUrl().replace(/^http/, 'ws');
+    const query = new URLSearchParams();
+    if (params?.shell) query.set('shell', params.shell);
+    if (params?.cwd) query.set('cwd', params.cwd);
+    if (params?.ssh_profile_id) query.set('ssh_profile_id', params.ssh_profile_id);
+    if (params?.cols) query.set('cols', params.cols.toString());
+    if (params?.rows) query.set('rows', params.rows.toString());
+    const qs = query.toString();
+    return `${base}/api/terminal/ws${qs ? `?${qs}` : ''}`;
   },
 
   // Skills APIs

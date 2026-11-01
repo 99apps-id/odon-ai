@@ -17,31 +17,18 @@ import {
   X,
   Loader2,
   FolderOpen,
+  UploadCloud,
+  FileCheck,
+  FileKey,
 } from 'lucide-react';
 import { api, SshProfile } from '../api';
-
-interface SshHistoryItem {
-  id: string;
-  command: string;
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-  timestamp: string;
-}
+import { NativeTerminal } from './NativeTerminal';
 
 export const SshTerminalView: React.FC = () => {
   const [profiles, setProfiles] = useState<SshProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<SshProfile | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
-
-  // Command & Output state
-  const [commandInput, setCommandInput] = useState<string>('');
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [history, setHistory] = useState<SshHistoryItem[]>([]);
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Profile modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -52,8 +39,10 @@ export const SshTerminalView: React.FC = () => {
   const [newKeyPath, setNewKeyPath] = useState<string>('');
   const [newDesc, setNewDesc] = useState<string>('');
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  // Certificate file import state
+  const [importedCertName, setImportedCertName] = useState<string | null>(null);
+  const [isImportingCert, setIsImportingCert] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadProfiles = async () => {
     try {
@@ -71,161 +60,72 @@ export const SshTerminalView: React.FC = () => {
     loadProfiles();
   }, []);
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history]);
-
-  const handleConnect = async () => {
+  const handleConnect = () => {
     if (!selectedProfile) return;
     setIsConnecting(true);
-    // Test SSH connectivity with a quick uname -a or hostname
-    try {
-      const res = await api.execSsh({
-        profile_id: selectedProfile.id,
-        command: 'uname -a 2>/dev/null || ver',
-      });
-      if (res.success || res.exit_code === 0) {
-        setIsConnected(true);
-        setHistory([
-          {
-            id: `init-${Date.now()}`,
-            command: `# Connected to ${selectedProfile.alias} (${selectedProfile.host}:${selectedProfile.port})`,
-            stdout: `Remote Host Banner:\n${res.stdout || 'Linux remote environment ready.'}\nUser: ${selectedProfile.user}\nAuth: ${selectedProfile.auth_type}`,
-            stderr: '',
-            exit_code: 0,
-            timestamp: new Date().toLocaleTimeString(),
-          },
-        ]);
-      } else {
-        setIsConnected(false);
-        setHistory([
-          {
-            id: `err-${Date.now()}`,
-            command: `# Connection to ${selectedProfile.alias} failed`,
-            stdout: '',
-            stderr: res.stderr || 'Host unreachable or SSH authentication failed.',
-            exit_code: res.exit_code,
-            timestamp: new Date().toLocaleTimeString(),
-          },
-        ]);
-      }
-    } catch (err) {
-      setIsConnected(false);
-      console.error('SSH connection failed:', err);
-    } finally {
+    setTimeout(() => {
+      setIsConnected(true);
       setIsConnecting(false);
-    }
+    }, 400);
   };
 
   const handleDisconnect = () => {
     setIsConnected(false);
-    setHistory((prev) => [
-      ...prev,
-      {
-        id: `disc-${Date.now()}`,
-        command: `# Disconnected from ${selectedProfile?.alias}`,
-        stdout: 'Session ended.',
-        stderr: '',
-        exit_code: 0,
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
   };
 
-  const handleExecute = async () => {
-    const cmd = commandInput.trim();
-    if (!cmd || isRunning) return;
+  const handleCertFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    if (cmd === 'clear' || cmd === 'cls') {
-      setHistory([]);
-      setCommandInput('');
-      return;
-    }
-
-    setCommandHistory((prev) => [cmd, ...prev]);
-    setHistoryIndex(-1);
-    setCommandInput('');
-    setIsRunning(true);
-
+    setIsImportingCert(true);
     try {
-      const res = await api.execSsh({
-        profile_id: selectedProfile?.id,
-        command: cmd,
-      });
-
-      const item: SshHistoryItem = {
-        id: `exec-${Date.now()}`,
-        command: cmd,
-        stdout: res.stdout,
-        stderr: res.stderr,
-        exit_code: res.exit_code,
-        timestamp: new Date().toLocaleTimeString(),
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const content = typeof reader.result === 'string' ? reader.result : '';
+        try {
+          const res = await api.importSshCertificate(file.name, content);
+          if (res.success && res.saved_path) {
+            setNewKeyPath(res.saved_path);
+            setImportedCertName(file.name);
+          }
+        } catch (err) {
+          console.error('Failed to import certificate to backend:', err);
+          // Fallback: set key path to file name
+          setNewKeyPath(file.name);
+          setImportedCertName(file.name);
+        } finally {
+          setIsImportingCert(false);
+        }
       };
-
-      setHistory((prev) => [...prev, item]);
+      reader.readAsText(file);
     } catch (err) {
-      setHistory((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          command: cmd,
-          stdout: '',
-          stderr: String(err),
-          exit_code: 1,
-          timestamp: new Date().toLocaleTimeString(),
-        },
-      ]);
-    } finally {
-      setIsRunning(false);
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleExecute();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
-        const nextIndex = historyIndex + 1;
-        setHistoryIndex(nextIndex);
-        setCommandInput(commandHistory[nextIndex]);
-      }
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (historyIndex > 0) {
-        const nextIndex = historyIndex - 1;
-        setHistoryIndex(nextIndex);
-        setCommandInput(commandHistory[nextIndex]);
-      } else if (historyIndex === 0) {
-        setHistoryIndex(-1);
-        setCommandInput('');
-      }
+      console.error('Failed to read file:', err);
+      setIsImportingCert(false);
     }
   };
 
   const handleSaveNewProfile = async () => {
     if (!newAlias.trim() || !newHost.trim()) return;
-    const profile: SshProfile = {
-      id: newAlias.trim().toLowerCase().replace(/\s+/g, '-'),
+
+    const newProfile: SshProfile = {
+      id: `ssh-${Date.now()}`,
       alias: newAlias.trim(),
       host: newHost.trim(),
-      port: Number(newPort) || 22,
+      port: newPort || 22,
       user: newUser.trim() || 'root',
       key_path: newKeyPath.trim() || undefined,
-      auth_type: newKeyPath.trim() ? 'key' : 'password',
+      certificate_filename: importedCertName || undefined,
+      auth_type: newKeyPath.trim() || importedCertName ? 'certificate' : 'password',
       description: newDesc.trim() || undefined,
       created_at: new Date().toISOString(),
     };
+
     try {
-      const res = await api.saveSshProfile(profile);
+      const res = await api.saveSshProfile(newProfile);
       setProfiles(res.profiles || []);
-      setSelectedProfile(profile);
+      setSelectedProfile(newProfile);
       setIsModalOpen(false);
-      setNewAlias('');
-      setNewHost('');
-      setNewKeyPath('');
-      setNewDesc('');
+      resetModalForm();
     } catch (err) {
       console.error('Failed to save profile:', err);
     }
@@ -233,12 +133,12 @@ export const SshTerminalView: React.FC = () => {
 
   const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this SSH profile?')) return;
+    if (!confirm('Are you sure you want to delete this SSH host profile?')) return;
     try {
       const res = await api.deleteSshProfile(id);
       setProfiles(res.profiles || []);
       if (selectedProfile?.id === id) {
-        setSelectedProfile(res.profiles?.[0] || null);
+        setSelectedProfile(res.profiles[0] || null);
         setIsConnected(false);
       }
     } catch (err) {
@@ -246,264 +146,306 @@ export const SshTerminalView: React.FC = () => {
     }
   };
 
-  const handleCopyOutput = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1500);
+  const resetModalForm = () => {
+    setNewAlias('');
+    setNewHost('');
+    setNewPort(22);
+    setNewUser('root');
+    setNewKeyPath('');
+    setNewDesc('');
+    setImportedCertName(null);
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs font-sans">
+    <div className="flex-1 flex overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs">
       {/* ───────────────────────────────────────────────────────────
-          SSH HEADER & PROFILE SELECTOR
+          LEFT: HOST / SERVERS SIDEBAR
       ─────────────────────────────────────────────────────────── */}
-      <div className="p-3 border-b border-neutral-200 bg-neutral-50/70 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Server className="w-4 h-4 text-purple-600" />
-            <span className="font-bold text-xs text-neutral-800">Remote SSH Terminal</span>
+      <div className="w-72 shrink-0 border-r border-neutral-200 flex flex-col bg-neutral-50/50">
+        <div className="p-3 border-b border-neutral-200 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 font-bold text-xs text-neutral-800">
+            <Server className="w-4 h-4 text-blue-600" />
+            <span>Remote Hosts</span>
           </div>
-
-          {/* Profile Dropdown */}
-          <div className="flex items-center gap-1.5 bg-white border border-neutral-200 rounded-xl px-2.5 py-1 text-xs">
-            <span className="text-[11px] text-neutral-400">Host:</span>
-            <select
-              value={selectedProfile?.id || ''}
-              onChange={(e) => {
-                const p = profiles.find((prof) => prof.id === e.target.value);
-                if (p) {
-                  setSelectedProfile(p);
-                  setIsConnected(false);
-                }
-              }}
-              className="bg-transparent outline-none font-semibold text-neutral-800 cursor-pointer"
-            >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.alias} ({p.user}@{p.host}:{p.port})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Status Indicator */}
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] border bg-white">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
-              }`}
-            />
-            <span className={isConnected ? 'text-emerald-700 font-medium' : 'text-neutral-500'}>
-              {isConnecting ? 'Connecting...' : isConnected ? 'Online' : 'Disconnected'}
-            </span>
-          </div>
-        </div>
-
-        {/* Action Controls */}
-        <div className="flex items-center gap-2">
-          {!isConnected ? (
-            <button
-              onClick={handleConnect}
-              disabled={isConnecting || !selectedProfile}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 cursor-pointer shadow-xs transition-colors"
-            >
-              {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-              <span>Connect</span>
-            </button>
-          ) : (
-            <button
-              onClick={handleDisconnect}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 cursor-pointer transition-colors"
-            >
-              <WifiOff className="w-3.5 h-3.5" />
-              <span>Disconnect</span>
-            </button>
-          )}
 
           <button
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-neutral-600 hover:bg-neutral-200/60 border border-neutral-200 cursor-pointer"
-            title="Add SSH Host"
+            onClick={() => {
+              resetModalForm();
+              setIsModalOpen(true);
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold transition-colors shadow-2xs cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3 h-3" />
             <span>Add Host</span>
           </button>
-
-          <button
-            onClick={() => setHistory([])}
-            className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/60 rounded-xl cursor-pointer"
-            title="Clear Terminal"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
         </div>
-      </div>
 
-      {/* ───────────────────────────────────────────────────────────
-          TERMINAL SCROLL OUTPUT AREA
-      ─────────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto p-4 bg-[#0d1117] font-mono text-xs text-[#c9d1d9] space-y-4 select-text">
-        {history.length === 0 ? (
-          <div className="p-8 text-center text-neutral-500">
-            {isConnected ? (
-              <span>Remote session ready. Type any Linux command below and press Enter.</span>
-            ) : (
-              <span>Click Connect above to establish an SSH session with {selectedProfile?.alias || 'remote host'}.</span>
-            )}
-          </div>
-        ) : (
-          history.map((item) => (
-            <div key={item.id} className="space-y-1">
-              <div className="flex items-center justify-between text-neutral-400 text-[11px] border-b border-neutral-800 pb-1">
-                <div className="flex items-center gap-1.5 text-purple-400">
-                  <span className="text-neutral-500">$</span>
-                  <span className="text-white font-semibold">{item.command}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span>{item.timestamp}</span>
-                  <button
-                    onClick={() => handleCopyOutput(item.stdout || item.stderr, item.id)}
-                    className="hover:text-white p-0.5 cursor-pointer"
-                    title="Copy output"
-                  >
-                    {copiedId === item.id ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3 h-3" />
+        {/* Profiles List */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {profiles.length === 0 ? (
+            <div className="p-6 text-center text-xs text-neutral-400">
+              No SSH hosts configured. Click Add Host above.
+            </div>
+          ) : (
+            profiles.map((p) => {
+              const isSelected = selectedProfile?.id === p.id;
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    if (selectedProfile?.id !== p.id) {
+                      setSelectedProfile(p);
+                      setIsConnected(false);
+                    }
+                  }}
+                  className={`group p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-start justify-between ${
+                    isSelected
+                      ? 'bg-blue-50/70 border-blue-200 shadow-2xs text-blue-950'
+                      : 'bg-white border-neutral-200/70 hover:border-neutral-300 text-neutral-800'
+                  }`}
+                >
+                  <div className="space-y-1 overflow-hidden">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${isSelected && isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'}`} />
+                      <span className="font-bold truncate">{p.alias}</span>
+                    </div>
+
+                    <div className="text-[11px] font-mono text-neutral-500 truncate">
+                      {p.user}@{p.host}:{p.port}
+                    </div>
+
+                    {p.key_path && (
+                      <div className="flex items-center gap-1 text-[10px] text-blue-600 font-mono">
+                        <Key className="w-2.5 h-2.5" />
+                        <span className="truncate">{p.certificate_filename || p.key_path.split('/').pop() || p.key_path.split('\\').pop()}</span>
+                      </div>
                     )}
+                  </div>
+
+                  <button
+                    onClick={(e) => handleDeleteProfile(p.id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-rose-600 rounded transition-opacity"
+                    title="Delete profile"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              </div>
-
-              {item.stdout && (
-                <pre className="whitespace-pre-wrap break-all text-neutral-200 font-mono text-[11.5px] leading-relaxed">
-                  {item.stdout}
-                </pre>
-              )}
-
-              {item.stderr && (
-                <pre className="whitespace-pre-wrap break-all text-rose-400 font-mono text-[11.5px] leading-relaxed">
-                  {item.stderr}
-                </pre>
-              )}
-            </div>
-          ))
-        )}
-        <div ref={scrollRef} />
+              );
+            })
+          )}
+        </div>
       </div>
 
       {/* ───────────────────────────────────────────────────────────
-          COMMAND INPUT BAR
+          RIGHT: NATIVE FULL COMMAND TERMINAL PANE
       ─────────────────────────────────────────────────────────── */}
-      <div className="p-2.5 border-t border-neutral-200 bg-white flex items-center gap-2 shrink-0">
-        <div className="flex items-center gap-1 font-mono text-xs text-purple-600 font-bold px-1">
-          <span>{selectedProfile?.alias || 'ssh'}&gt;</span>
+      <div className="flex-1 flex flex-col overflow-hidden bg-neutral-900">
+        {/* Terminal Header */}
+        <div className="px-4 py-2 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <TerminalIcon className="w-4 h-4 text-blue-400" />
+            <span className="font-bold text-xs text-white">
+              {selectedProfile ? `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}` : 'SSH Remote Terminal'}
+            </span>
+            {selectedProfile?.alias && (
+              <span className="px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300 font-mono text-[10.5px]">
+                {selectedProfile.alias}
+              </span>
+            )}
+            <span className="text-[10px] text-neutral-400 font-mono hidden md:inline">• Full Command Interactive Terminal</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isConnected ? (
+              <button
+                onClick={handleDisconnect}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                <WifiOff className="w-3.5 h-3.5" />
+                <span>Disconnect</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleConnect}
+                disabled={!selectedProfile || isConnecting}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-semibold cursor-pointer shadow-2xs transition-colors"
+              >
+                {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                <span>{isConnecting ? 'Connecting...' : 'Connect Host'}</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        <input
-          ref={inputRef}
-          type="text"
-          value={commandInput}
-          onChange={(e) => setCommandInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={!isConnected || isRunning}
-          placeholder={isConnected ? 'Type command (e.g. ls -la, htop, docker ps)...' : 'Connect to execute commands'}
-          className="flex-1 text-xs font-mono text-neutral-800 outline-none bg-transparent placeholder-neutral-400"
-          autoFocus
-        />
+        {/* Real Interactive Terminal or Connection Prompt */}
+        <div className="flex-1 relative overflow-hidden">
+          {isConnected && selectedProfile ? (
+            <NativeTerminal
+              key={selectedProfile.id}
+              sshProfileId={selectedProfile.id}
+              title={`SSH: ${selectedProfile.user}@${selectedProfile.host}`}
+              className="w-full h-full rounded-none border-none"
+            />
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-neutral-400 space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-neutral-800 flex items-center justify-center text-blue-400 border border-neutral-700 shadow-inner">
+                <Server className="w-7 h-7" />
+              </div>
+              <div className="space-y-1 max-w-sm">
+                <h3 className="text-sm font-bold text-neutral-200">
+                  {selectedProfile ? `Ready to connect to ${selectedProfile.alias}` : 'No Host Selected'}
+                </h3>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  {selectedProfile
+                    ? `Klik tombol "Connect Host" di pojok kanan atas untuk membuka terminal interaktif asli dengan akses full command ke ${selectedProfile.host}.`
+                    : 'Pilih salah satu host di sidebar kiri atau tambahkan host baru dengan tombol Add Host.'}
+                </p>
+              </div>
 
-        <button
-          onClick={handleExecute}
-          disabled={!isConnected || !commandInput.trim() || isRunning}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white text-xs font-medium cursor-pointer shadow-xs transition-colors"
-        >
-          {isRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-          <span>Send</span>
-        </button>
+              {selectedProfile && (
+                <button
+                  onClick={handleConnect}
+                  disabled={isConnecting}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors"
+                >
+                  {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+                  <span>Launch Interactive SSH Terminal</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ───────────────────────────────────────────────────────────
-          ADD SSH PROFILE MODAL
+          ADD SSH PROFILE MODAL WITH CERTIFICATE / KEY IMPORT
       ─────────────────────────────────────────────────────────── */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-2xs">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-neutral-200 p-5 space-y-4">
             <div className="flex items-center justify-between font-bold text-sm text-neutral-900">
               <div className="flex items-center gap-2">
-                <Server className="w-4 h-4 text-purple-600" />
+                <Server className="w-4 h-4 text-blue-600" />
                 <span>Add Remote SSH Host</span>
               </div>
-              <button onClick={() => setIsModalOpen(false)} className="text-neutral-400 hover:text-neutral-700">
+              <button onClick={() => setIsModalOpen(false)} className="text-neutral-400 hover:text-neutral-700 cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="text-neutral-500 font-mono mb-1 block">Profile Name / Alias *</label>
+                <label className="text-neutral-600 font-semibold mb-1 block">Profile Name / Alias *</label>
                 <input
                   type="text"
                   value={newAlias}
                   onChange={(e) => setNewAlias(e.target.value)}
-                  placeholder="e.g. prod-server, vps-backup"
-                  className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-purple-500"
+                  placeholder="e.g. prod-server, vps-naracitra"
+                  className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-blue-500"
                 />
               </div>
 
               <div className="grid grid-cols-3 gap-2">
                 <div className="col-span-2">
-                  <label className="text-neutral-500 font-mono mb-1 block">Host IP / Domain *</label>
+                  <label className="text-neutral-600 font-semibold mb-1 block">Host IP / Domain *</label>
                   <input
                     type="text"
                     value={newHost}
                     onChange={(e) => setNewHost(e.target.value)}
-                    placeholder="103.126.116.111 or example.com"
-                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-purple-500"
+                    placeholder="103.126.116.111 or server.example.com"
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="text-neutral-500 font-mono mb-1 block">Port</label>
+                  <label className="text-neutral-600 font-semibold mb-1 block">Port</label>
                   <input
                     type="number"
                     value={newPort}
                     onChange={(e) => setNewPort(Number(e.target.value))}
                     placeholder="22"
-                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-neutral-500 font-mono mb-1 block">User</label>
-                  <input
-                    type="text"
-                    value={newUser}
-                    onChange={(e) => setNewUser(e.target.value)}
-                    placeholder="root or ubuntu"
-                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-purple-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-neutral-500 font-mono mb-1 block">Key Path (optional)</label>
-                  <input
-                    type="text"
-                    value={newKeyPath}
-                    onChange={(e) => setNewKeyPath(e.target.value)}
-                    placeholder="~/.ssh/id_rsa or ~/.ssh/key.pem"
-                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-purple-500"
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-neutral-500 font-mono mb-1 block">Description</label>
+                <label className="text-neutral-600 font-semibold mb-1 block">User *</label>
+                <input
+                  type="text"
+                  value={newUser}
+                  onChange={(e) => setNewUser(e.target.value)}
+                  placeholder="root or ubuntu"
+                  className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {/* ───────────────────────────────────────────
+                  CERTIFICATE / PRIVATE KEY IMPORT SECTION
+              ─────────────────────────────────────────── */}
+              <div className="p-3 rounded-xl bg-blue-50/50 border border-blue-200/70 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-semibold text-neutral-800">
+                    <FileKey className="w-4 h-4 text-blue-600" />
+                    <span>Sertifikat & Private Key SSH</span>
+                  </div>
+                  <span className="text-[10px] text-blue-600 font-mono">.pem, .key, .crt</span>
+                </div>
+
+                <p className="text-[11px] text-neutral-600 leading-snug">
+                  Impor file sertifikat (.pem, .key, id_rsa) dari komputer Anda untuk autentikasi otomatis tanpa memasukkan password:
+                </p>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleCertFileChange}
+                  accept=".pem,.key,.crt,.cer,.pub,id_rsa,id_ed25519,*"
+                  className="hidden"
+                />
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImportingCert}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-blue-300 bg-white hover:bg-blue-50/80 text-blue-700 font-semibold transition-colors cursor-pointer shadow-2xs"
+                  >
+                    {isImportingCert ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <UploadCloud className="w-3.5 h-3.5 text-blue-600" />
+                    )}
+                    <span>{isImportingCert ? 'Mengimpor sertifikat...' : 'Impor File Sertifikat / Key'}</span>
+                  </button>
+                </div>
+
+                {importedCertName && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                    <FileCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate font-mono">Sertifikat berhasil diimpor: {importedCertName}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-[10.5px] text-neutral-500 font-mono mb-1 block">Key Path di Local Machine</label>
+                  <input
+                    type="text"
+                    value={newKeyPath}
+                    onChange={(e) => setNewKeyPath(e.target.value)}
+                    placeholder="~/.ssh/id_rsa or C:\Users\...\cert.pem"
+                    className="w-full px-2.5 py-1 text-[11.5px] rounded-lg border border-neutral-300 bg-white font-mono outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-neutral-600 font-semibold mb-1 block">Description (optional)</label>
                 <input
                   type="text"
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="e.g. Production web application host"
-                  className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 outline-none focus:border-purple-500"
+                  placeholder="e.g. Production Ubuntu VPS host"
+                  className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 outline-none focus:border-blue-500"
                 />
               </div>
             </div>
@@ -518,7 +460,7 @@ export const SshTerminalView: React.FC = () => {
               <button
                 onClick={handleSaveNewProfile}
                 disabled={!newAlias.trim() || !newHost.trim()}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 cursor-pointer shadow-xs"
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
               >
                 Save Profile
               </button>

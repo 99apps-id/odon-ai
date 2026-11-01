@@ -1,3 +1,4 @@
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use axum::{
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
@@ -21,7 +22,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+// tokio::io
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
@@ -345,6 +346,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/ssh/profiles", get(get_ssh_profiles).post(save_ssh_profile))
                 .route("/api/ssh/profiles/{id}", axum::routing::delete(delete_ssh_profile))
                 .route("/api/ssh/exec", post(exec_ssh_command))
+                .route("/api/ssh/certificates/import", post(import_ssh_certificate))
                 // Skills APIs
                 .route("/api/skills", get(get_skills_list).post(save_skill_item))
                 .route("/api/skills/{name}", axum::routing::delete(delete_skill_item));
@@ -1054,110 +1056,199 @@ async fn disconnect_oauth(
     StatusCode::OK
 }
 
+#[derive(Deserialize, Debug, Default)]
+struct TerminalWsQuery {
+    #[serde(default)]
+    shell: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    ssh_profile_id: Option<String>,
+    #[serde(default)]
+    cols: Option<u16>,
+    #[serde(default)]
+    rows: Option<u16>,
+}
+
 async fn ws_terminal_handler(
     ws: WebSocketUpgrade,
+    axum::extract::Query(query): axum::extract::Query<TerminalWsQuery>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let workspace = state.workspace_root.clone();
-    ws.on_upgrade(move |socket| handle_terminal_socket(socket, workspace))
+    ws.on_upgrade(move |socket| handle_terminal_socket(socket, workspace, query))
 }
 
-async fn handle_terminal_socket(socket: WebSocket, workspace: String) {
-    #[cfg(target_os = "windows")]
-    let mut cmd = tokio::process::Command::new("powershell.exe");
-    #[cfg(target_os = "windows")]
-    cmd.args(["-NoLogo", "-NoExit", "-Command", "-"]);
+async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: TerminalWsQuery) {
+    let cols = query.cols.unwrap_or(100).max(10);
+    let rows = query.rows.unwrap_or(28).max(5);
 
-    #[cfg(not(target_os = "windows"))]
-    let mut cmd = tokio::process::Command::new("sh");
-
-    cmd.current_dir(&workspace);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
+    let pty_system = native_pty_system();
+    let pair = match pty_system.openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }) {
+        Ok(p) => p,
         Err(e) => {
             let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx
-                .send(WsMessage::Text(format!("Failed to spawn shell: {}\r\n", e).into()))
-                .await;
+            let _ = ws_tx.send(WsMessage::Text(format!("Failed to open native PTY: {}\r\n", e).into())).await;
             return;
         }
     };
 
-    let mut stdin = match child.stdin.take() {
-        Some(s) => s,
-        None => return,
+    let cmd = if let Some(pid) = &query.ssh_profile_id {
+        let profiles = load_ssh_profiles();
+        let profile = profiles.into_iter().find(|p| &p.id == pid || &p.alias == pid);
+        if let Some(p) = profile {
+            let mut c = CommandBuilder::new("ssh");
+            c.arg("-tt");
+            c.arg("-o");
+            c.arg("StrictHostKeyChecking=no");
+            c.arg("-o");
+            c.arg("ConnectTimeout=15");
+            c.arg("-p");
+            c.arg(p.port.to_string());
+            if let Some(k) = &p.key_path {
+                let expanded = if k.starts_with('~') {
+                    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+                        k.replacen('~', &home.to_string_lossy(), 1)
+                    } else {
+                        k.to_string()
+                    }
+                } else {
+                    k.to_string()
+                };
+                c.arg("-i");
+                c.arg(expanded);
+            }
+            c.arg(format!("{}@{}", p.user, p.host));
+            c
+        } else {
+            let (mut ws_tx, _) = socket.split();
+            let _ = ws_tx.send(WsMessage::Text(format!("SSH Profile not found: {}\r\n", pid).into())).await;
+            return;
+        }
+    } else {
+        let working_dir = query.cwd.as_deref().unwrap_or(&workspace);
+        #[cfg(target_os = "windows")]
+        let c = {
+            let shell_type = query.shell.as_deref().unwrap_or("powershell");
+            let mut cb = if shell_type.eq_ignore_ascii_case("cmd") {
+                CommandBuilder::new("cmd.exe")
+            } else if shell_type.eq_ignore_ascii_case("wsl") || shell_type.eq_ignore_ascii_case("bash") {
+                CommandBuilder::new("wsl.exe")
+            } else {
+                let mut p = CommandBuilder::new("powershell.exe");
+                p.arg("-NoLogo");
+                p
+            };
+            cb.cwd(working_dir);
+            cb
+        };
+        #[cfg(not(target_os = "windows"))]
+        let c = {
+            let shell_type = query.shell.as_deref().unwrap_or("bash");
+            let mut cb = CommandBuilder::new(shell_type);
+            cb.cwd(working_dir);
+            cb
+        };
+        c
     };
-    let mut stdout = match child.stdout.take() {
-        Some(s) => s,
-        None => return,
+
+    let mut child = match pair.slave.spawn_command(cmd) {
+        Ok(ch) => ch,
+        Err(e) => {
+            let (mut ws_tx, _) = socket.split();
+            let _ = ws_tx.send(WsMessage::Text(format!("Failed to spawn process in PTY: {}\r\n", e).into())).await;
+            return;
+        }
     };
-    let mut stderr = match child.stderr.take() {
-        Some(s) => s,
-        None => return,
+
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(r) => r,
+        Err(e) => {
+            let (mut ws_tx, _) = socket.split();
+            let _ = ws_tx.send(WsMessage::Text(format!("Failed to clone PTY reader: {}\r\n", e).into())).await;
+            return;
+        }
     };
+
+    let mut writer = match pair.master.take_writer() {
+        Ok(w) => w,
+        Err(e) => {
+            let (mut ws_tx, _) = socket.split();
+            let _ = ws_tx.send(WsMessage::Text(format!("Failed to get PTY writer: {}\r\n", e).into())).await;
+            return;
+        }
+    };
+
+    let master_ref = std::sync::Arc::new(std::sync::Mutex::new(pair.master));
 
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+    let (pty_out_tx, mut pty_out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(200);
 
+    // Thread 1: Reader from PTY -> channel
+    let _pty_read_thread = std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if pty_out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Task 2: Channel -> WebSocket client
     let ws_send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if ws_tx.send(WsMessage::Text(msg.into())).await.is_err() {
+        while let Some(bytes) = pty_out_rx.recv().await {
+            if ws_tx.send(WsMessage::Binary(bytes.into())).await.is_err() {
                 break;
             }
         }
     });
 
-    let tx_stdout = tx.clone();
-    let stdout_task = tokio::spawn(async move {
-        let mut buf = [0u8; 1024];
-        loop {
-            match stdout.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                    if tx_stdout.send(s).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+    // Thread 3: Channel -> Writer into PTY
+    let (pty_in_tx, mut pty_in_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(200);
+    let _pty_write_thread = std::thread::spawn(move || {
+        while let Some(bytes) = pty_in_rx.blocking_recv() {
+            if writer.write_all(&bytes).is_err() {
+                break;
             }
+            let _ = writer.flush();
         }
     });
 
-    let tx_stderr = tx.clone();
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = [0u8; 1024];
-        loop {
-            match stderr.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                    if tx_stderr.send(s).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
+    // Loop: Inbound WebSocket messages from xterm.js
+    let master_clone = master_ref.clone();
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             WsMessage::Text(text) => {
-                let mut data = text.as_bytes().to_vec();
-                if !data.ends_with(b"\n") {
-                    data.push(b'\n');
+                // Check if it is a resize event: {"type":"resize","cols":120,"rows":30}
+                if text.starts_with('{') && text.contains("resize") {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if v.get("type").and_then(|t| t.as_str()) == Some("resize") {
+                            let c = v.get("cols").and_then(|c| c.as_u64()).unwrap_or(80) as u16;
+                            let r = v.get("rows").and_then(|r| r.as_u64()).unwrap_or(24) as u16;
+                            if let Ok(m) = master_clone.lock() {
+                                let _ = m.resize(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 });
+                            }
+                            continue;
+                        }
+                    }
                 }
-                if stdin.write_all(&data).await.is_err() {
+                if pty_in_tx.send(text.as_bytes().to_vec()).await.is_err() {
                     break;
                 }
             }
             WsMessage::Binary(bin) => {
-                if stdin.write_all(&bin).await.is_err() {
+                if pty_in_tx.send(bin.to_vec()).await.is_err() {
                     break;
                 }
             }
@@ -1166,9 +1257,7 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String) {
         }
     }
 
-    let _ = child.kill().await;
-    stdout_task.abort();
-    stderr_task.abort();
+    let _ = child.kill();
     ws_send_task.abort();
 }
 
@@ -1876,10 +1965,66 @@ struct SshProfile {
     host: String,
     port: u16,
     user: String,
+    #[serde(default)]
     key_path: Option<String>,
+    #[serde(default)]
+    certificate_filename: Option<String>,
+    #[serde(default)]
+    certificate_data: Option<String>,
     auth_type: String,
+    #[serde(default)]
     description: Option<String>,
     created_at: String,
+}
+
+#[derive(Deserialize)]
+struct SshCertImportPayload {
+    filename: String,
+    content: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    profile_id: Option<String>,
+}
+
+async fn import_ssh_certificate(
+    Json(payload): Json<SshCertImportPayload>,
+) -> impl IntoResponse {
+    let base = std::env::var_os("ODON_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let cert_dir = base.join(".odon").join("ssh-keys");
+    let _ = std::fs::create_dir_all(&cert_dir);
+
+    let clean_name = std::path::Path::new(&payload.filename)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("key-{}.pem", uuid::Uuid::new_v4()));
+    let target_path = cert_dir.join(&clean_name);
+
+    if let Err(e) = std::fs::write(&target_path, &payload.content) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "success": false, "error": e.to_string() })),
+        );
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    let saved_path = target_path.to_string_lossy().to_string();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "saved_path": saved_path,
+            "filename": clean_name
+        })),
+    )
 }
 
 fn get_ssh_profiles_path() -> PathBuf {
@@ -1906,6 +2051,8 @@ fn load_ssh_profiles() -> Vec<SshProfile> {
             port: 2233,
             user: "naracitrasolusindo".to_string(),
             key_path: Some("~/.ssh/Nara.pem".to_string()),
+            certificate_filename: Some("Nara.pem".to_string()),
+            certificate_data: None,
             auth_type: "key".to_string(),
             description: Some("Ubuntu 24.04 Production VPS (Naracitra)".to_string()),
             created_at: "2026-10-19T00:00:00Z".to_string(),
@@ -1917,6 +2064,8 @@ fn load_ssh_profiles() -> Vec<SshProfile> {
             port: 22,
             user: "iwan".to_string(),
             key_path: None,
+            certificate_filename: None,
+            certificate_data: None,
             auth_type: "key".to_string(),
             description: Some("Tailscale Windows 10 Home Workstation".to_string()),
             created_at: "2026-10-19T00:00:00Z".to_string(),
