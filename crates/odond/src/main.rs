@@ -773,7 +773,7 @@ async fn init_providers(
         info!("✔ Google Antigravity host authentication discovered and refreshed");
         let prov = Arc::new(AntigravityProvider::new(
             token.access_token.clone(),
-            None,
+            token.account_id.clone(),
             None,
         ));
         runtime.register_provider("antigravity", prov.clone(), !has_default).await;
@@ -1009,7 +1009,7 @@ async fn register_oauth_provider(state: &AppState, catalog_id: &'static str, tok
         "muse" => Some(Arc::new(MuseProvider::new(token.access_token.clone(), None))),
         "antigravity" => Some(Arc::new(odon_provider::AntigravityProvider::new(
             token.access_token.clone(),
-            None,
+            token.account_id.clone(),
             None,
         ))),
         "github-copilot" => Some(Arc::new(OpenAiCompatibleProvider::new(

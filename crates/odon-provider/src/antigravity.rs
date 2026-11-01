@@ -18,7 +18,8 @@ use tokio_util::sync::CancellationToken;
 use crate::stream::StreamEvent;
 use crate::trait_def::{ChatRequest, ModelProvider};
 
-const CODE_ASSIST_HOST: &str = "https://cloudcode-pa.googleapis.com";
+const CODE_ASSIST_HOST: &str = "https://daily-cloudcode-pa.googleapis.com";
+const CODE_ASSIST_FALLBACK_HOST: &str = "https://cloudcode-pa.googleapis.com";
 /// Google access tokens last ~1h; refresh a little early.
 const TOKEN_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(45 * 60);
 
@@ -29,6 +30,56 @@ pub struct AntigravityProvider {
     project: tokio::sync::Mutex<Option<String>>,
     #[allow(dead_code)]
     account_id: Option<String>,
+}
+
+fn platform_code() -> i32 {
+    if cfg!(target_os = "windows") {
+        5
+    } else if cfg!(target_os = "macos") {
+        2
+    } else {
+        1
+    }
+}
+
+fn random_hex(len: usize) -> String {
+    let s = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    s.chars().take(len * 2).collect()
+}
+
+fn new_session_id() -> String {
+    let bytes = uuid::Uuid::new_v4().into_bytes();
+    let num = u64::from_be_bytes(bytes[..8].try_into().unwrap()) & 0x7fff_ffff_ffff_ffff;
+    num.to_string()
+}
+
+fn antigravity_request_id(message_count: usize) -> String {
+    let step = (message_count * 2).max(1) - 1;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("agent/{}/{}/{}/{}", random_hex(8), now, random_hex(8), step.max(1))
+}
+
+fn extract_project_id(raw: &Value) -> Option<String> {
+    if let Some(s) = raw.as_str() {
+        let trimmed = s.trim().trim_start_matches("projects/").trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(obj) = raw.as_object() {
+        for key in ["id", "projectId", "project", "name"] {
+            if let Some(val) = obj.get(key).and_then(|v| v.as_str()) {
+                let trimmed = val.trim().trim_start_matches("projects/").trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 impl AntigravityProvider {
@@ -61,64 +112,178 @@ impl AntigravityProvider {
         tok
     }
 
-    fn headers(token: &str) -> Result<HeaderMap> {
+    fn headers(token: &str, session: Option<&str>) -> Result<HeaderMap> {
         let mut h = HeaderMap::new();
         h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         h.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| OdonError::Auth(e.to_string()))?,
         );
-        h.insert(USER_AGENT, HeaderValue::from_static("antigravity/ide/2.11.0 windows/x64"));
+        let platform = if cfg!(target_os = "windows") { "windows/x64" } else if cfg!(target_os = "macos") { "darwin/arm64" } else { "linux/x64" };
+        h.insert(USER_AGENT, HeaderValue::from_str(&format!("antigravity/ide/2.11.0 {platform}")).unwrap_or(HeaderValue::from_static("antigravity/ide/2.11.0 windows/x64")));
+        if let Some(s) = session {
+            if let Ok(v) = HeaderValue::from_str(s) {
+                h.insert("x-machine-session-id", v);
+            }
+        }
         Ok(h)
     }
 
     async fn project_id(&self, token: &str) -> Result<String> {
         let mut cached = self.project.lock().await;
         if let Some(p) = cached.as_ref() {
-            return Ok(p.clone());
+            if !p.starts_with("termixgo-") {
+                return Ok(p.clone());
+            }
         }
-        let body = json!({
-            "metadata": { "ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI" }
+        if let Some(acc) = &self.account_id {
+            let trimmed = acc.trim().trim_start_matches("projects/").trim();
+            if !trimmed.is_empty() {
+                *cached = Some(trimmed.to_string());
+                return Ok(trimmed.to_string());
+            }
+        }
+
+        let metadata = json!({
+            "ideType": 9,
+            "platform": platform_code(),
+            "pluginType": 2
         });
+
+        // 1. Query loadCodeAssist with IDE metadata (matching Termigo)
+        let load_url = format!("{}/v1internal:loadCodeAssist", CODE_ASSIST_FALLBACK_HOST);
         let resp = self
             .client
-            .post(format!("{}/v1internal:loadCodeAssist", self.base_url))
-            .headers(Self::headers(token)?)
-            .json(&body)
+            .post(&load_url)
+            .headers(Self::headers(token, None)?)
+            .json(&json!({ "metadata": metadata }))
             .send()
-            .await
-            .map_err(|e| OdonError::Provider { provider: "antigravity".into(), message: format!("loadCodeAssist failed: {e}") })?;
-        if resp.status() == 401 {
-            return Err(OdonError::Auth("Antigravity token expired or invalid".into()));
+            .await;
+
+        if let Ok(res) = resp {
+            if res.status() == 401 {
+                return Err(OdonError::Auth("Antigravity token expired or invalid".into()));
+            }
+            if res.status().is_success() {
+                let val: Value = res.json().await.unwrap_or(Value::Null);
+                tracing::info!("Antigravity loadCodeAssist raw response: {:?}", val);
+                if let Some(proj) = val.get("cloudaicompanionProject")
+                    .and_then(extract_project_id)
+                    .or_else(|| val.get("project").and_then(extract_project_id))
+                    .or_else(|| val.get("projectId").and_then(extract_project_id))
+                {
+                    tracing::info!("Antigravity companion project found: {}", proj);
+                    *cached = Some(proj.clone());
+                    return Ok(proj);
+                }
+
+                // If not yet onboarded, check default tier from allowedTiers
+                let mut tier = "legacy-tier".to_string();
+                if let Some(tiers) = val.get("allowedTiers").and_then(|t| t.as_array()) {
+                    for candidate in tiers {
+                        if candidate.get("isDefault").and_then(|d| d.as_bool()).unwrap_or(false) {
+                            if let Some(id) = candidate.get("id").and_then(|i| i.as_str()) {
+                                tier = id.to_string();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 2. Call onboardUser (matching Termigo)
+                let onboard_url = format!("{}/v1internal:onboardUser", CODE_ASSIST_FALLBACK_HOST);
+                for _ in 0..3 {
+                    let onboard_resp = self
+                        .client
+                        .post(&onboard_url)
+                        .headers(Self::headers(token, None)?)
+                        .json(&json!({ "tierId": tier, "metadata": metadata }))
+                        .send()
+                        .await;
+
+                    if let Ok(onboard_res) = onboard_resp {
+                        if onboard_res.status().is_success() {
+                            let onboard_val: Value = onboard_res.json().await.unwrap_or(Value::Null);
+                            let from_onboard = onboard_val.get("response")
+                                .and_then(|r| r.get("cloudaicompanionProject"))
+                                .and_then(extract_project_id)
+                                .or_else(|| onboard_val.get("cloudaicompanionProject").and_then(extract_project_id))
+                                .or_else(|| onboard_val.get("response").and_then(extract_project_id));
+
+                            if let Some(proj) = from_onboard {
+                                *cached = Some(proj.clone());
+                                return Ok(proj);
+                            }
+                            if onboard_val.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                                break;
+                            }
+                        }
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+            }
         }
-        let status = resp.status();
-        let val: Value = resp.json().await.unwrap_or(Value::Null);
-        if !status.is_success() {
-            return Err(OdonError::Provider { provider: "antigravity".into(), message: format!("loadCodeAssist HTTP {status}: {val}") });
-        }
-        let project = val
-            .get("cloudaicompanionProject")
-            .and_then(|p| p.as_str().map(String::from).or_else(|| p.get("id").and_then(|i| i.as_str()).map(String::from)))
-            .ok_or_else(|| OdonError::Provider {
-                provider: "antigravity".into(),
-                message: format!("No Code Assist project available for this account: {val}"),
-            })?;
-        *cached = Some(project.clone());
-        Ok(project)
+
+        // 3. Fallback project format matching Termigo
+        let fallback = format!("termixgo-{}", random_hex(4));
+        *cached = Some(fallback.clone());
+        Ok(fallback)
     }
 }
 
-/// Gemini function declarations reject several JSON-Schema keywords.
+/// Gemini function declarations reject several JSON-Schema keywords and require that
+/// every field in `required` exists in `properties`.
 fn sanitize_schema(v: &Value) -> Value {
     match v {
         Value::Object(m) => {
             let mut out = serde_json::Map::new();
             for (k, val) in m {
-                if matches!(k.as_str(), "default" | "additionalProperties" | "$schema" | "examples" | "title") {
+                if matches!(
+                    k.as_str(),
+                    "default"
+                        | "additionalProperties"
+                        | "$schema"
+                        | "$id"
+                        | "$ref"
+                        | "$defs"
+                        | "definitions"
+                        | "examples"
+                        | "title"
+                        | "optional"
+                        | "deprecated"
+                        | "readOnly"
+                        | "writeOnly"
+                ) {
                     continue;
                 }
                 out.insert(k.clone(), sanitize_schema(val));
             }
+
+            // Prune required fields that are not in properties
+            if let Some(req_val) = out.get("required") {
+                if let Some(req_arr) = req_val.as_array() {
+                    let props = out.get("properties").and_then(|p| p.as_object());
+                    let filtered: Vec<Value> = req_arr
+                        .iter()
+                        .filter(|item| {
+                            if let Some(prop_name) = item.as_str() {
+                                if let Some(p) = props {
+                                    return p.contains_key(prop_name);
+                                }
+                            }
+                            false
+                        })
+                        .cloned()
+                        .collect();
+
+                    if filtered.is_empty() {
+                        out.remove("required");
+                    } else {
+                        out.insert("required".to_string(), Value::Array(filtered));
+                    }
+                }
+            }
+
             Value::Object(out)
         }
         Value::Array(a) => Value::Array(a.iter().map(sanitize_schema).collect()),
@@ -178,11 +343,6 @@ impl ModelProvider for AntigravityProvider {
             }
         }
 
-        let model = match request.model.as_str() {
-            "odon-auto" | "auto" | "" => "gemini-2.5-flash",
-            m => m,
-        };
-
         let mut inner = json!({ "contents": contents });
         if let Some(sys) = &request.system_prompt {
             inner["systemInstruction"] = json!({ "role": "user", "parts": [{ "text": sys }] });
@@ -195,33 +355,91 @@ impl ModelProvider for AntigravityProvider {
                 .collect();
             inner["tools"] = json!([{ "functionDeclarations": decls }]);
         }
-        let mut gen = json!({});
+        let session_id = new_session_id();
+        let wire_model = match request.model.as_str() {
+            "gemini-4-argon" => "gemini-4-argon",
+            "gemini-3.1-pro" => "gemini-3.1-pro",
+            "gemini-3.8-flash" | "gemini-3.8-flash-medium" | "gemini-2.0-flash" | "gemini-1.5-flash" | "gemini-2.5-flash" | "odon-auto" | "auto" | "" => "gemini-3.8-flash-medium",
+            "gemini-3.8-flash-high" => "gemini-3.8-flash-high",
+            "claude-sonnet-5-5" | "claude-3-7-sonnet" | "claude-3-5-sonnet" | "claude-3-5-sonnet-20241022" => "claude-sonnet-5-5",
+            "claude-opus-5-5" => "claude-opus-5-5",
+            "claude-sonnet-4-6" => "claude-sonnet-4-6",
+            other => other,
+        };
+
+        let mut gen = json!({
+            "maxOutputTokens": 64000,
+            "thinkingConfig": {
+                "includeThoughts": true,
+                "thinkingLevel": "medium"
+            }
+        });
         if let Some(t) = request.temperature {
             gen["temperature"] = json!(t);
         }
         if let Some(effort) = &request.effort {
-            gen["thinkingConfig"] = json!({
-                "includeThoughts": true,
-                "thinkingBudget": match effort.as_str() { "low" => 2048, "medium" => 8192, "high" => 24576, "xhigh" => 32768, _ => 8192 }
-            });
+            gen["thinkingConfig"]["thinkingBudget"] = json!(match effort.as_str() { "low" => 2048, "medium" => 8192, "high" => 24576, "xhigh" => 32768, _ => 8192 });
         }
-        inner["generationConfig"] = gen;
+
+        let mut inner = json!({
+            "contents": contents,
+            "sessionId": session_id,
+            "generationConfig": gen,
+            "safetySettings": [
+                { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE" }
+            ]
+        });
+
+        if let Some(sys) = &request.system_prompt {
+            inner["systemInstruction"] = json!({ "role": "user", "parts": [{ "text": sys }] });
+        }
+        if !request.tools.is_empty() {
+            let decls: Vec<Value> = request
+                .tools
+                .iter()
+                .map(|t| json!({ "name": t.name, "description": t.description, "parameters": sanitize_schema(&t.parameters) }))
+                .collect();
+            inner["tools"] = json!([{ "functionDeclarations": decls }]);
+            inner["toolConfig"] = json!({ "functionCallingConfig": { "mode": "VALIDATED" } });
+        }
 
         let body = json!({
-            "model": model,
             "project": project,
-            "user_prompt_id": uuid::Uuid::new_v4().to_string(),
+            "model": wire_model,
+            "userAgent": "antigravity",
+            "requestId": antigravity_request_id(request.messages.len()),
             "request": inner,
         });
 
-        let resp = self
+        tracing::info!("Antigravity stream_chat request: project={}, model={}, wire_model={}", project, request.model, wire_model);
+
+        let endpoint = format!("{}/v1internal:streamGenerateContent?alt=sse", self.base_url);
+        let mut resp = self
             .client
-            .post(format!("{}/v1internal:streamGenerateContent?alt=sse", self.base_url))
-            .headers(Self::headers(&token)?)
+            .post(&endpoint)
+            .headers(Self::headers(&token, Some(&session_id))?)
             .json(&body)
             .send()
             .await
             .map_err(|e| OdonError::Provider { provider: "antigravity".into(), message: format!("Antigravity request failed: {e}") })?;
+
+        if resp.status().is_server_error() && self.base_url.contains("daily-cloudcode-pa") {
+            let fallback_url = format!("{}/v1internal:streamGenerateContent?alt=sse", CODE_ASSIST_FALLBACK_HOST);
+            if let Ok(retry) = self
+                .client
+                .post(&fallback_url)
+                .headers(Self::headers(&token, Some(&session_id))?)
+                .json(&body)
+                .send()
+                .await
+            {
+                resp = retry;
+            }
+        }
 
         if resp.status() == 401 {
             return Err(OdonError::Auth("Antigravity token expired or invalid".into()));
