@@ -84,6 +84,18 @@ impl ToolRegistry {
         let desc = format!("Executing tool: {}", name);
         let start = std::time::Instant::now();
 
+        // Plan mode: only read-only tools may run until the plan is accepted.
+        if tool.risk_tier() > RiskTier::Tier0ReadOnly {
+            if let Some(storage) = &ctx.storage {
+                if crate::harness::is_plan_mode(storage, &ctx.session_id) {
+                    return Err(OdonError::Tool {
+                        tool: name.to_string(),
+                        message: "Plan mode is active: only read-only tools are allowed. Present the plan, then call plan_mode with enabled=false to execute.".to_string(),
+                    });
+                }
+            }
+        }
+
         // Security approval check
         let decision = ctx
             .approval_engine

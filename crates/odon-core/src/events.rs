@@ -54,6 +54,12 @@ pub enum AgentEvent {
         risk_tier: u8,
         description: String,
     },
+    ApprovalResolved {
+        session_id: String,
+        approval_id: String,
+        /// "approved" | "rejected" | "expired"
+        decision: String,
+    },
     RelayLog {
         channel: String, // "telegram", "whatsapp", "desktop"
         message: String,

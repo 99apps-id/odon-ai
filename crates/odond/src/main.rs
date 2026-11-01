@@ -31,7 +31,7 @@ use odon_channel::{ChannelAdapter, TelegramRelay};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
 use odon_core::AgentEvent;
-use odon_provider::{OpenAiCompatibleProvider, SimulatedProvider};
+use odon_provider::OpenAiCompatibleProvider;
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, ExecutionMode, SecurityPolicy};
 use odon_storage::StorageEngine;
 use odon_tools::ToolRegistry;
@@ -102,13 +102,14 @@ async fn main() -> anyhow::Result<()> {
             // 1. Storage
             let storage = Arc::new(StorageEngine::default_storage()?);
 
-            // 2. Security & Policy
+            // 2. Event Bus (created first so approvals can publish on it)
+            let (event_tx, _event_rx) = create_event_bus(512);
+
+            // 3. Security & Policy
             let policy = SecurityPolicy::default();
-            let approval = Arc::new(ApprovalEngine::new(policy));
+            let approval = Arc::new(ApprovalEngine::new(policy).with_events(event_tx.clone()));
             let audit = Arc::new(AuditLogger::new());
 
-            // 3. Event Bus
-            let (event_tx, _event_rx) = create_event_bus(512);
 
             // 4. Tools Registry
             let tools = Arc::new(odon_tools::build_full_tool_registry());
@@ -130,14 +131,7 @@ async fn main() -> anyhow::Result<()> {
             if !api_key.is_empty() || std::env::var("OPENAI_BASE_URL").is_ok() {
                 let openai_prov = Arc::new(OpenAiCompatibleProvider::new(base_url, api_key, Some("openai-compatible")));
                 runtime.register_provider("default", openai_prov, true).await;
-            } else {
-                let sim_prov = Arc::new(SimulatedProvider::default());
-                runtime.register_provider("default", sim_prov, true).await;
             }
-
-            // Always make simulated provider available as fallback
-            let sim_prov = Arc::new(SimulatedProvider::default());
-            runtime.register_provider("simulated", sim_prov, false).await;
 
             // 7. Telegram Relay
             let tg_token = telegram_token.or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
@@ -258,7 +252,10 @@ async fn create_session(
     let mode = match req.mode.as_deref() {
         Some("code") => SessionMode::Code,
         Some("create") => SessionMode::Create,
-        Some("doc") => SessionMode::Documents,
+        Some("doc") | Some("documents") => SessionMode::Documents,
+        Some("files") => SessionMode::Code,
+        Some("agents") => SessionMode::Agents,
+        Some("automations") => SessionMode::Automations,
         _ => SessionMode::General,
     };
     let title = req.title.unwrap_or_else(|| "New Conversation".to_string());
@@ -313,6 +310,7 @@ async fn list_messages(
 struct SendMessageRequest {
     text: String,
     model: Option<String>,
+    effort: Option<String>,
 }
 
 async fn send_message(
@@ -323,7 +321,13 @@ async fn send_message(
     let cancel = tokio_util::sync::CancellationToken::new();
     let res = state
         .runtime
-        .execute_turn(&session_id, &req.text, req.model.as_deref(), cancel)
+        .execute_turn_with_effort(
+            &session_id,
+            &req.text,
+            req.model.as_deref(),
+            req.effort.as_deref(),
+            cancel,
+        )
         .await;
 
     match res {
@@ -558,181 +562,116 @@ async fn get_oauth_accounts(State(state): State<AppState>) -> impl IntoResponse 
     Json(list)
 }
 
-fn rand_code() -> u16 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(12345);
-    (nanos % 0xFFFF) as u16
-}
-
 async fn login_oauth(
     State(state): State<AppState>,
     Json(req): Json<OAuthLoginRequest>,
 ) -> impl IntoResponse {
-    let provider = req.provider.to_lowercase();
-    match provider.as_str() {
-        "antigravity" => {
-            let auth_url = "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=1071006060591-tmamch5rfkeeiqlptgqomhnkhg8usvla.apps.googleusercontent.com&redirect_uri=http://localhost:1455/auth/callback&scope=https://www.googleapis.com/auth/cloud-platform%20https://www.googleapis.com/auth/userinfo.email&prompt=consent&access_type=offline";
-            let mut accounts = state.oauth_accounts.write().await;
-            accounts.insert(
-                "antigravity".to_string(),
-                json!({
-                    "provider": "antigravity",
-                    "email": "developer@google.com",
-                    "plan": "Google Antigravity Cloud Code",
-                    "account_id": "ag_account_primary",
-                    "connected": true,
-                }),
+    use odon_provider::{LoginResponse, OAuthProvider, OAuthService};
+
+    let provider: OAuthProvider = match req.provider.parse() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(json!({ "error": format!(
+                    "OAuth for '{}' is not available: it needs a registered client that is not configured.",
+                    req.provider
+                ) })),
             );
-            Json(json!({
-                "status": "completed",
-                "auth_url": auth_url,
-                "account": {
-                    "provider": "antigravity",
-                    "email": "developer@google.com",
-                    "plan": "Google Antigravity Cloud Code",
-                    "account_id": "ag_account_primary",
-                    "connected": true,
-                }
-            }))
         }
-        "chatgpt" | "codex" | "openai-codex" => {
-            let auth_url = "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http://localhost:1455/auth/callback&scope=openid%20profile%20email%20offline_access&codex_cli_simplified_flow=true";
-            let mut accounts = state.oauth_accounts.write().await;
-            accounts.insert(
-                "codex".to_string(),
-                json!({
-                    "provider": "codex",
-                    "email": "developer@openai.com",
-                    "plan": "ChatGPT Plus / Pro",
-                    "account_id": "chatgpt_user",
-                    "connected": true,
-                }),
-            );
-            Json(json!({
-                "status": "completed",
-                "auth_url": auth_url,
-                "account": {
-                    "provider": "codex",
-                    "email": "developer@openai.com",
-                    "plan": "ChatGPT Plus / Pro",
-                    "account_id": "chatgpt_user",
-                    "connected": true,
-                }
-            }))
+    };
+
+    let service = match OAuthService::new() {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
         }
-        "claude-oauth" | "claude" => {
-            let auth_url = "https://claude.ai/oauth/authorize?response_type=code&client_id=9d1c250a-e555-4422-ba78-9d5870e28e8d&redirect_uri=http://localhost:54545/callback&scope=claude.turn";
-            let mut accounts = state.oauth_accounts.write().await;
-            accounts.insert(
-                "claude-oauth".to_string(),
-                json!({
-                    "provider": "claude-oauth",
-                    "email": "developer@anthropic.com",
-                    "plan": "Claude Pro / Team",
-                    "account_id": "claude_user",
-                    "connected": true,
-                }),
-            );
-            Json(json!({
-                "status": "completed",
-                "auth_url": auth_url,
-                "account": {
-                    "provider": "claude-oauth",
-                    "email": "developer@anthropic.com",
-                    "plan": "Claude Pro / Team",
-                    "account_id": "claude_user",
-                    "connected": true,
-                }
-            }))
+    };
+    let pending = match service.begin_login(provider).await {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": e.to_string() }))),
+    };
+    let response = pending.response().clone();
+
+    // Finish the exchange in the background; the UI polls /api/oauth/accounts.
+    let catalog_id = oauth_catalog_id(provider);
+    let st = state.clone();
+    tokio::spawn(async move {
+        match pending.complete().await {
+            Ok(token) => register_oauth_provider(&st, catalog_id, token).await,
+            Err(e) => tracing::warn!("OAuth login for {catalog_id} failed: {e}"),
         }
-        "github-copilot" | "copilot" => {
-            let user_code = format!("{:04X}-{:04X}", rand_code(), rand_code());
-            let mut accounts = state.oauth_accounts.write().await;
-            accounts.insert(
-                "github-copilot".to_string(),
-                json!({
-                    "provider": "github-copilot",
-                    "email": "developer@github.com",
-                    "plan": "GitHub Copilot Individual/Business",
-                    "account_id": "copilot_sub",
-                    "connected": true,
-                }),
-            );
-            Json(json!({
-                "status": "pending_device",
-                "user_code": user_code,
-                "verification_uri": "https://github.com/login/device",
-                "account": {
-                    "provider": "github-copilot",
-                    "email": "developer@github.com",
-                    "plan": "GitHub Copilot",
-                    "account_id": "copilot_sub",
-                    "connected": true,
-                }
-            }))
-        }
-        "xai-oauth" | "xai" => {
-            let user_code = format!("{:04X}-{:04X}", rand_code(), rand_code());
-            let mut accounts = state.oauth_accounts.write().await;
-            accounts.insert(
-                "xai-oauth".to_string(),
-                json!({
-                    "provider": "xai-oauth",
-                    "email": "developer@x.ai",
-                    "plan": "Grok Premium",
-                    "account_id": "grok_user",
-                    "connected": true,
-                }),
-            );
-            Json(json!({
-                "status": "pending_device",
-                "user_code": user_code,
-                "verification_uri": "https://auth.x.ai/activate",
-                "account": {
-                    "provider": "xai-oauth",
-                    "email": "developer@x.ai",
-                    "plan": "Grok Premium",
-                    "account_id": "grok_user",
-                    "connected": true,
-                }
-            }))
-        }
-        "muse" => {
-            let user_code = format!("{:04X}-{:04X}", rand_code(), rand_code());
-            let mut accounts = state.oauth_accounts.write().await;
-            accounts.insert(
-                "muse".to_string(),
-                json!({
-                    "provider": "muse",
-                    "email": "developer@meta.ai",
-                    "plan": "Meta Muse Code",
-                    "account_id": "muse_user",
-                    "connected": true,
-                }),
-            );
-            Json(json!({
-                "status": "pending_device",
-                "user_code": user_code,
-                "verification_uri": "https://auth.meta.com/oauth/device/",
-                "account": {
-                    "provider": "muse",
-                    "email": "developer@meta.ai",
-                    "plan": "Meta Muse Code",
-                    "account_id": "muse_user",
-                    "connected": true,
-                }
-            }))
-        }
-        _ => {
-            Json(json!({
-                "status": "error",
-                "error": format!("Unknown OAuth provider: {}", provider),
-            }))
-        }
+    });
+
+    let body = match response {
+        LoginResponse::Browser { authorization_url, redirect_uri, .. } => json!({
+            "status": "pending_browser",
+            "auth_url": authorization_url,
+            "redirect_uri": redirect_uri,
+        }),
+        LoginResponse::Device { user_code, verification_uri, expires_in, interval, .. } => json!({
+            "status": "pending_device",
+            "user_code": user_code,
+            "verification_uri": verification_uri,
+            "expires_in": expires_in,
+            "interval": interval,
+        }),
+    };
+    (StatusCode::OK, Json(body))
+}
+
+fn oauth_catalog_id(provider: odon_provider::OAuthProvider) -> &'static str {
+    use odon_provider::OAuthProvider::*;
+    match provider {
+        OpenAiCodex => "chatgpt",
+        ClaudeOauth => "claude-oauth",
+        XaiOauth => "xai-oauth",
+        GithubCopilot => "github-copilot",
+        Muse => "muse",
     }
+}
+
+async fn register_oauth_provider(state: &AppState, catalog_id: &'static str, token: odon_provider::OAuthToken) {
+    use odon_provider::{MuseProvider, OpenAiCodexProvider, OpenAiCompatibleProvider};
+
+    let registered: Option<Arc<dyn odon_provider::ModelProvider>> = match catalog_id {
+        "chatgpt" => Some(Arc::new(OpenAiCodexProvider::new(
+            token.access_token.clone(),
+            token.account_id.clone(),
+            None,
+        ))),
+        "muse" => Some(Arc::new(MuseProvider::new(token.access_token.clone(), None))),
+        "github-copilot" => Some(Arc::new(OpenAiCompatibleProvider::new(
+            "https://api.githubcopilot.com".to_string(),
+            token.access_token.clone(),
+            Some("github-copilot"),
+        ))),
+        "xai-oauth" => Some(Arc::new(OpenAiCompatibleProvider::new(
+            "https://api.x.ai/v1".to_string(),
+            token.access_token.clone(),
+            Some("xai-oauth"),
+        ))),
+        // No runtime adapter for Anthropic's messages API yet: the account is
+        // recorded but is reported as not usable instead of silently falling back.
+        _ => None,
+    };
+    let usable = registered.is_some();
+    if let Some(p) = registered {
+        state.runtime.register_provider(catalog_id, p, false).await;
+    }
+
+    let account = token.account();
+    state.oauth_accounts.write().await.insert(
+        catalog_id.to_string(),
+        json!({
+            "provider": catalog_id,
+            "email": account.email,
+            "plan": account.plan,
+            "account_id": account.account_id,
+            "connected": true,
+            "usable": usable,
+        }),
+    );
 }
 
 async fn disconnect_oauth(
@@ -862,7 +801,156 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String) {
     ws_send_task.abort();
 }
 
-async fn get_models() -> impl IntoResponse {
+async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
+    let connected = state.oauth_accounts.read().await;
+    let is_connected = |provider: &str| connected.contains_key(provider);
+    let openai_configured = std::env::var("OPENAI_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let compatible_configured = openai_configured || std::env::var("OPENAI_BASE_URL").is_ok();
+
+    Json(json!({
+        "catalog_as_of": "2026-10-31",
+        "providers": [
+            {
+                "id": "chatgpt", "name": "ChatGPT Account", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("chatgpt"),
+                "description": "OpenAI Codex backend using a ChatGPT account",
+                "models": [
+                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "context": 400000, "recommended": true },
+                    { "id": "gpt-6-astra", "name": "GPT-6 Astra", "context": 400000 },
+                    { "id": "gpt-6-luna", "name": "GPT-6 Luna", "context": 400000 },
+                    { "id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "context": 400000 },
+                    { "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "context": 400000 },
+                    { "id": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "context": 400000 },
+                    { "id": "gpt-5.3-codex", "name": "GPT-5.3 Codex", "context": 400000 }
+                ]
+            },
+            {
+                "id": "claude-oauth", "name": "Claude Account", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("claude-oauth"),
+                "description": "Anthropic account OAuth with PKCE",
+                "models": [
+                    { "id": "claude-fable-5-1", "name": "Claude Fable 5.1", "context": 1000000, "recommended": true },
+                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "context": 1000000 },
+                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "context": 1000000 },
+                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "context": 1000000 }
+                ]
+            },
+            {
+                "id": "xai-oauth", "name": "xAI Account", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("xai-oauth"),
+                "description": "xAI device authorization",
+                "models": [{ "id": "grok-4.7", "name": "Grok 4.7", "context": 2000000, "recommended": true }]
+            },
+            {
+                "id": "github-copilot", "name": "GitHub Copilot", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("github-copilot"),
+                "description": "GitHub device authorization with Copilot token exchange",
+                "models": [
+                    { "id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "context": 400000, "recommended": true },
+                    { "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "context": 400000 },
+                    { "id": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "context": 400000 },
+                    { "id": "gpt-5.4", "name": "GPT-5.4", "context": 400000 },
+                    { "id": "gpt-5.3-codex", "name": "GPT-5.3 Codex", "context": 400000 },
+                    { "id": "claude-sonnet-5.5", "name": "Claude Sonnet 5.5", "context": 1000000 },
+                    { "id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "context": 2000000 },
+                    { "id": "grok-4.7", "name": "Grok 4.7", "context": 2000000 }
+                ]
+            },
+            {
+                "id": "antigravity", "name": "Google Antigravity", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("antigravity"),
+                "description": "Google Cloud Code Assist OAuth",
+                "models": [
+                    { "id": "gemini-4-argon", "name": "Gemini 4 Argon", "context": 2000000, "recommended": true },
+                    { "id": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash High", "context": 2000000 },
+                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "context": 1000000 }
+                ]
+            },
+            {
+                "id": "muse", "name": "Meta Muse Code", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("muse"),
+                "description": "Meta Muse device authorization",
+                "models": [{ "id": "muse-spark-1.3", "name": "Muse Spark 1.3", "context": 128000, "recommended": true }]
+            },
+            {
+                "id": "openai", "name": "OpenAI", "category": "byok", "auth_type": "api_key",
+                "configured": openai_configured,
+                "default_base_url": "https://api.openai.com/v1",
+                "description": "Official OpenAI API",
+                "models": [
+                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "context": 400000, "recommended": true },
+                    { "id": "gpt-6-astra", "name": "GPT-6 Astra", "context": 400000 },
+                    { "id": "gpt-6-luna", "name": "GPT-6 Luna", "context": 400000 },
+                    { "id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "context": 400000 },
+                    { "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "context": 400000 },
+                    { "id": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "context": 400000 }
+                ]
+            },
+            {
+                "id": "anthropic", "name": "Anthropic", "category": "byok", "auth_type": "api_key",
+                "default_base_url": "https://api.anthropic.com/v1",
+                "description": "Official Anthropic API",
+                "models": [
+                    { "id": "claude-fable-5-1", "name": "Claude Fable 5.1", "context": 1000000, "recommended": true },
+                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "context": 1000000 },
+                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "context": 1000000 },
+                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "context": 1000000 }
+                ]
+            },
+            {
+                "id": "google", "name": "Google Gemini", "category": "byok", "auth_type": "api_key",
+                "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                "description": "Official Gemini OpenAI-compatible API",
+                "models": [
+                    { "id": "gemini-4-argon", "name": "Gemini 4 Argon", "context": 2000000, "recommended": true },
+                    { "id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "context": 2000000 },
+                    { "id": "gemini-3.8-flash-lite", "name": "Gemini 3.8 Flash-Lite", "context": 2000000 }
+                ]
+            },
+            {
+                "id": "deepseek", "name": "DeepSeek", "category": "byok", "auth_type": "api_key",
+                "default_base_url": "https://api.deepseek.com/v1",
+                "description": "DeepSeek V4 API",
+                "models": [
+                    { "id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "context": 1000000, "recommended": true },
+                    { "id": "deepseek-flash", "name": "DeepSeek V4.1 Flash", "context": 1000000 }
+                ]
+            },
+            {
+                "id": "qwen", "name": "Qwen", "category": "byok", "auth_type": "api_key",
+                "default_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                "description": "Alibaba Model Studio international endpoint",
+                "models": [
+                    { "id": "qwen3.8-max", "name": "Qwen 3.8 Max", "context": 1000000, "recommended": true },
+                    { "id": "qwen3.7-plus", "name": "Qwen 3.7 Plus", "context": 1000000 },
+                    { "id": "qwen3.8-flash", "name": "Qwen 3.8 Flash", "context": 1000000 }
+                ]
+            },
+            {
+                "id": "mistral", "name": "Mistral", "category": "byok", "auth_type": "api_key",
+                "default_base_url": "https://api.mistral.ai/v1",
+                "description": "Official Mistral API",
+                "models": [
+                    { "id": "mistral-large-4", "name": "Mistral Large 4", "context": 1000000, "recommended": true },
+                    { "id": "mistral-medium-3.5", "name": "Mistral Medium 3.5", "context": 1000000 },
+                    { "id": "mistral-small-4", "name": "Mistral Small 4", "context": 1000000 }
+                ]
+            },
+            {
+                "id": "openai-compatible", "name": "OpenAI Compatible", "category": "byok", "auth_type": "api_key",
+                "configured": compatible_configured,
+                "default_base_url": "http://localhost:11434/v1",
+                "description": "Custom OpenAI-compatible endpoint",
+                "models": [{ "id": "custom", "name": "Custom model ID", "context": 0, "recommended": true }]
+            }
+        ]
+    }))
+}
+
+#[allow(dead_code)]
+async fn legacy_models_catalog() -> impl IntoResponse {
     Json(json!({
         "providers": [
             {
@@ -1110,9 +1198,16 @@ async fn sse_events(
 ) -> Sse<impl Stream<Item = std::result::Result<Event, Infallible>>> {
     let mut rx = state.event_tx.subscribe();
     let stream = async_stream::stream! {
-        while let Ok(event) = rx.recv().await {
-            if let Ok(data) = serde_json::to_string(&event) {
-                yield Ok(Event::default().data(data));
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if let Ok(data) = serde_json::to_string(&event) {
+                        yield Ok(Event::default().data(data));
+                    }
+                }
+                // A slow client missed events: keep streaming instead of dropping it.
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };

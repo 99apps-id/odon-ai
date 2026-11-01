@@ -211,7 +211,8 @@ async fn test_conversational_agent_turn_with_artifacts() {
     // Verify conversational response
     assert!(result.content.text.contains("Personal Knowledge Hub"));
     assert!(result.content.thought.is_some());
-    assert_eq!(result.content.action_chips.len(), 4);
+    // No action chip is advertised until the desktop has a wired handler for it.
+    assert!(result.content.action_chips.is_empty());
 
     // Verify generated artifacts in SQLite
     let artifacts = storage.list_artifacts(&session.id).unwrap();

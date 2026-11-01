@@ -10,7 +10,10 @@ pub mod trait_def;
 pub use antigravity::AntigravityProvider;
 pub use codex::OpenAiCodexProvider;
 pub use muse::MuseProvider;
-pub use oauth::{OAuthHandler, OAuthToken};
+pub use oauth::{
+    LoginResponse, OAuthAccount, OAuthHandler, OAuthProvider, OAuthService, OAuthToken,
+    PendingLogin,
+};
 pub use openai::OpenAiCompatibleProvider;
 pub use simulated::SimulatedProvider;
 pub use stream::{StreamConsumer, StreamEvent};

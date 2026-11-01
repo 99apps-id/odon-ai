@@ -91,7 +91,7 @@ impl ModelProvider for OpenAiCodexProvider {
             "input": input_items,
             "reasoning": {
                 "summary": "auto",
-                "effort": "high"
+                "effort": request.effort.as_deref().unwrap_or("medium")
             },
             "include": ["reasoning.encrypted_content"]
         });

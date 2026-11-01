@@ -120,7 +120,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         setProviders(data.providers);
       }
     }).catch(() => {
-      // Fallback catalog if daemon offline
+      setProviders([]);
+      return;
+      // Legacy fallback catalog is intentionally unreachable. The daemon is the
+      // source of truth so the UI never advertises unavailable or retired models.
       setProviders([
         {
           id: 'antigravity',
@@ -352,15 +355,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         map[a.provider.toLowerCase()] = a;
       });
       setOauthAccounts(map);
-    }).catch(() => {
-      // Local fallback
-      const savedAuth = localStorage.getItem('odon_oauth_accounts');
-      if (savedAuth) {
-        try {
-          setOauthAccounts(JSON.parse(savedAuth));
-        } catch (_) {}
-      }
-    });
+    }).catch(() => setOauthAccounts({}));
   }, [isOpen]);
 
   const currentProvider = providers.find((p) => p.id === selectedProviderId) || providers[0];
@@ -388,11 +383,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       if (resp.account) {
         setOauthAccounts((prev) => {
-          const updated = { ...prev, [providerId.toLowerCase()]: resp.account! };
-          localStorage.setItem('odon_oauth_accounts', JSON.stringify(updated));
-          return updated;
+          return { ...prev, [providerId.toLowerCase()]: resp.account! };
         });
       }
+
+      // The daemon finishes the token exchange in the background: poll until the
+      // account is connected (or the prompt is dismissed / times out after 5 min).
+      const started = Date.now();
+      const poll = window.setInterval(async () => {
+        if (Date.now() - started > 5 * 60 * 1000) {
+          window.clearInterval(poll);
+          return;
+        }
+        try {
+          const accounts = await api.getOAuthAccounts();
+          const hit = accounts.find((a) => a.provider.toLowerCase() === providerId.toLowerCase());
+          if (hit?.connected) {
+            window.clearInterval(poll);
+            setOauthAccounts((prev) => ({ ...prev, [providerId.toLowerCase()]: hit }));
+            setOauthPrompt(null);
+            api.getModels().then((d) => d?.providers && setProviders(d.providers)).catch(() => {});
+          }
+        } catch {
+          /* daemon briefly unreachable: keep polling */
+        }
+      }, 2000);
     } catch (err: any) {
       setKeyError(err.message || 'OAuth sign-in failed');
     } finally {
@@ -407,7 +422,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setOauthAccounts((prev) => {
         const copy = { ...prev };
         delete copy[providerId.toLowerCase()];
-        localStorage.setItem('odon_oauth_accounts', JSON.stringify(copy));
         return copy;
       });
       setOauthPrompt(null);
@@ -828,11 +842,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <div className="grid grid-cols-1 gap-2">
                     {currentProvider.models.map((m) => {
-                      const isSelected = currentModel === m.id || currentModel === m.name;
+                      const wireId = `${currentProvider.id}::${m.id}`;
+                      const isSelected = currentModel === wireId;
                       return (
                         <div
                           key={m.id}
-                          onClick={() => onSelectModel?.(m.id)}
+                          onClick={() => onSelectModel?.(wireId)}
                           className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                             isSelected
                               ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30'
@@ -866,7 +881,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onSelectModel?.(m.id);
+                                onSelectModel?.(wireId);
                               }}
                               className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
                             >

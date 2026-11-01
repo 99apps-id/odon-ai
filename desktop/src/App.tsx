@@ -40,7 +40,7 @@ import { TerminalView } from './components/TerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { ProviderLogo } from './components/ProviderLogo';
 import { api } from './api';
-import { Session, Message, Artifact, SystemStatus } from './types';
+import { Session, Message, Artifact, SystemStatus, ToolSchema, ApprovalRequest } from './types';
 
 interface ChatMessage {
   id: string;
@@ -52,46 +52,21 @@ interface ChatMessage {
   toolCalls?: string[];
 }
 
-const AVAILABLE_MODELS = [
-  { id: 'claude-3-7-sonnet', provider: 'antigravity', name: 'Claude 3.7 Sonnet', desc: 'Hybrid reasoning & deep agentic architecture', badge: 'Flagship' },
-  { id: 'o3-mini', provider: 'codex', name: 'o3-mini (OpenAI)', desc: 'Frontier STEM reasoning and code optimization', badge: 'Reasoning' },
-  { id: 'gpt-4o', provider: 'openai', name: 'Auto (GPT-4o)', desc: 'Adaptive routing with high-speed intelligence', badge: 'Default' },
-  { id: 'deepseek-reasoner', provider: 'deepseek', name: 'DeepSeek R1', desc: 'Open reasoning with transparent chain-of-thought', badge: 'Reasoning' },
-  { id: 'deepseek-chat', provider: 'deepseek', name: 'DeepSeek V3', desc: '671B MoE high-throughput general & coding tier', badge: 'V3' },
-  { id: 'qwen-2.5-coder-32b-instruct', provider: 'qwen', name: 'Qwen 2.5 Coder 32B', desc: 'Alibaba Cloud state-of-the-art code specialist', badge: 'Coder' },
-  { id: 'gemini-2.0-flash', provider: 'google', name: 'Gemini 2.0 Flash', desc: '1M token ultra-fast multimodal intelligence', badge: '1M Context' },
-  { id: 'step-2-16k', provider: 'stepfun', name: 'Step-2 16K (StepFun)', desc: 'StepFun frontier multimodal reasoning tier', badge: 'StepFun' },
-  { id: 'ollama-local', provider: 'ollama', name: 'Odon Local (Ollama)', desc: '100% offline private local execution on localhost:11434', badge: 'Private' },
-  { id: 'offline-simulated', provider: 'custom', name: 'Offline Simulated', desc: 'Instant mocked responses without network requests', badge: 'Test' },
-];
-
-const REGISTERED_TOOLS = [
-  { name: 'fs_read', category: 'File System', tier: 'Tier 0', desc: 'Read file contents' },
-  { name: 'fs_write', category: 'File System', tier: 'Tier 1', desc: 'Write or overwrite file' },
-  { name: 'fs_edit', category: 'File System', tier: 'Tier 1', desc: 'Find and replace file text' },
-  { name: 'fs_search', category: 'File System', tier: 'Tier 0', desc: 'Search workspace files' },
-  { name: 'fs_delete', category: 'File System', tier: 'Tier 1', desc: 'Delete workspace file' },
-  { name: 'git_status', category: 'Git', tier: 'Tier 0', desc: 'Working tree status' },
-  { name: 'git_diff', category: 'Git', tier: 'Tier 0', desc: 'Inspect uncommitted diffs' },
-  { name: 'git_log', category: 'Git', tier: 'Tier 0', desc: 'View commit history' },
-  { name: 'git_branch', category: 'Git', tier: 'Tier 0', desc: 'List or create branches' },
-  { name: 'web_search', category: 'Web', tier: 'Tier 0', desc: 'DuckDuckGo web search' },
-  { name: 'web_fetch', category: 'Web', tier: 'Tier 0', desc: 'Fetch webpage content' },
-  { name: 'system_info', category: 'System', tier: 'Tier 0', desc: 'OS, CPU, memory details' },
-  { name: 'calc_eval', category: 'Utility', tier: 'Tier 0', desc: 'Safe math evaluator' },
-  { name: 'shell_exec', category: 'Execution', tier: 'Tier 2', desc: 'Run PowerShell / sh command' },
-  { name: 'process_spawn', category: 'Execution', tier: 'Tier 2', desc: 'Background daemon process' },
-  { name: 'memory_store', category: 'Memory', tier: 'Tier 0', desc: 'Save long-term project note' },
-  { name: 'memory_recall', category: 'Memory', tier: 'Tier 0', desc: 'Recall persistent memories' },
-  { name: 'artifact_create', category: 'Artifact', tier: 'Tier 0', desc: 'Synthesize code/doc/image' },
-];
+interface AvailableModel {
+  id: string;
+  provider: string;
+  name: string;
+  desc: string;
+  badge: string;
+}
 
 export default function App() {
   // Navigation & View States
   const [activeNav, setActiveNav] = useState('chat');
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
-  const [selectedModel, setSelectedModel] = useState('Auto (GPT-4o)');
+  const [selectedModel, setSelectedModel] = useState('gpt-4o');
+  const [effort, setEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>('medium');
   const [inputMessage, setInputMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -155,6 +130,9 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [registeredTools, setRegisteredTools] = useState<ToolSchema[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   
   // Chat & Stream State
   const [inChatMode, setInChatMode] = useState(false);
@@ -182,27 +160,88 @@ export default function App() {
       const list = await api.listSessions();
       setSessions(list);
     } catch {
-      // Local fallback
+      setSessions([]);
+    }
+  };
+
+  const loadTools = async () => {
+    try {
+      setRegisteredTools(await api.listTools());
+    } catch {
+      setRegisteredTools([]);
+    }
+  };
+
+  const loadModels = async () => {
+    try {
+      const data = await api.getModels();
+      const activeProviders = data.providers.filter((provider) =>
+        provider.category === 'oauth' ? provider.connected : provider.configured,
+      );
+      const models = activeProviders.flatMap((provider) =>
+        provider.models.map((model) => ({
+          id: model.id,
+          provider: provider.id,
+          name: model.name,
+          desc: provider.name,
+          badge: model.recommended ? 'Recommended' : 'Available',
+        })),
+      );
+      setAvailableModels(models);
+      if (models.length && !models.some((model) => model.id === selectedModel)) {
+        setSelectedModel(models[0].id);
+      }
+    } catch {
+      setAvailableModels([]);
     }
   };
 
   const loadArtifacts = async (sessionId: string) => {
     try {
       const list = await api.listArtifacts(sessionId);
-      if (list && list.length > 0) {
-        setArtifacts(list);
-      }
-    } catch {}
+      setArtifacts(list || []);
+    } catch {
+      setArtifacts([]);
+    }
   };
 
   // Initial setup & SSE subscription
   useEffect(() => {
     checkDaemonStatus();
     loadSessions();
+    loadTools();
+    loadModels();
+    api.listApprovals().then(setPendingApprovals).catch(() => setPendingApprovals([]));
 
     const statusInterval = setInterval(checkDaemonStatus, 5000);
 
     const unsubscribe = api.subscribeEvents((event) => {
+      // Approvals are global: a blocked tool in any session must reach the user.
+      if (event.type === 'approval_requested') {
+        const p = event.payload;
+        setPendingApprovals((prev) =>
+          prev.some((a) => a.id === p.approval_id)
+            ? prev
+            : [
+                ...prev,
+                {
+                  id: p.approval_id,
+                  session_id: p.session_id,
+                  tool_name: p.tool_name,
+                  risk_tier: p.risk_tier,
+                  description: p.description,
+                  parameters: null,
+                  created_at: new Date().toISOString(),
+                },
+              ],
+        );
+        return;
+      }
+      if (event.type === 'approval_resolved') {
+        setPendingApprovals((prev) => prev.filter((a) => a.id !== event.payload.approval_id));
+        return;
+      }
+      if (event.payload.session_id !== currentSessionId) return;
       if (event.type === 'text_delta') {
         setStreamingText((prev) => prev + event.payload.delta);
       } else if (event.type === 'thought_delta') {
@@ -245,6 +284,7 @@ export default function App() {
     setStreamingText('');
     setStreamingThought('');
     setStreamingTool(null);
+    setArtifacts([]);
   };
 
   // Select an existing session from recent history
@@ -253,6 +293,7 @@ export default function App() {
     setInChatMode(true);
     setStreamingText('');
     setStreamingThought('');
+    setArtifacts([]);
     try {
       const data = await api.getSession(id);
       if (data.messages && data.messages.length > 0) {
@@ -277,32 +318,22 @@ export default function App() {
           },
         ]);
       }
-      if (data.artifacts && data.artifacts.length > 0) {
-        setArtifacts(data.artifacts);
-      }
-    } catch {
-      setMessages([
-        {
-          id: 'fb-user',
-          role: 'user',
-          content: title,
-          timestamp: 'Just now',
-        },
-        {
-          id: 'fb-ast',
-          role: 'assistant',
-          content: `Here is the progress and artifacts generated for "${title}". All components are compiled and verified.`,
-          timestamp: 'Just now',
-          showAppCard: true,
-        },
-      ]);
+      setArtifacts(data.artifacts || []);
+    } catch (error) {
+      setMessages([{
+        id: `load-error-${Date.now()}`,
+        role: 'assistant',
+        content: `Unable to load this session: ${error instanceof Error ? error.message : 'unknown daemon error'}`,
+        timestamp: 'Just now',
+      }]);
     }
   };
 
   // Submit prompt from input box or action cards
-  const handleSendMessage = async (customText?: string, mode: string = 'general') => {
+  const handleSendMessage = async (customText?: string, mode?: string) => {
     const textToSend = (customText || inputMessage).trim();
     if (!textToSend || isGenerating) return;
+    const sessionMode = mode || (activeNav === 'chat' ? 'general' : activeNav);
 
     const userMsg: ChatMessage = {
       id: `usr_${Date.now()}`,
@@ -325,13 +356,13 @@ export default function App() {
       try {
         if (!sid) {
           const title = textToSend.slice(0, 32) + (textToSend.length > 32 ? '...' : '');
-          const newSession = await api.createSession(title, mode, selectedModel);
+          const newSession = await api.createSession(title, sessionMode, selectedModel);
           sid = newSession.id;
           setCurrentSessionId(sid);
           setSessions((prev) => [newSession, ...prev]);
         }
 
-        const resMsg = await api.sendMessage(sid, textToSend, selectedModel);
+        const resMsg = await api.sendMessage(sid, textToSend, selectedModel, effort);
         
         const assistantMsg: ChatMessage = {
           id: resMsg.id,
@@ -346,16 +377,15 @@ export default function App() {
         setMessages((prev) => [...prev, assistantMsg]);
         loadArtifacts(sid);
         loadSessions();
-      } catch (err: any) {
-        console.error('Daemon message send error, falling back:', err);
-        const fallbackMsg: ChatMessage = {
-          id: `ast_${Date.now()}`,
+      } catch (err: unknown) {
+        console.error('Daemon message send error:', err);
+        const errorMsg: ChatMessage = {
+          id: `err_${Date.now()}`,
           role: 'assistant',
-          content: `Processed request: "${textToSend}". Workspace runtime executed with type-safe verification.`,
+          content: `Request failed: ${err instanceof Error ? err.message : 'unknown daemon error'}`,
           timestamp: 'Just now',
-          showAppCard: true,
         };
-        setMessages((prev) => [...prev, fallbackMsg]);
+        setMessages((prev) => [...prev, errorMsg]);
       } finally {
         setIsGenerating(false);
         setStreamingText('');
@@ -363,18 +393,13 @@ export default function App() {
         setStreamingTool(null);
       }
     } else {
-      // Standby / offline simulation
-      setTimeout(() => {
-        const assistantMsg: ChatMessage = {
-          id: `ast_${Date.now()}`,
-          role: 'assistant',
-          content: `I have analyzed your request: "${textToSend}". The project structure has been generated with responsive layout and type-safe invariants.`,
-          timestamp: 'Just now',
-          showAppCard: true,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-        setIsGenerating(false);
-      }, 700);
+      setMessages((prev) => [...prev, {
+        id: `offline_${Date.now()}`,
+        role: 'assistant',
+        content: 'Daemon is offline. Start odond or update the daemon URL in Settings, then retry.',
+        timestamp: 'Just now',
+      }]);
+      setIsGenerating(false);
     }
   };
 
@@ -449,18 +474,11 @@ export default function App() {
     : undefined;
 
   // Session list to render
-  const recentItems = sessions.length > 0
-    ? (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
-        id: s.id,
-        title: s.title,
-        time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }))
-    : [
-        { id: 'mock-1', title: 'Rencana arsitektur ODON', time: '2h ago' },
-        { id: 'mock-2', title: 'Refactor modul agent (Rust)', time: '4h ago' },
-        { id: 'mock-3', title: 'Buat gambar ilustrasi produk', time: 'Yesterday' },
-        { id: 'mock-4', title: 'Konversi PDF ke DOCX', time: 'Yesterday' },
-      ];
+  const recentItems = (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
+    id: s.id,
+    title: s.title,
+    time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  }));
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans select-none">
@@ -1062,7 +1080,7 @@ export default function App() {
                       className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors ml-1 border border-neutral-200/60 cursor-pointer"
                     >
                       <Globe className="w-3.5 h-3.5 text-neutral-500" />
-                      <span>Tools ({REGISTERED_TOOLS.length})</span>
+                      <span>Tools ({registeredTools.length})</span>
                       <ChevronDown className="w-3 h-3 text-neutral-400" />
                     </button>
                   </div>
@@ -1078,10 +1096,26 @@ export default function App() {
                       title="Select Model"
                     >
                       <Sparkles className="w-3 h-3 text-blue-500" />
-                      <span className="truncate max-w-[130px] font-medium">{selectedModel}</span>
+                      <span className="truncate max-w-[130px] font-medium">
+                        {availableModels.find((model) => model.id === selectedModel)?.name || 'Configure a model'}
+                      </span>
                       <ChevronDown className="w-3 h-3 text-neutral-400" />
                     </button>
                   </div>
+
+                  {/* Reasoning effort */}
+                  <select
+                    value={effort}
+                    onChange={(e) => setEffort(e.target.value as typeof effort)}
+                    aria-label="Reasoning effort"
+                    title="Reasoning effort"
+                    className="px-2 py-1 text-xs text-neutral-600 hover:text-neutral-900 bg-transparent hover:bg-neutral-100 rounded-full border border-neutral-200/60 cursor-pointer outline-none"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">XHigh</option>
+                  </select>
 
                   {/* Send Button */}
                   <button
@@ -1535,6 +1569,71 @@ export default function App() {
         )}
       </div>
 
+      {/* Live tool approval dialog */}
+      {pendingApprovals.length > 0 && (() => {
+        const req = pendingApprovals[0];
+        const decide = async (decision: 'approved' | 'rejected') => {
+          const ok = await api.resolveApproval(req.id, decision, decision === 'rejected' ? 'Rejected by user' : undefined);
+          if (ok) setPendingApprovals((prev) => prev.filter((a) => a.id !== req.id));
+        };
+        const tierLabel = req.risk_tier >= 2 ? 'System-mutating' : 'Workspace-mutating';
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="approval-title"
+              aria-describedby="approval-desc"
+              className="w-[420px] max-w-[90vw] bg-white rounded-2xl border border-neutral-200 shadow-xl p-4"
+            >
+              <div className="flex items-center justify-between pb-2.5 border-b border-neutral-100">
+                <span id="approval-title" className="font-bold text-sm text-neutral-900">
+                  Approve tool call?
+                </span>
+                {pendingApprovals.length > 1 && (
+                  <span className="text-[10px] text-neutral-500">+{pendingApprovals.length - 1} more waiting</span>
+                )}
+              </div>
+              <div id="approval-desc" className="py-3 text-xs text-neutral-700 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-semibold text-neutral-900">{req.tool_name}</span>
+                  <span
+                    className={`text-[9px] font-medium px-2 py-0.5 rounded-full border ${
+                      req.risk_tier >= 2
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}
+                  >
+                    {tierLabel}
+                  </span>
+                </div>
+                <p className="text-neutral-500">{req.description}</p>
+                {req.parameters != null && (
+                  <pre className="max-h-40 overflow-auto rounded-lg bg-neutral-50 border border-neutral-100 p-2 text-[10px] font-mono select-text">
+                    {JSON.stringify(req.parameters, null, 2)}
+                  </pre>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
+                <button
+                  onClick={() => decide('rejected')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 cursor-pointer"
+                >
+                  Reject
+                </button>
+                <button
+                  autoFocus
+                  onClick={() => decide('approved')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 cursor-pointer"
+                >
+                  Approve
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
@@ -1567,13 +1666,13 @@ export default function App() {
               </button>
             </div>
             <div className="space-y-1">
-              {AVAILABLE_MODELS.map((m) => {
+              {availableModels.map((m) => {
                 const isSelected = selectedModel === m.name || selectedModel === m.id;
                 return (
                   <button
                     key={m.id}
                     onClick={() => {
-                      setSelectedModel(m.name);
+                      setSelectedModel(m.id);
                       setIsModelMenuOpen(false);
                     }}
                     className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-start justify-between ${
@@ -1621,7 +1720,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Globe className="w-4 h-4 text-blue-600" />
                 <span className="font-bold text-sm text-neutral-900">
-                  Registered Tools ({REGISTERED_TOOLS.length})
+                  Registered Tools ({registeredTools.length})
                 </span>
               </div>
               <button
@@ -1635,7 +1734,7 @@ export default function App() {
               Autonomous execution harness capabilities available to the agent runtime.
             </p>
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-              {REGISTERED_TOOLS.map((t) => (
+              {registeredTools.map((t) => (
                 <div
                   key={t.name}
                   className="p-2 rounded-xl border border-neutral-100 bg-neutral-50/60 flex items-center justify-between text-xs"
@@ -1644,21 +1743,21 @@ export default function App() {
                     <div className="flex items-center gap-2 font-mono font-semibold text-neutral-900">
                       <span>{t.name}</span>
                       <span className="text-[9px] font-sans px-1.5 py-0.2 rounded bg-neutral-200/80 text-neutral-600">
-                        {t.category}
+                        Runtime
                       </span>
                     </div>
-                    <div className="text-[10px] text-neutral-500 font-sans mt-0.5">{t.desc}</div>
+                    <div className="text-[10px] text-neutral-500 font-sans mt-0.5">{t.description}</div>
                   </div>
                   <span
                     className={`text-[9px] font-medium px-2 py-0.5 rounded-full ${
-                      t.tier === 'Tier 0'
+                      t.risk_tier === 0
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : t.tier === 'Tier 1'
+                        : t.risk_tier === 1
                         ? 'bg-amber-50 text-amber-700 border border-amber-200'
                         : 'bg-red-50 text-red-700 border border-red-200'
                     }`}
                   >
-                    {t.tier}
+                    Tier {t.risk_tier}
                   </span>
                 </div>
               ))}

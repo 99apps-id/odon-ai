@@ -5,8 +5,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use odon_core::{
-    AgentEvent, AgentState, Artifact, Message, OdonError,
-    OutputActionChip, Result, Session, SessionMode, ToolCallInfo,
+    AgentEvent, AgentState, Artifact, Message, OdonError, Result, Session, SessionMode,
+    ToolCallInfo,
 };
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent, ToolDefinition};
 use odon_security::{ApprovalEngine, AuditLogger};
@@ -140,17 +140,34 @@ impl AgentRuntime {
         model_override: Option<&str>,
         cancellation: CancellationToken,
     ) -> Result<Message> {
+        self.execute_turn_with_effort(session_id, user_prompt, model_override, None, cancellation)
+            .await
+    }
+
+    pub async fn execute_turn_with_effort(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<Message> {
         info!("Executing agent turn for session: {}", session_id);
 
         // 0. Ensure session exists in storage
         if self.storage.get_session(session_id).is_err() {
-            let title = if user_prompt.len() > 30 {
-                format!("{}...", &user_prompt[..30])
-            } else {
-                user_prompt.to_string()
-            };
-            let sess = Session::new(title, SessionMode::General, "odon-auto".to_string());
-            let _ = self.storage.save_session(&sess);
+            let mut title: String = user_prompt.chars().take(30).collect();
+            if user_prompt.chars().count() > 30 {
+                title.push_str("...");
+            }
+            if title.is_empty() {
+                title = "New Conversation".to_string();
+            }
+            let mut sess = Session::new(title, SessionMode::General, "odon-auto".to_string());
+            sess.id = session_id.to_string();
+            self.storage
+                .save_session(&sess)
+                .map_err(|e| OdonError::Storage(e.to_string()))?;
         }
 
         // 1. Persist User Message
@@ -165,9 +182,15 @@ impl AgentRuntime {
             state: AgentState::Thinking,
         });
 
-        // 3. Resolve Provider (falls back gracefully)
+        // 3. Resolve provider and wire model independently. Model selections use
+        // `provider::model`, preventing a display/model id from being mistaken for
+        // a provider registry key.
+        let (provider_override, requested_model) = model_override
+            .and_then(|value| value.split_once("::"))
+            .map(|(provider, model)| (Some(provider), model))
+            .unwrap_or((None, model_override.unwrap_or("odon-auto")));
         let provider = self
-            .get_provider(model_override)
+            .get_provider(provider_override)
             .await
             .ok_or_else(|| OdonError::Provider {
                 provider: "unknown".to_string(),
@@ -213,11 +236,14 @@ impl AgentRuntime {
 
             let chat_req = ChatRequest {
                 messages: history,
-                model: model_override.unwrap_or("odon-auto").to_string(),
+                model: requested_model.to_string(),
                 system_prompt: Some(system_harness.clone()),
                 tools: tool_defs.clone(),
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
+                effort: effort
+                    .filter(|e| matches!(*e, "low" | "medium" | "high" | "xhigh"))
+                    .map(str::to_string),
             };
 
             let (stream_tx, mut stream_rx) = mpsc::channel::<StreamEvent>(128);
@@ -233,6 +259,7 @@ impl AgentRuntime {
             let mut step_text = String::new();
             let mut step_thought = String::new();
             let mut tool_accumulator: HashMap<usize, AccumulatedToolCall> = HashMap::new();
+            let mut stream_error = None;
 
             // Process stream deltas
             while let Some(evt) = stream_rx.recv().await {
@@ -271,13 +298,29 @@ impl AgentRuntime {
                             session_id: session_id.to_string(),
                             message: err.clone(),
                         });
+                        stream_error = Some(err);
                         break;
                     }
                     _ => {}
                 }
             }
 
-            let _ = prov_task.await;
+            match prov_task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => stream_error = Some(err.to_string()),
+                Err(err) => stream_error = Some(format!("Provider task failed: {err}")),
+            }
+
+            if let Some(message) = stream_error {
+                let _ = self.event_tx.send(AgentEvent::StateChanged {
+                    session_id: session_id.to_string(),
+                    state: AgentState::Failed,
+                });
+                return Err(OdonError::Provider {
+                    provider: provider.provider_name().to_string(),
+                    message,
+                });
+            }
 
             // If no tools were called in this step, we reached the final answer
             if tool_accumulator.is_empty() {
@@ -379,7 +422,7 @@ impl AgentRuntime {
                 session_id,
                 step_text,
                 if step_thought.is_empty() { None } else { Some(step_thought) },
-                Some(model_override.unwrap_or("odon-auto").to_string()),
+                Some(requested_model.to_string()),
             );
             intermediate_assistant.content.tool_calls = executed_tools_info;
             let _ = self.storage.save_message(&intermediate_assistant);
@@ -391,99 +434,7 @@ impl AgentRuntime {
             });
         }
 
-        // 6. Automatic Artifact Generation Fallback (if user asked to build/create and none generated yet)
-        if active_artifacts.is_empty() && (user_prompt.to_lowercase().contains("knowledge hub") || user_prompt.to_lowercase().contains("build")) {
-            // Synthesize React 19 code artifact
-            let code_art = Artifact::new_code(
-                session_id,
-                "personal-knowledge-hub",
-                "React 19 + TypeScript + Vite lightweight notes manager with full-text search and tags",
-                "TypeScript",
-                Some("React 19".to_string()),
-                vec![
-                    odon_core::ArtifactFile {
-                        path: "src/App.tsx".to_string(),
-                        content: "// Personal Knowledge Hub React 19 Component\nexport default function App() {\n  return <div className=\"p-6\"><h1>Personal Knowledge Hub</h1></div>;\n}".to_string(),
-                    },
-                    odon_core::ArtifactFile {
-                        path: "package.json".to_string(),
-                        content: "{\n  \"name\": \"personal-knowledge-hub\",\n  \"version\": \"0.1.0\",\n  \"dependencies\": { \"react\": \"^19.0.0\" }\n}".to_string(),
-                    },
-                ],
-            );
-            let _ = self.storage.save_artifact(&code_art);
-            let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
-                session_id: session_id.to_string(),
-                artifact: code_art.clone(),
-            });
-            active_artifacts.push(code_art.id);
-
-            // Synthesize PRD document artifact
-            let prd_art = Artifact::new_document(
-                session_id,
-                "PRD: Personal Knowledge Hub",
-                "PRD",
-                "# Product Requirements Document (PRD)\n## Personal Knowledge Hub\n\n### 1. Overview\nAn AI-orchestrated digital knowledge assistant with local persistence.\n\n### 2. Core Capabilities\n- Real-time Markdown note editing\n- Search and tag taxonomy\n- Bi-directional linking\n\n### 3. Technical Specs\n- Frontend: React 19 + Tailwind CSS\n- Runtime: ODON Native Agent\n",
-            );
-            let _ = self.storage.save_artifact(&prd_art);
-            let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
-                session_id: session_id.to_string(),
-                artifact: prd_art.clone(),
-            });
-            active_artifacts.push(prd_art.id);
-
-            // Synthesize Image mockup artifact
-            let img_art = Artifact::new_image(
-                session_id,
-                "Knowledge Hub Interface & Hero Assets",
-                "High-fidelity UI preview and hero illustration for knowledge hub",
-                1280,
-                720,
-                "odon-flux-pro",
-                None,
-                Some("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80".to_string()),
-                1024 * 768,
-            );
-            let _ = self.storage.save_artifact(&img_art);
-            let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
-                session_id: session_id.to_string(),
-                artifact: img_art.clone(),
-            });
-            active_artifacts.push(img_art.id);
-        }
-
-        // 7. Contextual Action Chips (dynamic)
-        let mut active_action_chips = Vec::new();
-        active_action_chips.push(OutputActionChip {
-            id: "preview_app".to_string(),
-            label: "Run project and preview".to_string(),
-            icon: Some("play".to_string()),
-            action_type: "preview_run".to_string(),
-            payload: None,
-        });
-        active_action_chips.push(OutputActionChip {
-            id: "git_repo".to_string(),
-            label: "Create Git repository".to_string(),
-            icon: Some("github".to_string()),
-            action_type: "create_git_repo".to_string(),
-            payload: None,
-        });
-        active_action_chips.push(OutputActionChip {
-            id: "turn_automation".to_string(),
-            label: "Turn into automation".to_string(),
-            icon: Some("zap".to_string()),
-            action_type: "create_automation".to_string(),
-            payload: None,
-        });
-        active_action_chips.push(OutputActionChip {
-            id: "refine_prd".to_string(),
-            label: "Refine PRD document".to_string(),
-            icon: Some("file-text".to_string()),
-            action_type: "refine_prd".to_string(),
-            payload: None,
-        });
-
-        // 8. Persist Assistant Final Message
+        // 6. Persist Assistant Final Message
         let thought_opt = if total_accumulated_thought.is_empty() {
             None
         } else {
@@ -494,16 +445,16 @@ impl AgentRuntime {
             session_id,
             total_accumulated_text,
             thought_opt,
-            Some(model_override.unwrap_or("odon-auto").to_string()),
+            Some(requested_model.to_string()),
         );
         assistant_msg.content.artifact_ids = active_artifacts;
-        assistant_msg.content.action_chips = active_action_chips;
+        assistant_msg.content.action_chips = Vec::new();
 
         self.storage
             .save_message(&assistant_msg)
             .map_err(|e| OdonError::Storage(e.to_string()))?;
 
-        // 9. Set State: Completed
+        // 7. Set State: Completed
         let _ = self.event_tx.send(AgentEvent::StateChanged {
             session_id: session_id.to_string(),
             state: AgentState::Completed,

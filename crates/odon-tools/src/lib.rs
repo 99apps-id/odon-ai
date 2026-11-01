@@ -2,6 +2,7 @@ pub mod artifact_gen;
 pub mod fs;
 pub mod git;
 pub mod github;
+pub mod harness;
 pub mod mcp;
 pub mod memory;
 pub mod registry;
@@ -20,6 +21,12 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(fs::FsListTool));
     reg.register(Box::new(fs::FsSearchTool));
     reg.register(Box::new(fs::FsDeleteTool));
+
+    // Harness
+    reg.register(Box::new(harness::TodoWriteTool));
+    reg.register(Box::new(harness::TodoReadTool));
+    reg.register(Box::new(harness::ThinkTool));
+    reg.register(Box::new(harness::PlanModeTool));
 
     // Git
     reg.register(Box::new(git::GitStatusTool));

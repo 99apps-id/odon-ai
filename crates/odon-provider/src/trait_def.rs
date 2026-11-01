@@ -20,6 +20,8 @@ pub struct ChatRequest {
     pub tools: Vec<ToolDefinition>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// Reasoning effort: low | medium | high | xhigh. None = provider default.
+    pub effort: Option<String>,
 }
 
 #[async_trait]

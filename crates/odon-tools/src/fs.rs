@@ -2,17 +2,53 @@ use async_trait::async_trait;
 use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::registry::{Tool, ToolContext};
 
-fn resolve_path(root: &str, relative: &str) -> PathBuf {
+fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
     let p = Path::new(relative);
-    if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        Path::new(root).join(relative)
+    if p.is_absolute()
+        || p.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Path must stay inside the workspace: {relative}"),
+        });
     }
+
+    let canonical_root = std::fs::canonicalize(root).map_err(|e| OdonError::Tool {
+        tool: "filesystem".to_string(),
+        message: format!("Failed to resolve workspace root: {e}"),
+    })?;
+    let candidate = canonical_root.join(p);
+
+    // Canonicalize the target when it exists. For a new path, canonicalize its
+    // nearest existing ancestor so an in-workspace symlink cannot escape root.
+    let mut existing = candidate.as_path();
+    while !existing.exists() {
+        existing = existing.parent().ok_or_else(|| OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Invalid workspace path: {relative}"),
+        })?;
+    }
+    let canonical_existing = std::fs::canonicalize(existing).map_err(|e| OdonError::Tool {
+        tool: "filesystem".to_string(),
+        message: format!("Failed to resolve path {relative}: {e}"),
+    })?;
+    if !canonical_existing.starts_with(&canonical_root) {
+        return Err(OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Path escapes the workspace: {relative}"),
+        });
+    }
+
+    Ok(candidate)
 }
 
 pub struct FsReadTool;
@@ -45,7 +81,7 @@ impl Tool for FsReadTool {
             }
         })?;
 
-        let full_path = resolve_path(&ctx.workspace_root, path_str);
+        let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         let content = tokio::fs::read_to_string(&full_path)
             .await
             .map_err(|e| OdonError::Tool {
@@ -95,7 +131,7 @@ impl Tool for FsWriteTool {
                 message: "Missing 'content' parameter".to_string(),
             })?;
 
-        let full_path = resolve_path(&ctx.workspace_root, path_str);
+        let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         if let Some(parent) = full_path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
@@ -134,7 +170,7 @@ impl Tool for FsListTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let dir_str = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
-        let full_path = resolve_path(&ctx.workspace_root, dir_str);
+        let full_path = resolve_path(&ctx.workspace_root, dir_str)?;
 
         let mut read_dir = tokio::fs::read_dir(&full_path)
             .await
@@ -202,7 +238,7 @@ impl Tool for FsEditTool {
             }
         })?;
 
-        let full_path = resolve_path(&ctx.workspace_root, path_str);
+        let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         let content = tokio::fs::read_to_string(&full_path)
             .await
             .map_err(|e| OdonError::Tool {
@@ -269,7 +305,7 @@ impl Tool for FsSearchTool {
         let subpath = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
         let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(30) as usize;
 
-        let root_dir = resolve_path(&ctx.workspace_root, subpath);
+        let root_dir = resolve_path(&ctx.workspace_root, subpath)?;
         let mut matches = Vec::new();
 
         let mut queue = vec![root_dir.clone()];
@@ -362,7 +398,7 @@ impl Tool for FsDeleteTool {
             }
         })?;
 
-        let full_path = resolve_path(&ctx.workspace_root, path_str);
+        let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         tokio::fs::remove_file(&full_path)
             .await
             .map_err(|e| OdonError::Tool {
@@ -371,5 +407,23 @@ impl Tool for FsDeleteTool {
             })?;
 
         Ok(json!({ "path": path_str, "status": "deleted" }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_path;
+
+    #[test]
+    fn rejects_absolute_and_parent_paths() {
+        let root = std::env::temp_dir().join(format!("odon-fs-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let root_str = root.to_string_lossy();
+
+        assert!(resolve_path(&root_str, "../outside.txt").is_err());
+        assert!(resolve_path(&root_str, &root.join("absolute.txt").to_string_lossy()).is_err());
+        assert!(resolve_path(&root_str, "nested/file.txt").is_ok());
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

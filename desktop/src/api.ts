@@ -87,11 +87,11 @@ export const api = {
     return res.json();
   },
 
-  async sendMessage(sessionId: string, text: string, model?: string): Promise<Message> {
+  async sendMessage(sessionId: string, text: string, model?: string, effort?: string): Promise<Message> {
     const res = await fetch(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model }),
+      body: JSON.stringify({ text, model, effort }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -134,7 +134,7 @@ export const api = {
     return res.ok;
   },
 
-  async getModels(): Promise<{ providers: ProviderItem[] }> {
+  async getModels(): Promise<{ providers: ProviderItem[]; catalog_as_of?: string }> {
     const res = await fetch(`${this.getBaseUrl()}/api/models`);
     if (!res.ok) throw new Error(`Failed to fetch models: ${res.statusText}`);
     return res.json();

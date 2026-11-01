@@ -119,9 +119,41 @@ impl StorageEngine {
                 category TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS todos (
+                session_id TEXT PRIMARY KEY,
+                items_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             ",
         )?;
         Ok(())
+    }
+
+    // --- Todo Operations (per-session task plan) ---
+
+    pub fn set_todos(&self, session_id: &str, items: &serde_json::Value) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO todos (session_id, items_json, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(session_id) DO UPDATE SET
+                items_json = excluded.items_json,
+                updated_at = excluded.updated_at",
+            params![session_id, items.to_string(), Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_todos(&self, session_id: &str) -> Result<serde_json::Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT items_json FROM todos WHERE session_id = ?1")?;
+        let mut rows = stmt.query(params![session_id])?;
+        if let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            Ok(serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!([])))
+        } else {
+            Ok(serde_json::json!([]))
+        }
     }
 
     // --- Session Operations ---

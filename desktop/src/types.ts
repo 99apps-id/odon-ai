@@ -108,6 +108,7 @@ export type AgentEvent =
   | { type: 'tool_call_finished'; payload: { session_id: string; call_id: string; output: any; is_error: boolean } }
   | { type: 'artifact_created'; payload: { session_id: string; artifact: Artifact } }
   | { type: 'approval_requested'; payload: { session_id: string; approval_id: string; tool_name: string; risk_tier: number; description: string } }
+  | { type: 'approval_resolved'; payload: { session_id: string; approval_id: string; decision: 'approved' | 'rejected' | 'expired' } }
   | { type: 'error'; payload: { session_id: string; message: string } };
 
 export interface ModelItem {
@@ -124,6 +125,8 @@ export interface ProviderItem {
   auth_type: 'oauth' | 'api_key';
   description: string;
   default_base_url?: string;
+  connected?: boolean;
+  configured?: boolean;
   models: ModelItem[];
 }
 
