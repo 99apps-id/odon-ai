@@ -83,8 +83,14 @@ impl ModelProvider for AntigravityProvider {
             }));
         }
 
+        let model_str = if request.model == "odon-auto" || request.model == "auto" || request.model.is_empty() {
+            "gemini-2.0-flash"
+        } else {
+            &request.model
+        };
+
         let mut body = json!({
-            "model": request.model,
+            "model": model_str,
             "stream": true,
             "input": input_items,
         });

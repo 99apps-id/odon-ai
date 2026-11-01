@@ -76,8 +76,15 @@ impl ModelProvider for AnthropicProvider {
             }
         }
 
+        let model_str = match request.model.as_str() {
+            "odon-auto" | "auto" | "" | "claude-3-7-sonnet" => "claude-3-7-sonnet-20250219",
+            "claude-3-5-sonnet" => "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku" => "claude-3-5-haiku-20241022",
+            other => other,
+        };
+
         let mut body = json!({
-            "model": request.model,
+            "model": model_str,
             "messages": messages_payload,
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "stream": true,
@@ -165,3 +172,4 @@ impl ModelProvider for AnthropicProvider {
         Ok(())
     }
 }
+

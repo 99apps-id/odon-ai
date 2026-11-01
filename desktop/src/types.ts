@@ -225,6 +225,65 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
       { id: 'o3-mini', name: 'o3-mini (Codex)', context: 200000 },
     ],
   },
+  {
+    id: 'qwen',
+    name: 'Qwen Plan / DashScope',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Alibaba Cloud international AI gateway: Qwen 2.5 Coder, QwQ, and Qwen Max',
+    models: [
+      { id: 'qwen-max-latest', name: 'Qwen Max Latest (Flagship)', context: 32768, recommended: true },
+      { id: 'qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', context: 131072, recommended: true },
+      { id: 'qwq-32b-preview', name: 'QwQ 32B Reasoning Preview', context: 32768 },
+    ],
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral AI',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Mistral AI frontier models including Codestral and Mistral Large',
+    models: [
+      { id: 'mistral-large-latest', name: 'Mistral Large Latest', context: 128000, recommended: true },
+      { id: 'codestral-latest', name: 'Codestral Latest (Coding)', context: 256000, recommended: true },
+    ],
+  },
+  {
+    id: 'groq',
+    name: 'Groq (Fast Inference)',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Ultra high-speed LPU inference engine for open-weights models',
+    models: [
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', context: 131072, recommended: true },
+      { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill Llama 70B', context: 131072, recommended: true },
+    ],
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Unified gateway across all frontier models and providers',
+    models: [
+      { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet (OpenRouter)', context: 200000, recommended: true },
+      { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1 (OpenRouter)', context: 64000, recommended: true },
+      { id: 'openai/o3-mini', name: 'o3-mini (OpenRouter)', context: 200000 },
+    ],
+  },
+  {
+    id: 'openai-compatible',
+    name: 'OpenAI Compatible (Custom / Gateway)',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Any OpenAI-compatible gateway: vLLM, LM Studio, LiteLLM, or custom proxies',
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o', context: 128000, recommended: true },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', context: 128000 },
+      { id: 'o3-mini', name: 'o3-mini', context: 200000 },
+      { id: 'custom', name: 'Custom Model (Manual input)', context: 128000 },
+    ],
+  },
 ];
 
 export interface TerminalInfo {

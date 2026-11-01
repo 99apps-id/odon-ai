@@ -130,14 +130,21 @@ impl ModelProvider for OpenAiCompatibleProvider {
             }
         }
 
-        let effective_model = if self.provider_label == "github-copilot" {
+        let model_str = if request.model == "odon-auto" || request.model == "auto" || request.model.is_empty() {
+            match self.provider_label.as_str() {
+                "deepseek" => "deepseek-chat",
+                "qwen" => "qwen-max-latest",
+                "mistral" => "mistral-large-latest",
+                _ => "gpt-4o",
+            }
+        } else if self.provider_label == "github-copilot" {
             request.model.strip_prefix("copilot-").unwrap_or(&request.model)
         } else {
             &request.model
         };
 
         let mut body = json!({
-            "model": effective_model,
+            "model": model_str,
             "messages": messages_payload,
             "stream": true,
         });

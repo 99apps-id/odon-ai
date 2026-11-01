@@ -1053,6 +1053,11 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
             "deepseek" => std::env::var("DEEPSEEK_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
             "google" => std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY")).map(|v| !v.trim().is_empty()).unwrap_or(false),
             "mistral" => std::env::var("MISTRAL_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
+            "groq" => std::env::var("GROQ_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
+            "openrouter" => std::env::var("OPENROUTER_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
+            "qwen" => std::env::var("DASHSCOPE_API_KEY").or_else(|_| std::env::var("QWEN_API_KEY")).map(|v| !v.trim().is_empty()).unwrap_or(false),
+            "ollama" => true,
+            "openai-compatible" | "openai_compatible" => std::env::var("OPENAI_BASE_URL").is_ok(),
             _ => false,
         }
     };
@@ -1061,132 +1066,181 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
         "catalog_as_of": "2026-10-31",
         "providers": [
             {
-                "id": "chatgpt", "name": "ChatGPT Account", "category": "oauth", "auth_type": "oauth",
-                "connected": is_connected("chatgpt"),
-                "description": "OpenAI Codex backend using a ChatGPT account",
-                "models": [
-                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "context": 400000, "recommended": true },
-                    { "id": "gpt-6-astra", "name": "GPT-6 Astra", "context": 400000 },
-                    { "id": "gpt-6-luna", "name": "GPT-6 Luna", "context": 400000 },
-                    { "id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "context": 400000 },
-                    { "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "context": 400000 },
-                    { "id": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "context": 400000 },
-                    { "id": "gpt-5.3-codex", "name": "GPT-5.3 Codex", "context": 400000 }
-                ]
-            },
-            {
-                "id": "claude-oauth", "name": "Claude Account", "category": "oauth", "auth_type": "oauth",
-                "connected": is_connected("claude-oauth"),
-                "description": "Anthropic account OAuth with PKCE",
-                "models": [
-                    { "id": "claude-fable-5-1", "name": "Claude Fable 5.1", "context": 1000000, "recommended": true },
-                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "context": 1000000 },
-                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "context": 1000000 },
-                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "context": 1000000 }
-                ]
-            },
-            {
-                "id": "xai-oauth", "name": "xAI Account", "category": "oauth", "auth_type": "oauth",
-                "connected": is_connected("xai-oauth"),
-                "description": "xAI device authorization",
-                "models": [{ "id": "grok-4.7", "name": "Grok 4.7", "context": 2000000, "recommended": true }]
-            },
-            {
                 "id": "github-copilot", "name": "GitHub Copilot", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("github-copilot"),
-                "description": "GitHub Copilot active live session with multi-model capability",
+                "description": "Active GitHub Copilot session with frontier GPT-4o and Claude models",
                 "models": [
                     { "id": "gpt-4o", "name": "GPT-4o (GitHub Copilot)", "context": 128000, "recommended": true },
-                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini (GitHub Copilot)", "context": 128000, "recommended": false },
-                    { "id": "claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "context": 200000, "recommended": false }
+                    { "id": "claude-3.5-sonnet", "name": "Claude 3.5 Sonnet (GitHub Copilot)", "context": 200000, "recommended": true },
+                    { "id": "o3-mini", "name": "o3-mini (GitHub Copilot)", "context": 200000, "recommended": false },
+                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini (GitHub Copilot)", "context": 128000, "recommended": false }
                 ]
             },
             {
                 "id": "antigravity", "name": "Google Antigravity", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("antigravity"),
-                "description": "Google Cloud Code Assist OAuth",
+                "description": "Google Cloud Code Assist & Antigravity OAuth with hybrid reasoning support",
                 "models": [
-                    { "id": "gemini-4-argon", "name": "Gemini 4 Argon", "context": 2000000, "recommended": true },
-                    { "id": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash High", "context": 2000000 },
-                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "context": 1000000 }
+                    { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1048576, "recommended": true },
+                    { "id": "gemini-2.0-flash-thinking-exp", "name": "Gemini 2.0 Flash Thinking", "context": 1048576, "recommended": true },
+                    { "id": "claude-3-7-sonnet", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
+                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": false },
+                    { "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "context": 2097152, "recommended": false },
+                    { "id": "claude-3-5-haiku", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
+                ]
+            },
+            {
+                "id": "chatgpt", "name": "ChatGPT / OpenAI Codex", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("chatgpt"),
+                "description": "Official OpenAI OAuth authorization with specialized coding & reasoning models",
+                "models": [
+                    { "id": "gpt-4o", "name": "GPT-4o (Omnimodal Flagship)", "context": 128000, "recommended": true },
+                    { "id": "o3-mini", "name": "o3-mini (Reasoning & Coding)", "context": 200000, "recommended": true },
+                    { "id": "o1", "name": "o1 (Advanced Deep Reasoning)", "context": 200000, "recommended": false },
+                    { "id": "gpt-4.5-preview", "name": "GPT-4.5 Preview", "context": 128000, "recommended": true },
+                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini (Fast & Light)", "context": 128000, "recommended": false }
+                ]
+            },
+            {
+                "id": "claude-oauth", "name": "Claude (Anthropic OAuth)", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("claude-oauth"),
+                "description": "Direct Anthropic Claude account authorization via OAuth",
+                "models": [
+                    { "id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
+                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": true },
+                    { "id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
+                ]
+            },
+            {
+                "id": "xai-oauth", "name": "xAI Grok", "category": "oauth", "auth_type": "oauth",
+                "connected": is_connected("xai-oauth"),
+                "description": "xAI Grok device authorization flow",
+                "models": [
+                    { "id": "grok-2-latest", "name": "Grok 2 Latest (Flagship)", "context": 131072, "recommended": true },
+                    { "id": "grok-beta", "name": "Grok Beta", "context": 131072, "recommended": false }
                 ]
             },
             {
                 "id": "muse", "name": "Meta Muse Code", "category": "oauth", "auth_type": "oauth",
                 "connected": is_connected("muse"),
-                "description": "Meta Muse device authorization",
-                "models": [{ "id": "muse-spark-1.3", "name": "Muse Spark 1.3", "context": 128000, "recommended": true }]
+                "description": "Meta Muse Code developer device authorization and SSE streaming",
+                "models": [
+                    { "id": "muse-spark-1.3", "name": "Muse Spark 1.3 (Flagship Coding)", "context": 128000, "recommended": true },
+                    { "id": "muse-code-v2", "name": "Muse Code v2", "context": 128000, "recommended": false }
+                ]
             },
             {
-                "id": "openai", "name": "OpenAI", "category": "byok", "auth_type": "api_key",
+                "id": "openai", "name": "OpenAI (Official BYOK)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("openai"),
                 "default_base_url": "https://api.openai.com/v1",
-                "description": "Official OpenAI API",
+                "description": "Official OpenAI platform with GPT-4.5, o3-mini, and GPT-4o models",
                 "models": [
-                    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "context": 400000, "recommended": true },
-                    { "id": "gpt-6-astra", "name": "GPT-6 Astra", "context": 400000 },
-                    { "id": "gpt-6-luna", "name": "GPT-6 Luna", "context": 400000 },
-                    { "id": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "context": 400000 },
-                    { "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "context": 400000 },
-                    { "id": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "context": 400000 }
+                    { "id": "gpt-4.5-preview", "name": "GPT-4.5 Preview", "context": 128000, "recommended": true },
+                    { "id": "o3-mini", "name": "o3-mini (Reasoning)", "context": 200000, "recommended": true },
+                    { "id": "o1", "name": "o1 (Deep Reasoning)", "context": 200000, "recommended": false },
+                    { "id": "gpt-4o", "name": "GPT-4o (Omnimodal)", "context": 128000, "recommended": true },
+                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000, "recommended": false }
                 ]
             },
             {
-                "id": "anthropic", "name": "Anthropic", "category": "byok", "auth_type": "api_key",
+                "id": "anthropic", "name": "Anthropic (Official BYOK)", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("anthropic"),
                 "default_base_url": "https://api.anthropic.com/v1",
-                "description": "Official Anthropic API",
+                "description": "Official Anthropic API with Claude 3.7 Sonnet Hybrid Reasoning",
                 "models": [
-                    { "id": "claude-fable-5-1", "name": "Claude Fable 5.1", "context": 1000000, "recommended": true },
-                    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "context": 1000000 },
-                    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "context": 1000000 },
-                    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "context": 1000000 }
+                    { "id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
+                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": true },
+                    { "id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
                 ]
             },
             {
-                "id": "google", "name": "Google Gemini", "category": "byok", "auth_type": "api_key",
+                "id": "google", "name": "Google Gemini (Official BYOK)", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("google"),
                 "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                "description": "Official Gemini OpenAI-compatible API",
+                "description": "Google Gemini API with 1M-2M context and native multimodal reasoning",
                 "models": [
-                    { "id": "gemini-4-argon", "name": "Gemini 4 Argon", "context": 2000000, "recommended": true },
-                    { "id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "context": 2000000 },
-                    { "id": "gemini-3.8-flash-lite", "name": "Gemini 3.8 Flash-Lite", "context": 2000000 }
+                    { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1048576, "recommended": true },
+                    { "id": "gemini-2.0-flash-thinking-exp", "name": "Gemini 2.0 Flash Thinking", "context": 1048576, "recommended": true },
+                    { "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "context": 2097152, "recommended": false }
                 ]
             },
             {
-                "id": "deepseek", "name": "DeepSeek", "category": "byok", "auth_type": "api_key",
+                "id": "deepseek", "name": "DeepSeek (BYOK)", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("deepseek"),
                 "default_base_url": "https://api.deepseek.com/v1",
-                "description": "DeepSeek V4 API",
+                "description": "DeepSeek V3 and R1 reasoning models with transparent BYOK pricing",
                 "models": [
-                    { "id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "context": 1000000, "recommended": true },
-                    { "id": "deepseek-flash", "name": "DeepSeek V4.1 Flash", "context": 1000000 }
+                    { "id": "deepseek-chat", "name": "DeepSeek-V3 (Chat & Coding)", "context": 64000, "recommended": true },
+                    { "id": "deepseek-reasoner", "name": "DeepSeek-R1 (Deep Reasoning)", "context": 64000, "recommended": true },
+                    { "id": "deepseek-coder", "name": "DeepSeek Coder", "context": 32000, "recommended": false }
                 ]
             },
             {
-                "id": "qwen", "name": "Qwen", "category": "byok", "auth_type": "api_key",
+                "id": "qwen", "name": "Qwen Plan / DashScope Global", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("qwen"),
                 "default_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                "description": "Alibaba Model Studio international endpoint",
+                "description": "Alibaba Cloud international AI gateway: Qwen 2.5 Coder, QwQ Reasoning, and Qwen Max",
                 "models": [
-                    { "id": "qwen3.8-max", "name": "Qwen 3.8 Max", "context": 1000000, "recommended": true },
-                    { "id": "qwen3.7-plus", "name": "Qwen 3.7 Plus", "context": 1000000 },
-                    { "id": "qwen3.8-flash", "name": "Qwen 3.8 Flash", "context": 1000000 }
+                    { "id": "qwen-max-latest", "name": "Qwen Max Latest (Flagship)", "context": 32768, "recommended": true },
+                    { "id": "qwen-2.5-coder-32b-instruct", "name": "Qwen 2.5 Coder 32B", "context": 131072, "recommended": true },
+                    { "id": "qwq-32b-preview", "name": "QwQ 32B Reasoning Preview", "context": 32768, "recommended": false },
+                    { "id": "qwen-plus-latest", "name": "Qwen Plus Latest", "context": 131072, "recommended": false },
+                    { "id": "qwen-turbo-latest", "name": "Qwen Turbo Latest (Speed)", "context": 131072, "recommended": false }
                 ]
             },
             {
-                "id": "mistral", "name": "Mistral", "category": "byok", "auth_type": "api_key",
+                "id": "mistral", "name": "Mistral AI", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("mistral"),
                 "default_base_url": "https://api.mistral.ai/v1",
-                "description": "Official Mistral API",
+                "description": "Mistral AI models including Codestral and Mistral Large",
                 "models": [
-                    { "id": "mistral-large-4", "name": "Mistral Large 4", "context": 1000000, "recommended": true },
-                    { "id": "mistral-medium-3.5", "name": "Mistral Medium 3.5", "context": 1000000 },
-                    { "id": "mistral-small-4", "name": "Mistral Small 4", "context": 1000000 }
+                    { "id": "mistral-large-latest", "name": "Mistral Large Latest", "context": 128000, "recommended": true },
+                    { "id": "codestral-latest", "name": "Codestral Latest (Coding)", "context": 256000, "recommended": true }
                 ]
             },
             {
-                "id": "openai-compatible", "name": "OpenAI Compatible", "category": "byok", "auth_type": "api_key",
+                "id": "groq", "name": "Groq (Fast Inference)", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("groq"),
+                "default_base_url": "https://api.groq.com/openai/v1",
+                "description": "Ultra high-speed LPU inference engine for open-weights models",
+                "models": [
+                    { "id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B Versatile", "context": 131072, "recommended": true },
+                    { "id": "deepseek-r1-distill-llama-70b", "name": "DeepSeek R1 Distill Llama 70B", "context": 131072, "recommended": true }
+                ]
+            },
+            {
+                "id": "openrouter", "name": "OpenRouter", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("openrouter"),
+                "default_base_url": "https://openrouter.ai/api/v1",
+                "description": "Unified gateway across all frontier models and providers",
+                "models": [
+                    { "id": "anthropic/claude-3.7-sonnet", "name": "Claude 3.7 Sonnet (OpenRouter)", "context": 200000, "recommended": true },
+                    { "id": "deepseek/deepseek-r1", "name": "DeepSeek R1 (OpenRouter)", "context": 64000, "recommended": true },
+                    { "id": "openai/o3-mini", "name": "o3-mini (OpenRouter)", "context": 200000, "recommended": false }
+                ]
+            },
+            {
+                "id": "ollama", "name": "Ollama (Local Models)", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("ollama"),
+                "default_base_url": "http://localhost:11434/v1",
+                "description": "Run open models entirely locally on your hardware without internet",
+                "models": [
+                    { "id": "llama3.3:latest", "name": "Llama 3.3 70B Local", "context": 32768, "recommended": true },
+                    { "id": "qwen2.5-coder:32b", "name": "Qwen 2.5 Coder 32B Local", "context": 32768, "recommended": true },
+                    { "id": "deepseek-r1:14b", "name": "DeepSeek R1 14B Local", "context": 32768, "recommended": false }
+                ]
+            },
+            {
+                "id": "openai-compatible", "name": "OpenAI Compatible (Custom / Gateway)", "category": "byok", "auth_type": "api_key",
                 "configured": is_byok("openai-compatible"),
                 "default_base_url": "http://localhost:11434/v1",
-                "description": "Custom OpenAI-compatible endpoint",
-                "models": [{ "id": "custom", "name": "Custom model ID", "context": 0, "recommended": true }]
+                "description": "Any OpenAI-compatible gateway: vLLM, LM Studio, LiteLLM, or custom proxies",
+                "models": [
+                    { "id": "gpt-4o", "name": "GPT-4o", "context": 128000, "recommended": true },
+                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000, "recommended": false },
+                    { "id": "o3-mini", "name": "o3-mini", "context": 200000, "recommended": false },
+                    { "id": "custom", "name": "Custom Model (Manual input)", "context": 128000, "recommended": false }
+                ]
             }
         ]
     }))

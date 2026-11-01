@@ -82,38 +82,19 @@ impl ModelProvider for SimulatedProvider {
             return Ok(());
         }
 
-        let latest_tool_output = request
+        let _latest_tool_output = request
             .messages
             .iter()
             .rev()
             .find(|m| m.role == MessageRole::Tool)
             .map(|m| m.content.text.clone());
 
-        // If the user requested code, app, or personal knowledge hub:
-        let generated_text;
-        let response_text = if last_user_msg.contains("knowledge hub") || last_user_msg.contains("build") || last_user_msg.contains("react") {
-            "I'm on it! I will build the **Personal Knowledge Hub** project end-to-end.\n\n\
-            Here is what has been assembled for your workspace:\n\n\
-            1. **Core Application**: A lightweight, responsive React 19 note-taking app with tagging, full-text search, and local persistence.\n\
-            2. **Product Requirement Document (PRD)**: Comprehensive specification covering goals, persona workflows, API contracts, and non-functional requirements.\n\
-            3. **Visual Mockups**: High-resolution interface preview and hero branding cards.\n\n\
-            You can preview, modify, or download the generated artifacts in the Artifacts panel to the right."
-        } else if let Some(tool_output) = latest_tool_output {
-            generated_text = format!(
-                "Berikut hasil eksekusi alat dan telemetri lingkungan kerja Anda:\n\n```json\n{}\n```\n\nEksekusi alat berhasil diselesaikan dan dicatat ke dalam database SQLite sesi aktif.",
-                tool_output
-            );
-            &generated_text
-        } else if last_user_msg.contains("search") || last_user_msg.contains("cari") {
-            "Here are the findings based on your inquiry. The parameters have been checked against the active workspace knowledge base and online documentation. Let me know if you would like me to drill down further or write a tailored script."
-        } else {
-            "Hello! I am **ODON (Open Digital Orchestration Network)**, your autonomous AI desktop assistant.\n\n\
-            I can help you:\n\
-            - **Code & Build**: Generate fullstack web apps, scripts, or debug existing codebases.\n\
-            - **Research & Write**: Produce PRDs, architecture specifications, and technical reports.\n\
-            - **Automate**: Run background shell operations, git workflows, and connect to relays (CLI, Telegram, WhatsApp).\n\n\
-            What would you like to work on today?"
-        };
+        // Simulated provider is intentionally a stub. Return a clear guidance message instead of fake content.
+        let response_text = "ODON is currently in **Simulated Mode** because no real provider is configured.\n\n\
+        To get real AI responses, do one of the following:\n\n\
+        1. Open **Settings → Providers** and connect an OAuth provider (GitHub Copilot, Antigravity, xAI, Meta Muse, Claude, or ChatGPT).\n\
+        2. Or add a **BYOK API key** for OpenAI, Anthropic, Google Gemini, DeepSeek, Qwen, Mistral, or any OpenAI-compatible endpoint.\n\n\
+        After that, select the model from the **model picker** and send your message again.";
 
         // Stream response in small words
         for chunk in response_text.split_inclusive(' ') {
@@ -128,4 +109,3 @@ impl ModelProvider for SimulatedProvider {
         Ok(())
     }
 }
-
