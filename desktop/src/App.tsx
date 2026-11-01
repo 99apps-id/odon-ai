@@ -1688,23 +1688,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                 );
               })}
 
-              {/* Offline fallback button */}
-              <div className="pt-2 mt-2 border-t border-neutral-100">
-                <button
-                  onClick={() => handleSelectModel('odon-simulated')}
-                  className={`w-full text-left p-2 rounded-xl transition-all cursor-pointer flex items-center justify-between text-xs ${
-                    selectedModel === 'odon-simulated'
-                      ? 'bg-neutral-100 font-semibold text-neutral-900'
-                      : 'hover:bg-neutral-50 text-neutral-500'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] px-1.5 py-0.5 bg-neutral-200 rounded text-neutral-600 font-mono">Real</span>
-                    <span>Live AI Response</span>
-                  </div>
-                  {selectedModel === activeModel && <Check className="w-3.5 h-3.5 text-neutral-700" />}
-                </button>
-              </div>
+
             </div>
           </div>
         </div>
