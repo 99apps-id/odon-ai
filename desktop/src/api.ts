@@ -52,6 +52,12 @@ export const api = {
     return res.json();
   },
 
+  async getTools(): Promise<any[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/tools`);
+    if (!res.ok) throw new Error(`Failed to list tools: ${res.statusText}`);
+    return res.json();
+  },
+
   async listSessions(): Promise<Session[]> {
     const res = await fetch(`${this.getBaseUrl()}/api/sessions`);
     if (!res.ok) throw new Error(`Failed to list sessions: ${res.statusText}`);

@@ -1174,9 +1174,11 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                          msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-neutral-900 text-white'
+                          msg.role === 'user'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white border border-neutral-200 text-neutral-900 shadow-2xs'
                         }`}>
-                          {msg.role === 'user' ? 'U' : <CatLogo className="w-3.5 h-3.5 text-white" />}
+                          {msg.role === 'user' ? 'U' : <CatLogo className="w-3.5 h-3.5 text-neutral-900" />}
                         </div>
                         <span className="text-xs font-semibold text-neutral-900">
                           {msg.role === 'user' ? 'You' : 'ODON'}
@@ -1393,8 +1395,8 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                 {isGenerating && (
                   <div className="flex flex-col space-y-2">
                     <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-full bg-neutral-900 text-white flex items-center justify-center">
-                        <CatLogo className="w-3.5 h-3.5 text-white" />
+                      <div className="w-5 h-5 rounded-full bg-white border border-neutral-200 text-neutral-900 shadow-2xs flex items-center justify-center">
+                        <CatLogo className="w-3.5 h-3.5 text-neutral-900" />
                       </div>
                       <span className="text-xs font-semibold text-neutral-900">ODON</span>
                       <span className="text-[10px] text-neutral-400 flex items-center gap-1">
