@@ -130,8 +130,14 @@ impl ModelProvider for OpenAiCompatibleProvider {
             }
         }
 
+        let effective_model = if self.provider_label == "github-copilot" {
+            request.model.strip_prefix("copilot-").unwrap_or(&request.model)
+        } else {
+            &request.model
+        };
+
         let mut body = json!({
-            "model": request.model,
+            "model": effective_model,
             "messages": messages_payload,
             "stream": true,
         });

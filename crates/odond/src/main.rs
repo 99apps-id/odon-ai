@@ -31,7 +31,12 @@ use odon_channel::{ChannelAdapter, TelegramRelay};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
 use odon_core::AgentEvent;
-use odon_provider::{OpenAiCompatibleProvider, SimulatedProvider};
+use odon_provider::{
+    anthropic::AnthropicProvider,
+    host_creds::{discover_antigravity, discover_github_copilot},
+    AntigravityProvider, OpenAiCompatibleProvider, SimulatedProvider,
+};
+use odon_storage::ProviderConfigRecord;
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, ExecutionMode, SecurityPolicy};
 use odon_storage::StorageEngine;
 use odon_tools::ToolRegistry;
@@ -150,19 +155,13 @@ async fn main() -> anyhow::Result<()> {
                 workspace.clone(),
             ));
 
-            // 6. Register Providers
-            let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".to_string());
-            let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            // 6. OAuth and Provider State
+            let oauth_accounts = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
-            if !api_key.is_empty() || std::env::var("OPENAI_BASE_URL").is_ok() {
-                let openai_prov = Arc::new(OpenAiCompatibleProvider::new(base_url, api_key, Some("openai-compatible")));
-                runtime.register_provider("default", openai_prov, true).await;
-            } else {
-                let sim_provider = Arc::new(SimulatedProvider::default());
-                runtime.register_provider("default", sim_provider, true).await;
-            }
+            // 7. Initialize Real Providers (Host Discovery, BYOK DB, Env Vars)
+            init_providers(&runtime, &storage, &oauth_accounts).await;
 
-            // 7. Telegram Relay
+            // 8. Telegram Relay
             let tg_token = telegram_token.or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
             if let Some(token) = tg_token {
                 println!("Connecting Telegram Bot Relay...");
@@ -181,8 +180,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
 
-            // 8. Build Axum App Router
-            let oauth_accounts = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+            // 9. Build Axum App Router
             let state = AppState {
                 runtime,
                 storage,
@@ -211,6 +209,8 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/approvals/{id}", post(resolve_approval))
                 .route("/api/settings", get(get_settings).post(update_settings))
                 .route("/api/models", get(get_models))
+                .route("/api/providers/config", get(get_provider_configs).post(save_provider_config))
+                .route("/api/providers/config/{provider_id}", axum::routing::delete(delete_provider_config))
                 .route("/api/oauth/accounts", get(get_oauth_accounts))
                 .route("/api/oauth/login", post(login_oauth))
                 .route("/api/oauth/disconnect", post(disconnect_oauth))
@@ -583,6 +583,208 @@ struct OAuthLoginRequest {
 #[derive(Deserialize)]
 struct OAuthDisconnectRequest {
     provider: String,
+}
+
+fn default_base_url_for(provider: &str) -> String {
+    match provider {
+        "openai" => "https://api.openai.com/v1".to_string(),
+        "google" => "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+        "deepseek" => "https://api.deepseek.com/v1".to_string(),
+        "anthropic" => "https://api.anthropic.com/v1".to_string(),
+        "qwen" => "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string(),
+        "alibaba" => "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string(),
+        "stepfun" => "https://api.stepfun.com/v1".to_string(),
+        "mistral" => "https://api.mistral.ai/v1".to_string(),
+        "openrouter" => "https://openrouter.ai/api/v1".to_string(),
+        "groq" => "https://api.groq.com/openai/v1".to_string(),
+        "ollama" => "http://localhost:11434/v1".to_string(),
+        _ => "http://localhost:11434/v1".to_string(),
+    }
+}
+
+async fn init_providers(
+    runtime: &Arc<AgentRuntime>,
+    storage: &Arc<StorageEngine>,
+    oauth_accounts: &Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
+) {
+    info!("Initializing AI Model Providers (Strict Real Providers Mode - No Mock Fallback)...");
+
+    let mut has_default = false;
+
+    // A. Auto-discover GitHub Copilot from host credentials
+    if let Some(token) = discover_github_copilot().await {
+        info!("✔ GitHub Copilot host authentication discovered and verified");
+        let prov = Arc::new(OpenAiCompatibleProvider::new(
+            "https://api.githubcopilot.com".to_string(),
+            token.access_token.clone(),
+            Some("github-copilot"),
+        ));
+        runtime.register_provider("github-copilot", prov.clone(), true).await;
+        runtime.register_provider("default", prov, true).await;
+        has_default = true;
+
+        oauth_accounts.write().await.insert(
+            "github-copilot".to_string(),
+            json!({
+                "provider": "github-copilot",
+                "email": "GitHub Copilot Host",
+                "plan": "GitHub Copilot Active",
+                "account_id": null,
+                "connected": true,
+                "usable": true,
+            }),
+        );
+    }
+
+    // B. Auto-discover Google Antigravity from host credentials
+    if let Some(token) = discover_antigravity().await {
+        info!("✔ Google Antigravity host authentication discovered and refreshed");
+        let prov = Arc::new(AntigravityProvider::new(
+            token.access_token.clone(),
+            None,
+            None,
+        ));
+        runtime.register_provider("antigravity", prov.clone(), !has_default).await;
+        if !has_default {
+            runtime.register_provider("default", prov, true).await;
+            has_default = true;
+        }
+
+        oauth_accounts.write().await.insert(
+            "antigravity".to_string(),
+            json!({
+                "provider": "antigravity",
+                "email": token.email.unwrap_or_else(|| "Google Cloud Code".to_string()),
+                "plan": "Antigravity",
+                "account_id": token.account_id,
+                "connected": true,
+                "usable": true,
+            }),
+        );
+    }
+
+    // C. Load saved BYOK configs from SQLite database
+    if let Ok(configs) = storage.list_provider_configs() {
+        for c in configs {
+            let pid = c.provider_id.to_lowercase();
+            let base_url = c.base_url.unwrap_or_else(|| default_base_url_for(&pid));
+            info!("Loading saved BYOK provider: {} (url: {})", pid, base_url);
+
+            let prov: Arc<dyn odon_provider::ModelProvider> = if pid == "anthropic" {
+                Arc::new(AnthropicProvider::with_base_url(&c.api_key, &base_url))
+            } else {
+                Arc::new(OpenAiCompatibleProvider::new(&base_url, &c.api_key, Some(&pid)))
+            };
+
+            let is_def = c.is_default || !has_default;
+            runtime.register_provider(&pid, prov.clone(), is_def).await;
+            if is_def {
+                runtime.register_provider("default", prov, true).await;
+                has_default = true;
+            }
+        }
+    }
+
+    // D. Environment variables fallback
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.trim().is_empty() {
+            let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+            let prov = Arc::new(OpenAiCompatibleProvider::new(base_url, key, Some("openai")));
+            runtime.register_provider("openai", prov.clone(), !has_default).await;
+            if !has_default {
+                runtime.register_provider("default", prov, true).await;
+                has_default = true;
+            }
+        }
+    }
+
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        if !key.trim().is_empty() {
+            let prov = Arc::new(AnthropicProvider::new(key));
+            runtime.register_provider("anthropic", prov.clone(), !has_default).await;
+            if !has_default {
+                runtime.register_provider("default", prov, true).await;
+                has_default = true;
+            }
+        }
+    }
+
+    if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
+        if !key.trim().is_empty() {
+            let prov = Arc::new(OpenAiCompatibleProvider::new_deepseek(key));
+            runtime.register_provider("deepseek", prov.clone(), !has_default).await;
+            if !has_default {
+                runtime.register_provider("default", prov, true).await;
+                has_default = true;
+            }
+        }
+    }
+
+    // Only register simulated under its explicit key for offline testing, NEVER as default
+    runtime.register_provider("odon-simulated", Arc::new(SimulatedProvider::default()), false).await;
+}
+
+#[derive(Deserialize)]
+struct SaveProviderConfigRequest {
+    provider_id: String,
+    api_key: String,
+    base_url: Option<String>,
+    is_default: Option<bool>,
+}
+
+async fn get_provider_configs(State(state): State<AppState>) -> impl IntoResponse {
+    let configs = state.storage.list_provider_configs().unwrap_or_default();
+    let mut result = Vec::new();
+    for c in configs {
+        let masked = if c.api_key.len() > 8 {
+            format!("{}...{}", &c.api_key[..4], &c.api_key[c.api_key.len() - 4..])
+        } else {
+            "********".to_string()
+        };
+        result.push(json!({
+            "provider_id": c.provider_id,
+            "configured": true,
+            "masked_key": masked,
+            "base_url": c.base_url,
+            "is_default": c.is_default,
+            "updated_at": c.updated_at,
+        }));
+    }
+    Json(result)
+}
+
+async fn save_provider_config(
+    State(state): State<AppState>,
+    Json(req): Json<SaveProviderConfigRequest>,
+) -> impl IntoResponse {
+    let pid = req.provider_id.to_lowercase();
+    let is_def = req.is_default.unwrap_or(false);
+    let base_url = req.base_url.clone().unwrap_or_else(|| default_base_url_for(&pid));
+
+    if let Err(e) = state.storage.save_provider_config(&pid, &req.api_key, Some(&base_url), is_def) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
+    }
+
+    let prov: Arc<dyn odon_provider::ModelProvider> = if pid == "anthropic" {
+        Arc::new(AnthropicProvider::with_base_url(&req.api_key, &base_url))
+    } else {
+        Arc::new(OpenAiCompatibleProvider::new(&base_url, &req.api_key, Some(&pid)))
+    };
+
+    state.runtime.register_provider(&pid, prov.clone(), is_def).await;
+    if is_def {
+        state.runtime.register_provider("default", prov, true).await;
+    }
+
+    (StatusCode::OK, Json(json!({ "status": "saved", "provider": pid, "is_default": is_def })))
+}
+
+async fn delete_provider_config(
+    Path(provider_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let _ = state.storage.delete_provider_config(&provider_id);
+    StatusCode::OK
 }
 
 async fn get_oauth_accounts(State(state): State<AppState>) -> impl IntoResponse {
