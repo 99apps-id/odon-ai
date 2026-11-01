@@ -9,6 +9,7 @@ description = "Structured tool execution engine, GitHub connectors, MCP client, 
 [dependencies]
 odon-core = { workspace = true }
 odon-security = { workspace = true }
+odon-storage = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
