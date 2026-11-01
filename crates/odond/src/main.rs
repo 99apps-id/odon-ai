@@ -5,12 +5,12 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Json,
     },
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use clap::{Parser, Subcommand};
 use futures_util::stream::Stream;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -231,7 +231,7 @@ async fn create_session(
     let mode = match req.mode.as_deref() {
         Some("code") => SessionMode::Code,
         Some("create") => SessionMode::Create,
-        Some("doc") => SessionMode::Document,
+        Some("doc") => SessionMode::Documents,
         _ => SessionMode::General,
     };
     let title = req.title.unwrap_or_else(|| "New Conversation".to_string());
