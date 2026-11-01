@@ -71,54 +71,8 @@ impl Tool for ArtifactExportTool {
     }
 }
 
-// 2. Memory Operations
-pub struct MemoryForgetTool;
-#[async_trait]
-impl Tool for MemoryForgetTool {
-    fn name(&self) -> &str { "memory_forget" }
-    fn description(&self) -> &str { "Delete a key or note from persistent memory" }
-    fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "key": { "type": "string", "description": "Memory key to delete" }
-            },
-            "required": ["key"]
-        })
-    }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let key = args.get("key").and_then(|k| k.as_str()).unwrap_or("");
-        Ok(json!({ "key": key, "forgotten": true }))
-    }
-}
-
-pub struct MemorySearchTool;
-#[async_trait]
-impl Tool for MemorySearchTool {
-    fn name(&self) -> &str { "memory_search" }
-    fn description(&self) -> &str { "Search through all persistent memories by keyword or concept" }
-    fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search keyword" }
-            },
-            "required": ["query"]
-        })
-    }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
-        Ok(json!({
-            "query": q,
-            "matches": [
-                { "key": "project_tech_stack", "value": "Rust 2021 + React 19 + TypeScript + Axum", "score": 0.95 },
-                { "key": "port_configuration", "value": "Daemon on 127.0.0.1:4096", "score": 0.88 }
-            ]
-        }))
-    }
-}
+// 2. Memory Operations (Re-exported from crate::memory)
+pub use crate::memory::{MemoryForgetTool, MemorySearchTool};
 
 // 3. Approval Engine Operations
 pub struct ApprovalListTool;

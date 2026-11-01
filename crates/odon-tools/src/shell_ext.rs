@@ -9,6 +9,54 @@ use tokio::process::Command;
 
 use crate::registry::{Tool, ToolContext};
 
+pub struct ProcessListTool;
+#[async_trait]
+impl Tool for ProcessListTool {
+    fn name(&self) -> &str { "process_list" }
+    fn description(&self) -> &str { "List running processes with PID, name, and resource metrics" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "filter": { "type": "string", "description": "Optional process name filter" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let filter = args.get("filter").and_then(|f| f.as_str()).unwrap_or("");
+
+        #[cfg(target_os = "windows")]
+        {
+            let script = if filter.is_empty() {
+                "Get-Process | Select-Object -First 30 Id, ProcessName, WS | ConvertTo-Json".to_string()
+            } else {
+                format!("Get-Process | Where-Object {{ $_.ProcessName -like '*{}*' }} | Select-Object -First 30 Id, ProcessName, WS | ConvertTo-Json", filter)
+            };
+            let output = Command::new("powershell.exe")
+                .args(["-NoProfile", "-Command", &script])
+                .current_dir(&ctx.workspace_root)
+                .output()
+                .await
+                .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|_| json!([]));
+            Ok(json!({ "processes": parsed }))
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut cmd = Command::new("ps");
+            cmd.args(["-eo", "pid,comm,%mem,%cpu"]);
+            cmd.current_dir(&ctx.workspace_root);
+            let output = cmd.output().await.map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let lines: Vec<&str> = stdout.lines().take(30).collect();
+            Ok(json!({ "processes": lines }))
+        }
+    }
+}
+
 pub struct ProcessKillTool;
 #[async_trait]
 impl Tool for ProcessKillTool {

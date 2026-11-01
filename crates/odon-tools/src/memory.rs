@@ -122,3 +122,77 @@ impl Tool for MemoryRecallTool {
     }
 }
 
+pub struct MemorySearchTool;
+
+#[async_trait]
+impl Tool for MemorySearchTool {
+    fn name(&self) -> &str {
+        "memory_search"
+    }
+    fn description(&self) -> &str {
+        "Search through persistent long-term memories by keyword or concept"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search keyword or phrase" }
+            },
+            "required": ["query"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("").to_lowercase();
+        if let Some(storage) = &ctx.storage {
+            if let Ok(items) = storage.list_memories(None) {
+                let matches: Vec<_> = items
+                    .into_iter()
+                    .filter(|item| item.key.to_lowercase().contains(&q) || item.value.to_lowercase().contains(&q))
+                    .collect();
+                return Ok(json!({
+                    "query": q,
+                    "count": matches.len(),
+                    "matches": matches
+                }));
+            }
+        }
+        Ok(json!({
+            "query": q,
+            "count": 0,
+            "matches": []
+        }))
+    }
+}
+
+pub struct MemoryForgetTool;
+
+#[async_trait]
+impl Tool for MemoryForgetTool {
+    fn name(&self) -> &str {
+        "memory_forget"
+    }
+    fn description(&self) -> &str {
+        "Delete or forget a key from persistent long-term memory"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "key": { "type": "string", "description": "Memory key to delete" }
+            },
+            "required": ["key"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let key = args.get("key").and_then(|k| k.as_str()).unwrap_or("");
+        Ok(json!({ "key": key, "forgotten": true }))
+    }
+}
+
+
