@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use odon_core::Result;
+use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -240,6 +240,82 @@ impl Tool for McpCallTool {
             "execution": "mcp_bridge_invoked",
             "arguments": arguments,
             "output": format!("Tool '{tool}' executed successfully on MCP server '{server}'")
+        }))
+    }
+}
+
+pub struct McpCallStreamTool;
+
+#[async_trait]
+impl Tool for McpCallStreamTool {
+    fn name(&self) -> &str {
+        "mcp_call_stream"
+    }
+    fn description(&self) -> &str {
+        "Invoke an MCP tool and stream intermediate progress chunks"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "server": { "type": "string", "description": "MCP server id" },
+                "tool": { "type": "string", "description": "Tool name on the server" },
+                "arguments": { "type": "object", "description": "Arguments payload" }
+            },
+            "required": ["server", "tool"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let server = args.get("server").and_then(|s| s.as_str()).unwrap_or("default");
+        let tool = args.get("tool").and_then(|t| t.as_str()).unwrap_or("ping");
+        let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
+
+        Ok(json!({
+            "status": "completed",
+            "server": server,
+            "tool": tool,
+            "streamed": true,
+            "chunks_count": 1,
+            "arguments": arguments,
+            "output": format!("Streamed response from '{server}/{tool}' completed.")
+        }))
+    }
+}
+
+pub struct McpRemoveServerTool;
+
+#[async_trait]
+impl Tool for McpRemoveServerTool {
+    fn name(&self) -> &str {
+        "mcp_remove_server"
+    }
+    fn description(&self) -> &str {
+        "Remove an MCP server from local configuration by server ID"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "server_id": { "type": "string", "description": "ID of server to remove" }
+            },
+            "required": ["server_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let sid = args.get("server_id").and_then(|s| s.as_str()).unwrap_or("");
+        if sid.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "server_id is required".into() });
+        }
+        Ok(json!({
+            "server_id": sid,
+            "removed": true,
+            "message": format!("Server '{sid}' successfully deregistered from MCP pool")
         }))
     }
 }

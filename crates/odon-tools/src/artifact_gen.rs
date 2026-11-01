@@ -375,12 +375,154 @@ impl Tool for ArtifactUpdateTool {
         if let Some(storage) = &ctx.storage {
             if let Ok(mut art) = storage.get_artifact(artifact_id) {
                 art.summary = format!("Updated: {}", content.chars().take(60).collect::<String>());
+                match &mut art.payload {
+                    odon_core::ArtifactPayload::Document { markdown, size_bytes, .. } => {
+                        *markdown = content.to_string();
+                        *size_bytes = content.len();
+                    }
+                    odon_core::ArtifactPayload::Code { files, .. } => {
+                        if let Some(first) = files.first_mut() {
+                            first.content = content.to_string();
+                        }
+                    }
+                    odon_core::ArtifactPayload::Patch { diff, .. } => {
+                        *diff = content.to_string();
+                    }
+                    _ => {}
+                }
                 let _ = storage.save_artifact(&art);
-                return Ok(json!({ "updated": true, "artifact_id": artifact_id }));
+                return Ok(json!({ "updated": true, "artifact_id": artifact_id, "size_bytes": content.len() }));
             }
         }
 
         Ok(json!({ "updated": false, "artifact_id": artifact_id }))
+    }
+}
+
+pub struct ArtifactImportTool;
+
+#[async_trait]
+impl Tool for ArtifactImportTool {
+    fn name(&self) -> &str {
+        "artifact_import"
+    }
+    fn description(&self) -> &str {
+        "Import an existing file from workspace/disk into persistent artifacts storage"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Workspace-relative or absolute path of file to import" },
+                "title": { "type": "string", "description": "Optional custom artifact title" },
+                "summary": { "type": "string", "description": "Optional brief summary" }
+            },
+            "required": ["path"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let path_str = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        if path_str.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "Path is required".into() });
+        }
+
+        let p = std::path::Path::new(path_str);
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::path::Path::new(&ctx.workspace_root).join(p)
+        };
+
+        if !abs.exists() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("File not found: {}", abs.display()),
+            });
+        }
+
+        let bytes = std::fs::read(&abs).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to read file: {e}"),
+        })?;
+
+        let file_name = abs.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let ext = abs.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let title = args
+            .get("title")
+            .and_then(|t| t.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| file_name.clone());
+        let summary = args
+            .get("summary")
+            .and_then(|s| s.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("Imported from {}", path_str));
+
+        let artifact = match ext.as_str() {
+            "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "html" | "css" | "json" | "sh" | "yaml" | "yml" | "toml" => {
+                let code_text = String::from_utf8_lossy(&bytes).to_string();
+                let lang = match ext.as_str() {
+                    "rs" => "rust",
+                    "ts" | "tsx" => "typescript",
+                    "js" | "jsx" => "javascript",
+                    "py" => "python",
+                    "go" => "go",
+                    "html" => "html",
+                    "css" => "css",
+                    "json" => "json",
+                    "sh" => "bash",
+                    _ => "plaintext",
+                };
+                Artifact::new_code(
+                    &ctx.session_id,
+                    &title,
+                    &summary,
+                    lang,
+                    None,
+                    vec![odon_core::ArtifactFile {
+                        path: file_name.clone(),
+                        content: code_text,
+                    }],
+                )
+            }
+            "png" | "jpg" | "jpeg" | "webp" | "gif" => {
+                Artifact::new_image(
+                    &ctx.session_id,
+                    &title,
+                    &summary,
+                    1024,
+                    1024,
+                    "imported",
+                    Some(abs.to_string_lossy().to_string()),
+                    Some(format!("/api/files/{}", path_str.replace('\\', "/"))),
+                    bytes.len(),
+                )
+            }
+            _ => {
+                let doc_text = String::from_utf8_lossy(&bytes).to_string();
+                let doc_type = if ext == "md" { "markdown" } else { "text" };
+                Artifact::new_document(&ctx.session_id, &title, doc_type, &doc_text)
+            }
+        };
+
+        if let Some(storage) = &ctx.storage {
+            storage.save_artifact(&artifact).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to save artifact to storage: {e}"),
+            })?;
+        }
+
+        Ok(json!({
+            "imported": true,
+            "artifact_id": artifact.id,
+            "title": artifact.title,
+            "kind": artifact.kind,
+            "size_bytes": bytes.len(),
+            "path": path_str
+        }))
     }
 }
 

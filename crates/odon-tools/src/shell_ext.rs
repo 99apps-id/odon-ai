@@ -29,9 +29,10 @@ impl Tool for ProcessListTool {
         #[cfg(target_os = "windows")]
         {
             let script = if filter.is_empty() {
-                "Get-Process | Select-Object -First 30 Id, ProcessName, WS | ConvertTo-Json".to_string()
+                "Get-Process | Sort-Object WS -Descending | Select-Object -First 30 Id, ProcessName, @{Name='MemoryMB';Expression={[math]::Round($_.WS / 1MB, 1)}} | ConvertTo-Json -Compress".to_string()
             } else {
-                format!("Get-Process | Where-Object {{ $_.ProcessName -like '*{}*' }} | Select-Object -First 30 Id, ProcessName, WS | ConvertTo-Json", filter)
+                let escaped = filter.replace('\'', "''");
+                format!("Get-Process | Where-Object {{ $_.ProcessName -like '*{}*' }} | Sort-Object WS -Descending | Select-Object -First 30 Id, ProcessName, @{{Name='MemoryMB';Expression={{[math]::Round($_.WS / 1MB, 1)}}}} | ConvertTo-Json -Compress", escaped)
             };
             let output = Command::new("powershell.exe")
                 .args(["-NoProfile", "-Command", &script])
@@ -39,20 +40,28 @@ impl Tool for ProcessListTool {
                 .output()
                 .await
                 .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|_| json!([]));
-            Ok(json!({ "processes": parsed }))
+            let processes = if parsed.is_array() {
+                parsed
+            } else if parsed.is_object() {
+                json!([parsed])
+            } else {
+                json!([])
+            };
+            let count = processes.as_array().map(|a| a.len()).unwrap_or(0);
+            Ok(json!({ "count": count, "processes": processes }))
         }
 
         #[cfg(not(target_os = "windows"))]
         {
             let mut cmd = Command::new("ps");
-            cmd.args(["-eo", "pid,comm,%mem,%cpu"]);
+            cmd.args(["-eo", "pid,comm,%mem,%cpu", "--sort=-%mem"]);
             cmd.current_dir(&ctx.workspace_root);
             let output = cmd.output().await.map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let lines: Vec<&str> = stdout.lines().take(30).collect();
-            Ok(json!({ "processes": lines }))
+            let lines: Vec<&str> = stdout.lines().take(31).collect();
+            Ok(json!({ "count": lines.len().saturating_sub(1), "processes": lines }))
         }
     }
 }

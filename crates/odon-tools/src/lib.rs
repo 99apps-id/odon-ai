@@ -136,6 +136,8 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     // 6. MCP Integration
     reg.register(Box::new(mcp::McpListToolsTool));
     reg.register(Box::new(mcp::McpCallTool));
+    reg.register(Box::new(mcp::McpCallStreamTool));
+    reg.register(Box::new(mcp::McpRemoveServerTool));
     reg.register(Box::new(ops_ext::McpAddServerTool));
     reg.register(Box::new(ops_ext::McpListServersTool));
 
@@ -176,7 +178,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(system::CalcEvalTool));
     reg.register(Box::new(system::EnvGetTool));
     reg.register(Box::new(system::EnvListTool));
-    reg.register(Box::new(system::ProcessListTool));
+    reg.register(Box::new(shell_ext::ProcessListTool));
     reg.register(Box::new(system::DiskUsageTool));
 
     // 9. Memory & Long-term Context
@@ -190,6 +192,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(artifact_gen::ArtifactCreateDocumentTool));
     reg.register(Box::new(artifact_gen::ArtifactCreateImageTool));
     reg.register(Box::new(artifact_gen::ArtifactUpdateTool));
+    reg.register(Box::new(artifact_gen::ArtifactImportTool));
     reg.register(Box::new(ops_ext::ArtifactDeleteTool));
     reg.register(Box::new(ops_ext::ArtifactExportTool));
 
@@ -197,6 +200,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(ops_ext::ApprovalListTool));
     reg.register(Box::new(ops_ext::ApprovalDecideTool));
     reg.register(Box::new(ops_ext::SessionListTool));
+    reg.register(Box::new(ops_ext::SessionSwitchTool));
     reg.register(Box::new(ops_ext::SessionExportTool));
     reg.register(Box::new(ops_ext::RelayStatusTool));
     reg.register(Box::new(ops_ext::AutomationListTool));

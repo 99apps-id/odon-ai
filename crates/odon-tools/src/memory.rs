@@ -130,13 +130,14 @@ impl Tool for MemorySearchTool {
         "memory_search"
     }
     fn description(&self) -> &str {
-        "Search through persistent long-term memories by keyword or concept"
+        "Search through persistent long-term memories by keyword or concept with relevance scoring"
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string", "description": "Search keyword or phrase" }
+                "query": { "type": "string", "description": "Search keyword or phrase" },
+                "category": { "type": "string", "description": "Optional category filter" }
             },
             "required": ["query"]
         })
@@ -146,24 +147,62 @@ impl Tool for MemorySearchTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("").to_lowercase();
+        let cat = args.get("category").and_then(|c| c.as_str());
+
         if let Some(storage) = &ctx.storage {
-            if let Ok(items) = storage.list_memories(None) {
-                let matches: Vec<_> = items
-                    .into_iter()
-                    .filter(|item| item.key.to_lowercase().contains(&q) || item.value.to_lowercase().contains(&q))
-                    .collect();
-                return Ok(json!({
-                    "query": q,
-                    "count": matches.len(),
-                    "matches": matches
-                }));
+            let items = storage.list_memories(cat).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to read memories: {e}"),
+            })?;
+
+            let mut scored_matches: Vec<(u32, odon_storage::MemoryItem)> = Vec::new();
+            for item in items {
+                let key_lower = item.key.to_lowercase();
+                let val_lower = item.value.to_lowercase();
+                let mut score = 0u32;
+
+                if key_lower == q {
+                    score += 100;
+                } else if key_lower.contains(&q) {
+                    score += 50;
+                }
+
+                if val_lower.contains(&q) {
+                    score += 25;
+                }
+
+                if score > 0 {
+                    scored_matches.push((score, item));
+                }
             }
+
+            scored_matches.sort_by(|a, b| b.0.cmp(&a.0));
+
+            let results: Vec<Value> = scored_matches
+                .into_iter()
+                .map(|(score, item)| {
+                    json!({
+                        "key": item.key,
+                        "value": item.value,
+                        "category": item.category,
+                        "score": score,
+                        "updated_at": item.updated_at.to_rfc3339()
+                    })
+                })
+                .collect();
+
+            return Ok(json!({
+                "query": q,
+                "category": cat,
+                "count": results.len(),
+                "matches": results
+            }));
         }
-        Ok(json!({
-            "query": q,
-            "count": 0,
-            "matches": []
-        }))
+
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "Storage engine unavailable in tool context".to_string(),
+        })
     }
 }
 

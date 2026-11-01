@@ -23,8 +23,12 @@ impl Tool for ArtifactDeleteTool {
         })
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if let Some(storage) = &ctx.storage {
+            let deleted = storage.delete_artifact(id).unwrap_or(false);
+            return Ok(json!({ "id": id, "deleted": deleted }));
+        }
         Ok(json!({ "id": id, "deleted": true }))
     }
 }
@@ -71,10 +75,7 @@ impl Tool for ArtifactExportTool {
     }
 }
 
-// 2. Memory Operations (Re-exported from crate::memory)
-pub use crate::memory::{MemoryForgetTool, MemorySearchTool};
-
-// 3. Approval Engine Operations
+// 2. Approval Engine Operations
 pub struct ApprovalListTool;
 #[async_trait]
 impl Tool for ApprovalListTool {
@@ -166,6 +167,45 @@ impl Tool for SessionExportTool {
             }
         }
         Ok(json!({ "session_id": s_id, "exported": true }))
+    }
+}
+
+pub struct SessionSwitchTool;
+#[async_trait]
+impl Tool for SessionSwitchTool {
+    fn name(&self) -> &str { "session_switch" }
+    fn description(&self) -> &str { "Switch context to a different existing conversation session by ID" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Session ID to switch to" }
+            },
+            "required": ["session_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let s_id = args.get("session_id").and_then(|s| s.as_str()).unwrap_or("");
+        if s_id.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "session_id is required".into() });
+        }
+
+        if let Some(storage) = &ctx.storage {
+            let session = storage.get_session(s_id).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Session not found: {e}"),
+            })?;
+            return Ok(json!({
+                "switched": true,
+                "session_id": s_id,
+                "title": session.title,
+                "mode": session.mode,
+                "status": session.status,
+                "created_at": session.created_at
+            }));
+        }
+        Ok(json!({ "switched": true, "session_id": s_id }))
     }
 }
 

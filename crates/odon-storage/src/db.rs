@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use odon_core::{Artifact, ArtifactKind, Message, MessageContent, MessageRole, Session, SessionMode, SessionStatus};
+use odon_core::{
+    Artifact, ArtifactKind, Message, MessageContent, MessageRole, Session, SessionMode,
+    SessionStatus,
+};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -248,7 +251,8 @@ impl StorageEngine {
             let updated_at_str: String = row.get(7)?;
 
             let mode: SessionMode = serde_json::from_str(&mode_str).unwrap_or(SessionMode::General);
-            let status: SessionStatus = serde_json::from_str(&status_str).unwrap_or(SessionStatus::Active);
+            let status: SessionStatus =
+                serde_json::from_str(&status_str).unwrap_or(SessionStatus::Active);
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -326,13 +330,14 @@ impl StorageEngine {
                 "tool" => MessageRole::Tool,
                 _ => MessageRole::User,
             };
-            let content: MessageContent = serde_json::from_str(&content_json).unwrap_or(MessageContent {
-                text: String::new(),
-                thought: None,
-                tool_calls: Vec::new(),
-                artifact_ids: Vec::new(),
-                action_chips: Vec::new(),
-            });
+            let content: MessageContent =
+                serde_json::from_str(&content_json).unwrap_or(MessageContent {
+                    text: String::new(),
+                    thought: None,
+                    tool_calls: Vec::new(),
+                    artifact_ids: Vec::new(),
+                    action_chips: Vec::new(),
+                });
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -396,9 +401,14 @@ impl StorageEngine {
             let payload_json: String = row.get(5)?;
             let created_at_str: String = row.get(6)?;
 
-            let kind: ArtifactKind = serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
+            let kind: ArtifactKind =
+                serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
             let payload = serde_json::from_str(&payload_json).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
             })?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
@@ -438,9 +448,14 @@ impl StorageEngine {
             let payload_json: String = row.get(5)?;
             let created_at_str: String = row.get(6)?;
 
-            let kind: ArtifactKind = serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
+            let kind: ArtifactKind =
+                serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
             let payload = serde_json::from_str(&payload_json).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
             })?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
@@ -458,6 +473,12 @@ impl StorageEngine {
         } else {
             Err(StorageError::NotFound(format!("Artifact {}", id)))
         }
+    }
+
+    pub fn delete_artifact(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id])?;
+        Ok(count > 0)
     }
 
     pub fn delete_session(&self, id: &str) -> Result<bool> {
@@ -487,7 +508,8 @@ impl StorageEngine {
 
     pub fn get_memory(&self, key: &str) -> Result<Option<MemoryItem>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT key, value, category, updated_at FROM memories WHERE key = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT key, value, category, updated_at FROM memories WHERE key = ?1")?;
         let mut rows = stmt.query(params![key])?;
         if let Some(row) = rows.next()? {
             let updated_at_str: String = row.get(3)?;
@@ -529,7 +551,7 @@ impl StorageEngine {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT key, value, category, updated_at FROM memories ORDER BY updated_at DESC"
+                "SELECT key, value, category, updated_at FROM memories ORDER BY updated_at DESC",
             )?;
             let rows = stmt.query_map([], |row| {
                 let updated_at_str: String = row.get(3)?;
@@ -575,7 +597,13 @@ impl StorageEngine {
                 base_url = excluded.base_url,
                 is_default = excluded.is_default,
                 updated_at = excluded.updated_at",
-            params![provider_id, api_key, base_url, if is_default { 1 } else { 0 }, now],
+            params![
+                provider_id,
+                api_key,
+                base_url,
+                if is_default { 1 } else { 0 },
+                now
+            ],
         )?;
         Ok(())
     }
@@ -584,7 +612,7 @@ impl StorageEngine {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT provider_id, api_key, base_url, is_default, updated_at
-             FROM provider_configs WHERE provider_id = ?1"
+             FROM provider_configs WHERE provider_id = ?1",
         )?;
         let mut rows = stmt.query_map(params![provider_id], |row| {
             let def_int: i32 = row.get(3)?;
@@ -607,7 +635,7 @@ impl StorageEngine {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT provider_id, api_key, base_url, is_default, updated_at
-             FROM provider_configs ORDER BY provider_id ASC"
+             FROM provider_configs ORDER BY provider_id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             let def_int: i32 = row.get(3)?;
