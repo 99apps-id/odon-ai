@@ -334,6 +334,7 @@ impl AgentRuntime {
             });
 
             let mut executed_tools_info = Vec::new();
+            let mut tool_result_msgs: Vec<(String, String, String)> = Vec::new();
             let mut sorted_indices: Vec<_> = tool_accumulator.keys().cloned().collect();
             sorted_indices.sort_unstable();
 
@@ -407,17 +408,15 @@ impl AgentRuntime {
                         is_approved: Some(true),
                     });
 
-                    // Save tool result as a Tool role message in storage
-                    let tool_msg = Message::new_tool(
-                        session_id,
-                        call_id,
-                        output_val.to_string(),
-                    );
-                    let _ = self.storage.save_message(&tool_msg);
+                    // Tool results are persisted AFTER the assistant message that
+                    // declares the calls (below): providers reject a tool message
+                    // that does not follow the matching tool_calls message.
+                    tool_result_msgs.push((call_id, tool_call.name.clone(), output_val.to_string()));
                 }
             }
 
-            // Save intermediate assistant step with tool_calls in storage
+            // Persist the assistant step with its tool_calls FIRST so history order
+            // (assistant tool_calls, then tool results) is valid for every provider.
             let mut intermediate_assistant = Message::new_assistant(
                 session_id,
                 step_text,
@@ -426,6 +425,14 @@ impl AgentRuntime {
             );
             intermediate_assistant.content.tool_calls = executed_tools_info;
             let _ = self.storage.save_message(&intermediate_assistant);
+
+            for (call_id, tool_name, output) in tool_result_msgs {
+                let mut tool_msg = Message::new_tool(session_id, call_id, output);
+                if let Some(info) = tool_msg.content.tool_calls.first_mut() {
+                    info.tool_name = tool_name;
+                }
+                let _ = self.storage.save_message(&tool_msg);
+            }
 
             // Set state back to thinking for the next iteration
             let _ = self.event_tx.send(AgentEvent::StateChanged {

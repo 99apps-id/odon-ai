@@ -9,7 +9,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use odon_core::{OdonError, Result};
-use ring::constant_time::verify_slices_are_equal;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -963,14 +962,26 @@ fn parse_callback_target(
     }
     if let Some(expected) = expected_state {
         let actual = state.ok_or_else(|| auth_error("OAuth callback state was missing"))?;
-        verify_slices_are_equal(actual.as_bytes(), expected.as_bytes())
-            .map_err(|_| auth_error("OAuth callback state did not match"))?;
+        if !constant_time_eq(actual.as_bytes(), expected.as_bytes()) {
+            return Err(auth_error("OAuth callback state did not match"));
+        }
     }
     let code = code.ok_or_else(|| auth_error("OAuth callback had no authorization code"))?;
     if code.is_empty() {
         return Err(auth_error("OAuth callback authorization code was empty"));
     }
     Ok(code)
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 fn validate_device_verification_uri(provider: OAuthProvider, uri: &str) -> Result<()> {

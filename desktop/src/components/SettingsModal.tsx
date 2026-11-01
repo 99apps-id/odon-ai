@@ -29,6 +29,8 @@ interface SettingsModalProps {
   onClose: () => void;
   isDark: boolean;
   onToggleTheme: () => void;
+  activeProviderId?: string;
+  onSelectProvider?: (providerId: string) => void;
   currentModel?: string;
   onSelectModel?: (modelId: string) => void;
 }
@@ -64,12 +66,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   isDark,
   onToggleTheme,
+  activeProviderId,
+  onSelectProvider,
   currentModel,
   onSelectModel,
 }) => {
   const [activeTab, setActiveTab] = useState<'providers' | 'system'>('providers');
   const [providers, setProviders] = useState<ProviderItem[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState<string>('antigravity');
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
+    return activeProviderId || (typeof window !== 'undefined' ? localStorage.getItem('odon_active_provider') : null) || 'openai';
+  });
+
+  useEffect(() => {
+    if (activeProviderId) {
+      setSelectedProviderId(activeProviderId);
+    }
+  }, [activeProviderId]);
   const [daemonUrl, setDaemonUrl] = useState(api.getBaseUrl() || 'http://127.0.0.1:4096');
   const [daemonConnected, setDaemonConnected] = useState<boolean | null>(null);
 
@@ -545,6 +557,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           key={p.id}
                           onClick={() => {
                             setSelectedProviderId(p.id);
+                            onSelectProvider?.(p.id);
+                            if (typeof window !== 'undefined') {
+                              localStorage.setItem('odon_active_provider', p.id);
+                            }
                             setKeyError(null);
                           }}
                           className={`w-full text-left px-2.5 py-2 rounded-xl text-[12px] font-medium transition-all flex items-center justify-between ${
@@ -609,19 +625,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* Right: Selected Provider Details */}
             {currentProvider && (
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                <div>
-                  <div className="flex items-center gap-2.5 mb-1">
-                    <ProviderLogo providerId={currentProvider.id} size={22} />
-                    <h4 className="text-base font-bold text-neutral-900 dark:text-white">
-                      {currentProvider.name}
-                    </h4>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                      {currentProvider.auth_type === 'oauth' ? 'OAuth 2.0 Auth' : 'BYOK Gateway'}
-                    </span>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2.5 mb-1">
+                      <ProviderLogo providerId={currentProvider.id} size={22} />
+                      <h4 className="text-base font-bold text-neutral-900 dark:text-white">
+                        {currentProvider.name}
+                      </h4>
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                        {currentProvider.auth_type === 'oauth' ? 'OAuth 2.0 Auth' : 'BYOK Gateway'}
+                      </span>
+                      {(activeProviderId || selectedProviderId) === currentProvider.id && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                          <Check className="w-3 h-3" />
+                          Active on Front Page
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[12.5px] text-neutral-500 dark:text-neutral-400">
+                      {currentProvider.description}
+                    </p>
                   </div>
-                  <p className="text-[12.5px] text-neutral-500 dark:text-neutral-400">
-                    {currentProvider.description}
-                  </p>
+
+                  {(activeProviderId || selectedProviderId) !== currentProvider.id && (
+                    <button
+                      onClick={() => {
+                        setSelectedProviderId(currentProvider.id);
+                        onSelectProvider?.(currentProvider.id);
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('odon_active_provider', currentProvider.id);
+                        }
+                        const rec = currentProvider.models.find(m => m.recommended) || currentProvider.models[0];
+                        if (rec) {
+                          onSelectModel?.(rec.id);
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('odon_selected_model', rec.id);
+                          }
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition-colors shrink-0 cursor-pointer"
+                    >
+                      Set as Active Provider
+                    </button>
+                  )}
                 </div>
 
                 {/* Error Banner */}
@@ -843,11 +889,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="grid grid-cols-1 gap-2">
                     {currentProvider.models.map((m) => {
                       const wireId = `${currentProvider.id}::${m.id}`;
-                      const isSelected = currentModel === wireId;
+                      const isSelected = currentModel === m.id || currentModel === wireId || currentModel === m.name;
                       return (
                         <div
                           key={m.id}
-                          onClick={() => onSelectModel?.(wireId)}
+                          onClick={() => {
+                            setSelectedProviderId(currentProvider.id);
+                            onSelectProvider?.(currentProvider.id);
+                            if (typeof window !== 'undefined') {
+                              localStorage.setItem('odon_active_provider', currentProvider.id);
+                              localStorage.setItem('odon_selected_model', m.id);
+                            }
+                            onSelectModel?.(m.id);
+                          }}
                           className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                             isSelected
                               ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30'
@@ -881,7 +935,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onSelectModel?.(wireId);
+                                setSelectedProviderId(currentProvider.id);
+                                onSelectProvider?.(currentProvider.id);
+                                if (typeof window !== 'undefined') {
+                                  localStorage.setItem('odon_active_provider', currentProvider.id);
+                                  localStorage.setItem('odon_selected_model', m.id);
+                                }
+                                onSelectModel?.(m.id);
                               }}
                               className="px-2.5 py-1 rounded-lg text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
                             >

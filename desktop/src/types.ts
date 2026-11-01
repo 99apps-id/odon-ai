@@ -130,6 +130,91 @@ export interface ProviderItem {
   models: ModelItem[];
 }
 
+export const FALLBACK_PROVIDERS: ProviderItem[] = [
+  {
+    id: 'openai',
+    name: 'OpenAI (Official BYOK)',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Official OpenAI platform with GPT-4o, o3-mini, and GPT-4.5',
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o (Omnimodal Flagship)', context: 128000, recommended: true },
+      { id: 'o3-mini', name: 'o3-mini (Reasoning & Coding)', context: 200000, recommended: true },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Light)', context: 128000 },
+      { id: 'o1', name: 'o1 (Deep Reasoning)', context: 200000 },
+      { id: 'gpt-4.5-preview', name: 'GPT-4.5 Preview', context: 128000 },
+    ],
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic Claude',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Anthropic frontier reasoning and coding architecture',
+    models: [
+      { id: 'claude-3-7-sonnet', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', context: 200000, recommended: true },
+      { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet v2', context: 200000, recommended: true },
+      { id: 'claude-3-5-haiku', name: 'Claude 3.5 Haiku', context: 200000 },
+    ],
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'DeepSeek V3 and R1 reasoning models with transparent chain-of-thought',
+    models: [
+      { id: 'deepseek-chat', name: 'DeepSeek-V3 (Chat & Coding)', context: 64000, recommended: true },
+      { id: 'deepseek-reasoner', name: 'DeepSeek-R1 (Deep Reasoning)', context: 64000, recommended: true },
+    ],
+  },
+  {
+    id: 'google',
+    name: 'Google Gemini',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Google Gemini 2.0 and 1.5 Pro with large context window',
+    models: [
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1048576, recommended: true },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', context: 2097152 },
+    ],
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama (Local Offline)',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Run open-weights models 100% locally on localhost:11434',
+    models: [
+      { id: 'llama3.3:latest', name: 'Llama 3.3 70B Local', context: 32768, recommended: true },
+      { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder 32B Local', context: 32768, recommended: true },
+      { id: 'deepseek-r1:14b', name: 'DeepSeek R1 14B Local', context: 32768 },
+    ],
+  },
+  {
+    id: 'antigravity',
+    name: 'Google Antigravity',
+    category: 'oauth',
+    auth_type: 'oauth',
+    description: 'Antigravity developer ecosystem with hybrid reasoning',
+    models: [
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Antigravity)', context: 1048576, recommended: true },
+      { id: 'claude-3-7-sonnet', name: 'Claude 3.7 Sonnet (Antigravity)', context: 200000, recommended: true },
+    ],
+  },
+  {
+    id: 'chatgpt',
+    name: 'ChatGPT / OpenAI Codex',
+    category: 'oauth',
+    auth_type: 'oauth',
+    description: 'Direct ChatGPT and Codex account authorization',
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o (Codex)', context: 128000, recommended: true },
+      { id: 'o3-mini', name: 'o3-mini (Codex)', context: 200000 },
+    ],
+  },
+];
+
 export interface TerminalInfo {
   shell: string;
   os: string;

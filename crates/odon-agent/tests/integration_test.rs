@@ -331,3 +331,57 @@ async fn test_simulated_provider_turn() {
         println!("MSG: role={:?} id={}", m.role, m.id);
     }
 }
+
+#[tokio::test]
+async fn test_tool_history_orders_assistant_calls_before_tool_results() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = Arc::new(ApprovalEngine::new(SecurityPolicy::default()));
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _rx) = create_event_bus(64);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(odon_tools::build_full_tool_registry()),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    runtime
+        .register_provider("default", Arc::new(MockConversationalProvider), true)
+        .await;
+
+    let session = Session::new("Order", SessionMode::General, "odon-auto");
+    storage.save_session(&session).unwrap();
+    runtime
+        .execute_turn(&session.id, "please build it", None, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let msgs = storage.list_messages(&session.id).unwrap();
+    let first_calls = msgs
+        .iter()
+        .position(|m| m.role == odon_core::MessageRole::Assistant && !m.content.tool_calls.is_empty())
+        .expect("an assistant message declaring tool_calls must be stored");
+    let first_tool = msgs
+        .iter()
+        .position(|m| m.role == odon_core::MessageRole::Tool)
+        .expect("tool results must be stored");
+    assert!(
+        first_calls < first_tool,
+        "assistant tool_calls (#{first_calls}) must precede tool results (#{first_tool})"
+    );
+
+    // Every tool result must answer a call declared by the preceding assistant message.
+    let declared: Vec<&str> = msgs[first_calls]
+        .content
+        .tool_calls
+        .iter()
+        .map(|c| c.call_id.as_str())
+        .collect();
+    for tool_msg in msgs.iter().filter(|m| m.role == odon_core::MessageRole::Tool) {
+        let id = tool_msg.content.tool_calls[0].call_id.as_str();
+        assert!(declared.contains(&id), "tool result {id} has no declaring call");
+        assert!(!tool_msg.content.tool_calls[0].tool_name.is_empty());
+    }
+}

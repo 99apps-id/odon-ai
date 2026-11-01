@@ -31,7 +31,7 @@ use odon_channel::{ChannelAdapter, TelegramRelay};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
 use odon_core::AgentEvent;
-use odon_provider::OpenAiCompatibleProvider;
+use odon_provider::{OpenAiCompatibleProvider, SimulatedProvider};
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, ExecutionMode, SecurityPolicy};
 use odon_storage::StorageEngine;
 use odon_tools::ToolRegistry;
@@ -157,6 +157,9 @@ async fn main() -> anyhow::Result<()> {
             if !api_key.is_empty() || std::env::var("OPENAI_BASE_URL").is_ok() {
                 let openai_prov = Arc::new(OpenAiCompatibleProvider::new(base_url, api_key, Some("openai-compatible")));
                 runtime.register_provider("default", openai_prov, true).await;
+            } else {
+                let sim_provider = Arc::new(SimulatedProvider::default());
+                runtime.register_provider("default", sim_provider, true).await;
             }
 
             // 7. Telegram Relay

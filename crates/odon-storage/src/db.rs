@@ -302,7 +302,7 @@ impl StorageEngine {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, session_id, role, content_json, model, created_at
-             FROM messages WHERE session_id = ?1 ORDER BY created_at ASC",
+             FROM messages WHERE session_id = ?1 ORDER BY created_at ASC, rowid ASC",
         )?;
         let rows = stmt.query_map(params![session_id], |row| {
             let id: String = row.get(0)?;
