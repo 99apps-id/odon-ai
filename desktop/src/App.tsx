@@ -385,7 +385,8 @@ export default function App() {
           setSessions((prev) => [newSession, ...prev]);
         }
 
-        const resMsg = await api.sendMessage(sid, textToSend, selectedModel);
+        const modelPayload = selectedModel.includes('::') ? selectedModel : `${activeProviderId}::${selectedModel}`;
+        const resMsg = await api.sendMessage(sid, textToSend, modelPayload);
 
         const assistantMsg: ChatMessage = {
           id: resMsg.id,
