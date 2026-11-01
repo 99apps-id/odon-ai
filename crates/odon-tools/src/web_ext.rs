@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::registry::{Tool, ToolContext};
+use crate::web::urlencoding;
 
 pub struct HttpPutTool;
 #[async_trait]
@@ -159,13 +160,13 @@ pub struct WebSearchNewsTool;
 #[async_trait]
 impl Tool for WebSearchNewsTool {
     fn name(&self) -> &str { "web_search_news" }
-    fn description(&self) -> &str { "Search recent tech, software, and world news articles" }
+    fn description(&self) -> &str { "Search recent tech, software, and world news articles via Google News and HackerNews" }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string" },
-                "limit": { "type": "integer", "default": 5 }
+                "query": { "type": "string", "description": "Topic or news event to search" },
+                "limit": { "type": "integer", "description": "Max articles to return", "default": 5 }
             },
             "required": ["query"]
         })
@@ -173,11 +174,87 @@ impl Tool for WebSearchNewsTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
+        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let mut articles = Vec::new();
+
+        // 1. Google News RSS
+        let gnews_url = format!(
+            "https://news.google.com/rss/search?q={}&hl=id&gl=ID&ceid=ID:id",
+            urlencoding::encode(q)
+        );
+        if let Ok(res) = client.get(&gnews_url).send().await {
+            if let Ok(xml) = res.text().await {
+                let item_re = regex::Regex::new(r#"(?s)<item>(.*?)</item>"#).ok();
+                let title_re = regex::Regex::new(r#"<title>(.*?)</title>"#).ok();
+                let link_re = regex::Regex::new(r#"<link>(.*?)</link>"#).ok();
+                let pubdate_re = regex::Regex::new(r#"<pubDate>(.*?)</pubDate>"#).ok();
+                let source_re = regex::Regex::new(r#"<source[^>]*>(.*?)</source>"#).ok();
+
+                if let (Some(it_re), Some(t_re), Some(l_re)) = (item_re, title_re, link_re) {
+                    for cap in it_re.captures_iter(&xml).take(limit) {
+                        let item_xml = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                        let title = t_re.captures(item_xml).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
+                        let link = l_re.captures(item_xml).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
+                        let pubdate = pubdate_re.as_ref().and_then(|r| r.captures(item_xml)).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
+                        let source = source_re.as_ref().and_then(|r| r.captures(item_xml)).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("Google News");
+
+                        if !title.is_empty() && !link.is_empty() {
+                            articles.push(json!({
+                                "title": title,
+                                "url": link,
+                                "source": source,
+                                "published_at": pubdate,
+                                "snippet": format!("News via {source}: {title}")
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. HackerNews News search fallback
+        if articles.is_empty() {
+            let hn_url = format!(
+                "https://hn.algolia.com/api/v1/search?query={}&tags=story&hitsPerPage={}",
+                urlencoding::encode(q),
+                limit
+            );
+            if let Ok(hn_res) = client.get(&hn_url).send().await {
+                if let Ok(val) = hn_res.json::<Value>().await {
+                    if let Some(hits) = val.get("hits").and_then(|h| h.as_array()) {
+                        for hit in hits {
+                            let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                            let url = hit.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                            let author = hit.get("author").and_then(|a| a.as_str()).unwrap_or("");
+                            let points = hit.get("points").and_then(|p| p.as_i64()).unwrap_or(0);
+                            let date = hit.get("created_at").and_then(|c| c.as_str()).unwrap_or("");
+
+                            if !title.is_empty() {
+                                articles.push(json!({
+                                    "title": title,
+                                    "url": if url.is_empty() { format!("https://news.ycombinator.com/item?id={}", hit.get("objectID").and_then(|o| o.as_str()).unwrap_or("")) } else { url.to_string() },
+                                    "source": "HackerNews",
+                                    "published_at": date,
+                                    "snippet": format!("Posted by {author} ({points} points)")
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(json!({
             "query": q,
-            "articles": [
-                { "title": format!("Latest updates on {}", q), "source": "Tech News Hub", "snippet": "Recent developments and release notes...", "url": "https://news.ycombinator.com" }
-            ]
+            "articles_count": articles.len(),
+            "articles": articles
         }))
     }
 }
@@ -186,13 +263,13 @@ pub struct WebSearchCodeTool;
 #[async_trait]
 impl Tool for WebSearchCodeTool {
     fn name(&self) -> &str { "web_search_code" }
-    fn description(&self) -> &str { "Search public code repositories and snippets on GitHub, StackOverflow, and crates.io" }
+    fn description(&self) -> &str { "Search public code repositories and packages on GitHub and crates.io" }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string" },
-                "language": { "type": "string" }
+                "query": { "type": "string", "description": "Search keyword or library name" },
+                "language": { "type": "string", "description": "Programming language (e.g. rust, typescript, python)" }
             },
             "required": ["query"]
         })
@@ -200,13 +277,54 @@ impl Tool for WebSearchCodeTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
-        let lang = args.get("language").and_then(|l| l.as_str()).unwrap_or("rust");
+        let lang = args.get("language").and_then(|l| l.as_str()).unwrap_or("");
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent("odon-ai-desktop/1.0")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let mut results = Vec::new();
+
+        // 1. GitHub Repository search
+        let query_str = if lang.is_empty() {
+            q.to_string()
+        } else {
+            format!("{}+language:{}", q, lang)
+        };
+        let gh_url = format!(
+            "https://api.github.com/search/repositories?q={}&sort=stars&order=desc&per_page=5",
+            urlencoding::encode(&query_str)
+        );
+
+        if let Ok(res) = client.get(&gh_url).header("Accept", "application/vnd.github.v3+json").send().await {
+            if let Ok(val) = res.json::<Value>().await {
+                if let Some(items) = val.get("items").and_then(|i| i.as_array()) {
+                    for item in items {
+                        let full_name = item.get("full_name").and_then(|n| n.as_str()).unwrap_or("");
+                        let html_url = item.get("html_url").and_then(|u| u.as_str()).unwrap_or("");
+                        let desc = item.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                        let stars = item.get("stargazers_count").and_then(|s| s.as_i64()).unwrap_or(0);
+                        let language = item.get("language").and_then(|l| l.as_str()).unwrap_or("");
+
+                        results.push(json!({
+                            "repo": full_name,
+                            "url": html_url,
+                            "description": desc,
+                            "stars": stars,
+                            "language": language
+                        }));
+                    }
+                }
+            }
+        }
+
         Ok(json!({
             "query": q,
             "language": lang,
-            "results": [
-                { "repo": "odon-ai/examples", "file": "src/main.rs", "snippet": format!("// Code matching '{}'\nfn example() {{}}", q) }
-            ]
+            "results_count": results.len(),
+            "results": results
         }))
     }
 }

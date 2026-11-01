@@ -20,6 +20,8 @@ import {
   UploadCloud,
   FileCheck,
   FileKey,
+  FileText,
+  Clipboard,
 } from 'lucide-react';
 import { api, SshProfile } from '../api';
 import { NativeTerminal } from './NativeTerminal';
@@ -39,9 +41,13 @@ export const SshTerminalView: React.FC = () => {
   const [newKeyPath, setNewKeyPath] = useState<string>('');
   const [newDesc, setNewDesc] = useState<string>('');
 
-  // Certificate file import state
+  // Certificate & Key import / paste state
+  const [keyInputTab, setKeyInputTab] = useState<'file' | 'paste' | 'path'>('file');
   const [importedCertName, setImportedCertName] = useState<string | null>(null);
+  const [pastedKey, setPastedKey] = useState<string>('');
   const [isImportingCert, setIsImportingCert] = useState<boolean>(false);
+  const [isPastingKey, setIsPastingKey] = useState<boolean>(false);
+  const [pasteSuccessMessage, setPasteSuccessMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadProfiles = async () => {
@@ -104,8 +110,47 @@ export const SshTerminalView: React.FC = () => {
     }
   };
 
+  const handleApplyPastedKey = async () => {
+    if (!pastedKey.trim()) return;
+    setIsPastingKey(true);
+    setPasteSuccessMessage(null);
+    try {
+      const cleanAlias = (newAlias.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_') || 'custom-key');
+      const filename = `${cleanAlias}.pem`;
+      const res = await api.importSshCertificate(filename, pastedKey.trim());
+      if (res.success && res.saved_path) {
+        setNewKeyPath(res.saved_path);
+        setImportedCertName(filename);
+        setPasteSuccessMessage(`Key berhasil disimpan ke ${filename}`);
+      }
+    } catch (err) {
+      console.error('Failed to save pasted key:', err);
+      setPasteSuccessMessage('Gagal menyimpan key ke backend.');
+    } finally {
+      setIsPastingKey(false);
+    }
+  };
+
   const handleSaveNewProfile = async () => {
     if (!newAlias.trim() || !newHost.trim()) return;
+
+    let finalKeyPath = newKeyPath.trim();
+    let finalCertName = importedCertName;
+
+    // If user pasted key and didn't click save button yet, auto-save key first
+    if (keyInputTab === 'paste' && pastedKey.trim() && !finalKeyPath) {
+      try {
+        const cleanAlias = (newAlias.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_') || 'custom-key');
+        const filename = `${cleanAlias}.pem`;
+        const res = await api.importSshCertificate(filename, pastedKey.trim());
+        if (res.success && res.saved_path) {
+          finalKeyPath = res.saved_path;
+          finalCertName = filename;
+        }
+      } catch (err) {
+        console.error('Auto import pasted key failed:', err);
+      }
+    }
 
     const newProfile: SshProfile = {
       id: `ssh-${Date.now()}`,
@@ -113,9 +158,9 @@ export const SshTerminalView: React.FC = () => {
       host: newHost.trim(),
       port: newPort || 22,
       user: newUser.trim() || 'root',
-      key_path: newKeyPath.trim() || undefined,
-      certificate_filename: importedCertName || undefined,
-      auth_type: newKeyPath.trim() || importedCertName ? 'certificate' : 'password',
+      key_path: finalKeyPath || undefined,
+      certificate_filename: finalCertName || undefined,
+      auth_type: finalKeyPath || finalCertName ? 'certificate' : 'password',
       description: newDesc.trim() || undefined,
       created_at: new Date().toISOString(),
     };
@@ -154,6 +199,9 @@ export const SshTerminalView: React.FC = () => {
     setNewKeyPath('');
     setNewDesc('');
     setImportedCertName(null);
+    setPastedKey('');
+    setPasteSuccessMessage(null);
+    setKeyInputTab('file');
   };
 
   return (
@@ -173,7 +221,7 @@ export const SshTerminalView: React.FC = () => {
               resetModalForm();
               setIsModalOpen(true);
             }}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors shadow-2xs cursor-pointer"
           >
             <Plus className="w-3 h-3" />
             <span>Add Host</span>
@@ -306,7 +354,7 @@ export const SshTerminalView: React.FC = () => {
                 <button
                   onClick={handleConnect}
                   disabled={isConnecting}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors"
                 >
                   {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
                   <span>Launch Interactive SSH Terminal</span>
@@ -380,62 +428,176 @@ export const SshTerminalView: React.FC = () => {
               </div>
 
               {/* ───────────────────────────────────────────
-                  CERTIFICATE / PRIVATE KEY IMPORT SECTION
+                  CERTIFICATE / PRIVATE KEY IMPORT & PASTE SECTION
               ─────────────────────────────────────────── */}
-              <div className="p-3 rounded-xl bg-blue-50/50 border border-blue-200/70 space-y-2">
+              <div className="p-3 rounded-xl bg-blue-50/40 border border-blue-200/80 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 font-semibold text-neutral-800">
                     <FileKey className="w-4 h-4 text-blue-600" />
-                    <span>Sertifikat & Private Key SSH</span>
+                    <span>SSH Key & Sertifikat</span>
                   </div>
-                  <span className="text-[10px] text-blue-600 font-mono">.pem, .key, .crt</span>
+                  <span className="text-[10px] text-blue-700 bg-blue-100/70 font-mono px-2 py-0.5 rounded-md">
+                    .pem • .key • id_rsa • raw
+                  </span>
                 </div>
 
-                <p className="text-[11px] text-neutral-600 leading-snug">
-                  Impor file sertifikat (.pem, .key, id_rsa) dari komputer Anda untuk autentikasi otomatis tanpa memasukkan password:
-                </p>
-
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleCertFileChange}
-                  accept=".pem,.key,.crt,.cer,.pub,id_rsa,id_ed25519,*"
-                  className="hidden"
-                />
-
-                <div className="flex items-center gap-2">
+                {/* Mode Switcher Tabs */}
+                <div className="flex p-0.5 rounded-lg bg-neutral-200/70 text-[11px] font-medium text-neutral-600">
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isImportingCert}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-blue-300 bg-white hover:bg-blue-50/80 text-blue-700 font-semibold transition-colors cursor-pointer shadow-2xs"
+                    onClick={() => setKeyInputTab('file')}
+                    className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+                      keyInputTab === 'file'
+                        ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                        : 'hover:text-neutral-900'
+                    }`}
                   >
-                    {isImportingCert ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <UploadCloud className="w-3.5 h-3.5 text-blue-600" />
-                    )}
-                    <span>{isImportingCert ? 'Mengimpor sertifikat...' : 'Impor File Sertifikat / Key'}</span>
+                    Impor File Key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKeyInputTab('paste')}
+                    className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+                      keyInputTab === 'paste'
+                        ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                        : 'hover:text-neutral-900'
+                    }`}
+                  >
+                    Paste Key Text
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKeyInputTab('path')}
+                    className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+                      keyInputTab === 'path'
+                        ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                        : 'hover:text-neutral-900'
+                    }`}
+                  >
+                    Path Lokal
                   </button>
                 </div>
 
-                {importedCertName && (
-                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-                    <FileCheck className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate font-mono">Sertifikat berhasil diimpor: {importedCertName}</span>
+                {/* TAB 1: FILE UPLOAD */}
+                {keyInputTab === 'file' && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-neutral-600 leading-snug">
+                      Pilih file sertifikat (<code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">.pem</code>, <code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">.key</code>, <code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">id_rsa</code>) dari komputer Anda:
+                    </p>
+
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleCertFileChange}
+                      accept=".pem,.key,.crt,.cer,.pub,id_rsa,id_ed25519,*"
+                      className="hidden"
+                    />
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isImportingCert}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-blue-300 bg-white hover:bg-blue-50/80 text-blue-700 font-semibold transition-colors cursor-pointer shadow-2xs"
+                      >
+                        {isImportingCert ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <UploadCloud className="w-3.5 h-3.5 text-blue-600" />
+                        )}
+                        <span>{isImportingCert ? 'Mengimpor file...' : 'Pilih File Sertifikat / Key'}</span>
+                      </button>
+                    </div>
+
+                    {importedCertName && (
+                      <div className="flex items-center justify-between text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <FileCheck className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate font-mono">File siap: {importedCertName}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImportedCertName(null);
+                            setNewKeyPath('');
+                          }}
+                          className="text-neutral-400 hover:text-rose-600 p-0.5 cursor-pointer"
+                          title="Hapus file"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                <div>
-                  <label className="text-[10.5px] text-neutral-500 font-mono mb-1 block">Key Path di Local Machine</label>
-                  <input
-                    type="text"
-                    value={newKeyPath}
-                    onChange={(e) => setNewKeyPath(e.target.value)}
-                    placeholder="~/.ssh/id_rsa or C:\Users\...\cert.pem"
-                    className="w-full px-2.5 py-1 text-[11.5px] rounded-lg border border-neutral-300 bg-white font-mono outline-none focus:border-blue-500"
-                  />
-                </div>
+                {/* TAB 2: PASTE KEY TEXT */}
+                {keyInputTab === 'paste' && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-neutral-600 leading-snug">
+                      Tempel (paste) private key RSA/Ed25519 atau public key Anda di sini:
+                    </p>
+
+                    <textarea
+                      rows={4}
+                      value={pastedKey}
+                      onChange={(e) => {
+                        setPastedKey(e.target.value);
+                        setPasteSuccessMessage(null);
+                      }}
+                      placeholder={`-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAACFwAAAAdzc2gtcn\n...\n-----END OPENSSH PRIVATE KEY-----`}
+                      className="w-full p-2.5 text-[11px] font-mono leading-tight rounded-lg border border-neutral-300 bg-white outline-none focus:border-blue-500 placeholder:text-neutral-300 resize-y"
+                    />
+
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-neutral-500 font-mono">
+                        {pastedKey.length > 0 ? `${pastedKey.length} karakter • ${pastedKey.split('\n').length} baris` : 'Belum ada key ditempel'}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={handleApplyPastedKey}
+                        disabled={!pastedKey.trim() || isPastingKey}
+                        className="flex items-center gap-1 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-[11px] font-semibold cursor-pointer shadow-2xs transition-colors"
+                      >
+                        {isPastingKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                        <span>Gunakan Key Ini</span>
+                      </button>
+                    </div>
+
+                    {pasteSuccessMessage && (
+                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200">
+                        <FileCheck className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate font-mono">{pasteSuccessMessage}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 3: LOCAL PATH */}
+                {keyInputTab === 'path' && (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-neutral-600 leading-snug">
+                      Masukkan path absolut key yang sudah ada di komputer Anda:
+                    </p>
+                    <input
+                      type="text"
+                      value={newKeyPath}
+                      onChange={(e) => setNewKeyPath(e.target.value)}
+                      placeholder="~/.ssh/id_rsa atau C:\Users\...\id_ed25519"
+                      className="w-full px-2.5 py-1.5 text-[11.5px] rounded-lg border border-neutral-300 bg-white font-mono outline-none focus:border-blue-500"
+                    />
+                  </div>
+                )}
+
+                {/* Display resolved path if any */}
+                {newKeyPath && keyInputTab !== 'path' && (
+                  <div className="pt-1 border-t border-blue-200/50">
+                    <div className="flex items-center justify-between text-[10px] text-neutral-500 font-mono">
+                      <span className="truncate">Key path: {newKeyPath}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -460,7 +622,7 @@ export const SshTerminalView: React.FC = () => {
               <button
                 onClick={handleSaveNewProfile}
                 disabled={!newAlias.trim() || !newHost.trim()}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
               >
                 Save Profile
               </button>

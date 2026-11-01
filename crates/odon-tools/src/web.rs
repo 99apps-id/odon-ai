@@ -1,10 +1,91 @@
 use async_trait::async_trait;
+use std::net::{IpAddr, SocketAddr};
 use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
 use tracing::info;
 
 use crate::registry::{Tool, ToolContext};
+
+/// DoH (DNS-over-HTTPS) resolver to bypass ISP blocking/DNS poisoning (e.g. DDG blocking in ID).
+pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .ok()?;
+
+    // 1. Try Cloudflare DoH (JSON API)
+    let cf_url = format!("https://cloudflare-dns.com/dns-query?name={}&type=A", urlencoding::encode(host));
+    if let Ok(res) = client.get(&cf_url).header("accept", "application/dns-json").send().await {
+        if res.status().is_success() {
+            if let Ok(val) = res.json::<Value>().await {
+                if let Some(answers) = val.get("Answer").and_then(|a| a.as_array()) {
+                    for ans in answers {
+                        if let Some(ip_str) = ans.get("data").and_then(|d| d.as_str()) {
+                            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                return Some(ip);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Try Google DoH (JSON API)
+    let google_url = format!("https://dns.google/resolve?name={}&type=A", urlencoding::encode(host));
+    if let Ok(res) = client.get(&google_url).header("accept", "application/json").send().await {
+        if res.status().is_success() {
+            if let Ok(val) = res.json::<Value>().await {
+                if let Some(answers) = val.get("Answer").and_then(|a| a.as_array()) {
+                    for ans in answers {
+                        if let Some(ip_str) = ans.get("data").and_then(|d| d.as_str()) {
+                            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                return Some(ip);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn decode_ddg_url(raw: &str) -> String {
+    if let Some(idx) = raw.find("uddg=") {
+        let after = &raw[idx + 5..];
+        let end = after.find('&').unwrap_or(after.len());
+        let slice = &after[..end];
+        let decoded = url::form_urlencoded::parse(format!("u={}", slice).as_bytes())
+            .find(|(k, _)| k == "u")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_else(|| slice.to_string());
+        return decoded;
+    }
+    if raw.starts_with("//") {
+        return format!("https:{}", raw);
+    }
+    raw.to_string()
+}
+
+fn clean_html_snippet(raw: &str) -> String {
+    let re = regex::Regex::new(r"<[^>]+>").ok();
+    let text = if let Some(r) = re {
+        r.replace_all(raw, " ").to_string()
+    } else {
+        raw.to_string()
+    };
+    text.replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 pub struct WebSearchTool;
 
@@ -40,16 +121,22 @@ impl Tool for WebSearchTool {
 
         info!("Executing web search for: {}", query);
 
-        // Attempt DuckDuckGo HTML API query
-        let client = reqwest::Client::builder()
+        // 1. Attempt DuckDuckGo HTML using DoH resolved IP to bypass ISP blocking
+        let ddg_ip = doh_resolve_host("html.duckduckgo.com").await;
+        let mut client_builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(8))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36");
+
+        if let Some(ip) = ddg_ip {
+            client_builder = client_builder.resolve("html.duckduckgo.com", SocketAddr::new(ip, 443));
+        }
+        let client = client_builder.build().unwrap_or_else(|_| reqwest::Client::new());
 
         let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding::encode(query));
         let resp = client
             .get(&url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "en-US,en;q=0.9,id;q=0.8")
             .send()
             .await;
 
@@ -57,24 +144,25 @@ impl Tool for WebSearchTool {
 
         if let Ok(response) = resp {
             if let Ok(html) = response.text().await {
-                // Parse simple duckduckgo result links and snippets
-                let snippet_re = regex::Regex::new(r#"<a class="result__snippet[^>]*>([^<]+)</a>"#).ok();
-                let title_re = regex::Regex::new(r#"<a class="result__url[^>]*href="([^"]+)"[^>]*>([^<]+)</a>"#).ok();
+                let snippet_re = regex::Regex::new(r#"<a class="result__snippet[^>]*>([\s\S]*?)</a>"#).ok();
+                let link_re = regex::Regex::new(r#"<a class="result__url[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#).ok();
 
-                if let (Some(s_re), Some(t_re)) = (snippet_re, title_re) {
-                    let titles: Vec<_> = t_re.captures_iter(&html).take(limit).collect();
+                if let (Some(s_re), Some(l_re)) = (snippet_re, link_re) {
+                    let links: Vec<_> = l_re.captures_iter(&html).take(limit).collect();
                     let snippets: Vec<_> = s_re.captures_iter(&html).take(limit).collect();
 
-                    for (i, t_cap) in titles.iter().enumerate() {
-                        let link = t_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-                        let title = t_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("Result");
-                        let snippet = snippets.get(i).and_then(|s| s.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
+                    for (i, l_cap) in links.iter().enumerate() {
+                        let raw_link = l_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                        let title = clean_html_snippet(l_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("Result"));
+                        let snippet = snippets.get(i).and_then(|s| s.get(1)).map(|m| clean_html_snippet(m.as_str().trim())).unwrap_or_default();
+                        let link = decode_ddg_url(raw_link);
 
                         if !link.is_empty() {
                             results.push(json!({
                                 "title": title,
                                 "url": link,
                                 "snippet": snippet,
+                                "source": "duckduckgo"
                             }));
                         }
                     }
@@ -82,13 +170,68 @@ impl Tool for WebSearchTool {
             }
         }
 
-        // Fallback result if network is offline or blocked
+        // 2. Fallback to Wikipedia OpenSearch API if DDG HTML was empty or blocked
         if results.is_empty() {
-            results.push(json!({
-                "title": format!("Search: {}", query),
-                "url": format!("https://duckduckgo.com/?q={}", urlencoding::encode(query)),
-                "snippet": format!("Web search executed for query '{}'. Relevant context retrieved.", query),
-            }));
+            let wiki_url = format!(
+                "https://en.wikipedia.org/w/api.php?action=opensearch&search={}&limit={}&namespace=0&format=json",
+                urlencoding::encode(query),
+                limit
+            );
+            if let Ok(wiki_res) = client.get(&wiki_url).send().await {
+                if let Ok(val) = wiki_res.json::<Value>().await {
+                    if let Some(arr) = val.as_array() {
+                        if arr.len() >= 4 {
+                            let titles = arr[1].as_array();
+                            let snippets = arr[2].as_array();
+                            let urls = arr[3].as_array();
+                            if let (Some(t_arr), Some(s_arr), Some(u_arr)) = (titles, snippets, urls) {
+                                for i in 0..t_arr.len() {
+                                    let t = t_arr.get(i).and_then(|x| x.as_str()).unwrap_or("");
+                                    let s = s_arr.get(i).and_then(|x| x.as_str()).unwrap_or("");
+                                    let u = u_arr.get(i).and_then(|x| x.as_str()).unwrap_or("");
+                                    if !u.is_empty() {
+                                        results.push(json!({
+                                            "title": t,
+                                            "url": u,
+                                            "snippet": s,
+                                            "source": "wikipedia"
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback to HackerNews Algolia API
+        if results.is_empty() {
+            let hn_url = format!(
+                "https://hn.algolia.com/api/v1/search?query={}&tags=story&hitsPerPage={}",
+                urlencoding::encode(query),
+                limit
+            );
+            if let Ok(hn_res) = client.get(&hn_url).send().await {
+                if let Ok(val) = hn_res.json::<Value>().await {
+                    if let Some(hits) = val.get("hits").and_then(|h| h.as_array()) {
+                        for hit in hits {
+                            let title = hit.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                            let url = hit.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                            let author = hit.get("author").and_then(|a| a.as_str()).unwrap_or("");
+                            let points = hit.get("points").and_then(|p| p.as_i64()).unwrap_or(0);
+                            if !title.is_empty() {
+                                results.push(json!({
+                                    "title": title,
+                                    "url": if url.is_empty() { format!("https://news.ycombinator.com/item?id={}", hit.get("objectID").and_then(|o| o.as_str()).unwrap_or("")) } else { url.to_string() },
+                                    "snippet": format!("Posted by {} ({} points)", author, points),
+                                    "source": "hackernews"
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(json!({
@@ -107,7 +250,7 @@ impl Tool for WebFetchTool {
         "web_fetch"
     }
     fn description(&self) -> &str {
-        "Fetch the plain text content of a web page URL"
+        "Fetch the plain text content of a web page URL (with automatic DoH resolution fallback)"
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -130,41 +273,69 @@ impl Tool for WebFetchTool {
         })?;
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(12))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        let resp = client
-            .get(url_str)
-            .header("User-Agent", "ODON-Assistant/0.1")
-            .send()
-            .await
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Failed to fetch URL {}: {}", url_str, e),
-            })?;
+        let resp_res = client.get(url_str).send().await;
+
+        let resp = match resp_res {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                // If failed due to DNS resolution error or connect error, attempt DoH fallback
+                let parsed_url = reqwest::Url::parse(url_str).ok();
+                if let Some(u) = parsed_url {
+                    if let Some(host) = u.host_str() {
+                        let port = u.port().unwrap_or(if u.scheme() == "https" { 443 } else { 80 });
+                        if let Some(ip) = doh_resolve_host(host).await {
+                            if let Ok(doh_client) = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(12))
+                                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+                                .resolve(host, SocketAddr::new(ip, port))
+                                .build()
+                            {
+                                doh_client.get(url_str).send().await
+                            } else {
+                                Err(e)
+                            }
+                        } else {
+                            Err(e)
+                        }
+                    } else {
+                        Err(e)
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        }.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to fetch URL {}: {}", url_str, e),
+        })?;
 
         let status = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
 
-        // Strip basic HTML tags for cleaner reading
-        let tag_re = regex::Regex::new(r"<[^>]+>").ok();
-        let clean_text = if let Some(re) = tag_re {
-            re.replace_all(&body, " ").to_string()
-        } else {
-            body
-        };
+        // Extract <title> if present
+        let title_re = regex::Regex::new(r#"(?i)<title[^>]*>([^<]+)</title>"#).ok();
+        let page_title = title_re.as_ref()
+            .and_then(|r| r.captures(&body))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default();
 
-        let trimmed = clean_text.split_whitespace().collect::<Vec<_>>().join(" ");
-        let truncated = if trimmed.len() > 8000 {
-            format!("{}... [truncated]", &trimmed[..8000])
+        let clean_text = clean_html_snippet(&body);
+        let truncated = if clean_text.len() > 10000 {
+            format!("{}... [truncated]", &clean_text[..10000])
         } else {
-            trimmed
+            clean_text
         };
 
         Ok(json!({
             "url": url_str,
             "status": status,
+            "title": page_title,
             "content": truncated
         }))
     }
@@ -603,7 +774,7 @@ impl Tool for BrowserClickTool {
     }
 }
 
-mod urlencoding {
+pub(crate) mod urlencoding {
     pub fn encode(s: &str) -> String {
         url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
     }

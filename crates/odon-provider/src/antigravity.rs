@@ -7,6 +7,7 @@
 //!      thoughts and native function calls).
 
 use async_trait::async_trait;
+use base64::Engine;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use odon_core::{MessageRole, OdonError, Result};
@@ -30,6 +31,7 @@ pub struct AntigravityProvider {
     project: tokio::sync::Mutex<Option<String>>,
     #[allow(dead_code)]
     account_id: Option<String>,
+    signatures: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
 }
 
 fn platform_code() -> i32 {
@@ -94,7 +96,20 @@ impl AntigravityProvider {
             access_token: std::sync::Mutex::new((access_token.into(), std::time::Instant::now())),
             project: tokio::sync::Mutex::new(None),
             account_id,
+            signatures: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    async fn remember_signature(&self, key: &str, signature: &str) {
+        if !signature.is_empty() {
+            let mut sigs = self.signatures.lock().await;
+            sigs.insert(key.to_string(), signature.to_string());
+        }
+    }
+
+    async fn get_signature(&self, key: &str) -> Option<String> {
+        let sigs = self.signatures.lock().await;
+        sigs.get(key).cloned()
     }
 
     async fn token(&self) -> String {
@@ -317,16 +332,46 @@ impl ModelProvider for AntigravityProvider {
                     }
                     for tc in &msg.content.tool_calls {
                         let args = if tc.arguments.is_object() { tc.arguments.clone() } else { json!({}) };
-                        parts.push(json!({ "functionCall": { "name": tc.tool_name, "args": args } }));
+                        let clean_name = tc.tool_name
+                            .trim_start_matches("defaultapi:")
+                            .trim_start_matches("default_api:");
+
+                        let sig = self.get_signature(&tc.call_id).await
+                            .or(self.get_signature(&tc.tool_name).await)
+                            .or(self.get_signature(clean_name).await)
+                            .unwrap_or_else(|| {
+                                base64::engine::general_purpose::STANDARD.encode(format!("sig_{}_{}", clean_name, tc.call_id))
+                            });
+
+                        parts.push(json!({
+                            "thoughtSignature": sig,
+                            "functionCall": {
+                                "id": tc.call_id,
+                                "name": clean_name,
+                                "args": args
+                            }
+                        }));
                     }
                     if !parts.is_empty() {
                         contents.push(json!({ "role": "model", "parts": parts }));
                     }
                 }
                 MessageRole::Tool => {
-                    let name = msg.content.tool_calls.first().map(|t| t.tool_name.clone()).unwrap_or_default();
+                    let raw_name = msg.content.tool_calls.first().map(|t| t.tool_name.clone()).unwrap_or_default();
+                    let clean_name = raw_name
+                        .trim_start_matches("defaultapi:")
+                        .trim_start_matches("default_api:");
+                    let call_id = msg.content.tool_calls.first().map(|t| t.call_id.clone()).unwrap_or_default();
+
                     let output: Value = serde_json::from_str(&msg.content.text).unwrap_or_else(|_| json!(msg.content.text));
-                    let part = json!({ "functionResponse": { "name": name, "response": { "output": output } } });
+                    let mut resp_obj = json!({
+                        "name": clean_name,
+                        "response": { "output": output }
+                    });
+                    if !call_id.is_empty() {
+                        resp_obj["id"] = json!(call_id);
+                    }
+                    let part = json!({ "functionResponse": resp_obj });
                     let merge = contents
                         .last()
                         .map(|c| c["role"] == "user" && c["parts"].as_array().map(|p| p.iter().all(|x| x.get("functionResponse").is_some())).unwrap_or(false))
@@ -470,11 +515,32 @@ impl ModelProvider for AntigravityProvider {
                             .and_then(|p| p.as_array());
                         for part in parts.into_iter().flatten() {
                             if let Some(fc) = part.get("functionCall") {
-                                let name = fc.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
+                                let raw_name = fc.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
+                                let name = raw_name
+                                    .trim_start_matches("defaultapi:")
+                                    .trim_start_matches("default_api:")
+                                    .to_string();
                                 let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
+                                let call_id = fc.get("id").and_then(|i| i.as_str())
+                                    .map(String::from)
+                                    .unwrap_or_else(|| format!("call_{}_{}", name, uuid::Uuid::new_v4().simple()));
+
+                                let sig = part.get("thoughtSignature")
+                                    .or_else(|| part.get("thought_signature"))
+                                    .or_else(|| fc.get("thoughtSignature"))
+                                    .or_else(|| fc.get("thought_signature"))
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or_default();
+
+                                if !sig.is_empty() {
+                                    self.remember_signature(&call_id, sig).await;
+                                    self.remember_signature(&name, sig).await;
+                                    self.remember_signature(&raw_name, sig).await;
+                                }
+
                                 let _ = event_sender.send(StreamEvent::ToolCallDelta {
                                     index: tool_index,
-                                    id: Some(format!("call_{}_{}", name, uuid::Uuid::new_v4().simple())),
+                                    id: Some(call_id),
                                     name: Some(name),
                                     arguments_delta: Some(args.to_string()),
                                 }).await;

@@ -54,8 +54,49 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
+    pub fn normalize_name(name: &str) -> String {
+        let stripped = name
+            .trim()
+            .trim_start_matches("defaultapi:")
+            .trim_start_matches("default_api:")
+            .trim_start_matches("functions.")
+            .trim_start_matches("function.")
+            .trim_start_matches("tools:")
+            .trim_start_matches("tool:")
+            .trim();
+
+        let lower = stripped.to_lowercase().replace('-', "_");
+        match lower.as_str() {
+            "websearch" | "search_web" | "search" | "google_search" | "duckduckgo_search" => "web_search".to_string(),
+            "websearch_news" | "search_news" | "news_search" | "news" => "web_search_news".to_string(),
+            "websearch_code" | "search_code" | "code_search" => "web_search_code".to_string(),
+            "fetch" | "http_get" | "curl" | "browse" => "web_fetch".to_string(),
+            "readfile" | "read" | "fs_read" => "read_file".to_string(),
+            "writefile" | "write" | "fs_write" => "write_file".to_string(),
+            "listdirectory" | "list_dir" | "listdir" | "ls" => "list_directory".to_string(),
+            "createdirectory" | "create_dir" | "mkdir" => "create_directory".to_string(),
+            "deletefile" | "rm" | "fs_delete" => "delete_file".to_string(),
+            "bash" | "shell" | "sh" | "terminal" => "bash_run".to_string(),
+            "processlist" | "ps" => "process_list".to_string(),
+            "memorysearch" => "memory_search".to_string(),
+            _ => lower,
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<&Box<dyn Tool>> {
-        self.tools.get(name)
+        if let Some(tool) = self.tools.get(name) {
+            return Some(tool);
+        }
+        let norm = Self::normalize_name(name);
+        self.tools.get(&norm)
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        if self.tools.contains_key(name) {
+            return true;
+        }
+        let norm = Self::normalize_name(name);
+        self.tools.contains_key(&norm)
     }
 
     pub fn schemas(&self) -> Vec<ToolSchema> {
@@ -76,7 +117,7 @@ impl ToolRegistry {
         ctx: &ToolContext,
         args: Value,
     ) -> Result<Value> {
-        let tool = self.tools.get(name).ok_or_else(|| OdonError::Tool {
+        let tool = self.get(name).ok_or_else(|| OdonError::Tool {
             tool: name.to_string(),
             message: format!("Tool '{}' not found in registry", name),
         })?;
