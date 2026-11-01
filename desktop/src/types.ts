@@ -203,6 +203,18 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     ],
   },
   {
+    id: 'github-copilot',
+    name: 'GitHub Copilot',
+    category: 'oauth',
+    auth_type: 'oauth',
+    description: 'Active GitHub Copilot session with frontier GPT-4o models',
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o (GitHub Copilot)', context: 128000, recommended: true },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (GitHub Copilot)', context: 128000 },
+      { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', context: 200000 },
+    ],
+  },
+  {
     id: 'chatgpt',
     name: 'ChatGPT / OpenAI Codex',
     category: 'oauth',

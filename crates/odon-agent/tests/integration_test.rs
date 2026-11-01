@@ -318,7 +318,7 @@ async fn test_simulated_provider_turn() {
         .execute_turn(
             &session.id,
             "tampilkan info ringkas sistem",
-            None,
+            Some("odon-simulated"),
             cancel,
         )
         .await

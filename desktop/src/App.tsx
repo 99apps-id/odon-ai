@@ -249,6 +249,19 @@ export default function App() {
     api.getModels().then((data) => {
       if (data?.providers?.length) {
         setProviders(data.providers);
+        const storedProvider = localStorage.getItem('odon_active_provider');
+        if (!storedProvider || storedProvider === 'openai') {
+          const readyProv = data.providers.find((p: any) => p.connected || p.configured);
+          if (readyProv) {
+            setActiveProviderId(readyProv.id);
+            localStorage.setItem('odon_active_provider', readyProv.id);
+            const rec = readyProv.models.find((m: any) => m.recommended) || readyProv.models[0];
+            if (rec) {
+              setSelectedModel(rec.id);
+              localStorage.setItem('odon_selected_model', rec.id);
+            }
+          }
+        }
       }
     }).catch(() => {
       // Use fallback
@@ -402,15 +415,16 @@ export default function App() {
         loadArtifacts(sid);
         loadSessions();
       } catch (err: any) {
-        console.error('Daemon message send error, falling back:', err);
-        const fallbackMsg: ChatMessage = {
-          id: `ast_${Date.now()}`,
+        console.error('Daemon message send error:', err);
+        const errorMsg: ChatMessage = {
+          id: `ast_err_${Date.now()}`,
           role: 'assistant',
-          content: `Processed request: "${textToSend}". Workspace runtime executed with type-safe verification.`,
-          timestamp: 'Just now',
-          showAppCard: true,
+          content: `⚠️ **Gagal menghubungi model AI**: ${err.message || 'Terjadi kesalahan saat memproses jawaban.'}
+
+Periksa konfigurasi API key atau koneksi akun provider pada menu **Settings**.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
-        setMessages((prev) => [...prev, fallbackMsg]);
+        setMessages((prev) => [...prev, errorMsg]);
       } finally {
         setIsGenerating(false);
         setStreamingText('');
@@ -418,18 +432,16 @@ export default function App() {
         setStreamingTool(null);
       }
     } else {
-      // Standby / offline simulation
-      setTimeout(() => {
-        const assistantMsg: ChatMessage = {
-          id: `ast_${Date.now()}`,
-          role: 'assistant',
-          content: `I have analyzed your request: "${textToSend}". The project structure has been generated with responsive layout and type-safe invariants.`,
-          timestamp: 'Just now',
-          showAppCard: true,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-        setIsGenerating(false);
-      }, 700);
+      const offlineMsg: ChatMessage = {
+        id: `ast_off_${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ **Daemon ODON (odond) sedang offline**.
+
+Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jawaban langsung dari AI model.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, offlineMsg]);
+      setIsGenerating(false);
     }
   };
 

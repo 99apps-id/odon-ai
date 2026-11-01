@@ -368,6 +368,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       setOauthAccounts(map);
     }).catch(() => setOauthAccounts({}));
+
+    // Load persisted BYOK configs from daemon
+    api.getProviderConfigs().then((configs) => {
+      if (configs?.length) {
+        setApiKeys((prev) => {
+          const next = { ...prev };
+          for (const c of configs) {
+            if (!next[c.provider_id]) {
+              next[c.provider_id] = c.masked_key;
+            }
+          }
+          return next;
+        });
+        setBaseUrls((prev) => {
+          const next = { ...prev };
+          for (const c of configs) {
+            if (c.base_url) next[c.provider_id] = c.base_url;
+          }
+          return next;
+        });
+      }
+    }).catch(() => {});
   }, [isOpen]);
 
   const currentProvider = providers.find((p) => p.id === selectedProviderId) || providers[0];
@@ -451,7 +473,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   // BYOK Actions
-  const handleSaveKey = (providerId: string) => {
+  const handleSaveKey = async (providerId: string) => {
     const rawKey = (apiKeys[providerId] || '').trim();
     const prefix = KEY_PREFIXES[providerId];
 
@@ -463,13 +485,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     localStorage.setItem(`odon_key_${providerId}`, rawKey);
     localStorage.setItem(`odon_base_${providerId}`, baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || '');
+
+    // Persist to backend daemon storage & register live provider
+    try {
+      await api.saveProviderConfig(providerId, rawKey, baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || undefined, true);
+      const data = await api.getModels();
+      if (data?.providers?.length) {
+        setProviders(data.providers);
+      }
+    } catch (e: any) {
+      console.warn('Backend saveProviderConfig warning:', e.message);
+    }
+
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const handleClearKey = (providerId: string) => {
+  const handleClearKey = async (providerId: string) => {
     setApiKeys((prev) => ({ ...prev, [providerId]: '' }));
     localStorage.removeItem(`odon_key_${providerId}`);
+    try {
+      await api.deleteProviderConfig(providerId);
+      const data = await api.getModels();
+      if (data?.providers?.length) {
+        setProviders(data.providers);
+      }
+    } catch {}
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
