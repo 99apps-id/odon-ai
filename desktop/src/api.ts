@@ -109,6 +109,19 @@ export const api = {
     return res.ok;
   },
 
+  async executeTerminal(command: string): Promise<{ exit_code: number; stdout: string; stderr: string; success: boolean }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/terminal/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Execution failed with status ${res.status}`);
+    }
+    return res.json();
+  },
+
   subscribeEvents(onEvent: (event: AgentEvent) => void): () => void {
     const es = new EventSource(`${this.getBaseUrl()}/api/events`);
 

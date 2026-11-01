@@ -154,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
                 runtime,
                 storage,
                 approval,
+                audit,
                 tools,
                 event_tx,
                 workspace_root: workspace,
@@ -409,6 +410,9 @@ async fn execute_terminal(
     let ctx = odon_tools::ToolContext {
         session_id: "terminal".to_string(),
         workspace_root: state.workspace_root.clone(),
+        approval_engine: state.approval.clone(),
+        audit_logger: state.audit.clone(),
+        storage: Some(state.storage.clone()),
     };
     if let Some(tool) = state.tools.get("shell_exec") {
         match tool.execute(&ctx, args).await {
