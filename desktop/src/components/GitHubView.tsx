@@ -342,3 +342,4 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
     </div>
   );
 };
+

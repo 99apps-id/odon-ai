@@ -35,14 +35,26 @@ import {
   Terminal,
   Loader2,
   Trash2,
+  GitPullRequest,
+  Cpu,
+  ShieldCheck,
+  ShieldAlert,
+  FolderTree,
+  Server,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
+import { FileExplorerView } from './components/FileExplorerView';
+import { SshTerminalView } from './components/SshTerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { MarkdownView } from './components/MarkdownView';
 import { ApprovalCard } from './components/ApprovalCard';
+import { ApprovalCenterModal } from './components/ApprovalCenterModal';
+import { GitHubView } from './components/GitHubView';
+import { AutomationsView } from './components/AutomationsView';
+import { McpView } from './components/McpView';
 import { api } from './api';
 import { Session, Message, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
@@ -155,6 +167,8 @@ const REGISTERED_TOOLS = [
 export default function App() {
   // Navigation & View States
   const [activeNav, setActiveNav] = useState('chat');
+  const [approvalCenterOpen, setApprovalCenterOpen] = useState(false);
+  const [dynamicTools, setDynamicTools] = useState<any[]>([]);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
   // Provider & Model States (Synchronized with Settings)
@@ -383,6 +397,7 @@ export default function App() {
   useEffect(() => {
     checkDaemonStatus();
     loadSessions();
+    api.getTools().then(setDynamicTools).catch(() => {});
     api.getModels().then((data) => {
       if (data?.providers?.length) {
         setProviders(data.providers);
@@ -856,84 +871,124 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               </button>
 
               <button
-                onClick={() => { setActiveNav('code'); setRightPanelView('editor'); setIsRightPanelOpen(true); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'code'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
+                onClick={() => { setActiveNav('explorer'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'explorer'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <Code2 className="w-4 h-4 text-neutral-600" />
+                <FolderTree className={`w-4 h-4 ${activeNav === 'explorer' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <span>Files</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveNav('code'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'code'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                  }`}
+              >
+                <Code2 className={`w-4 h-4 ${activeNav === 'code' ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Code</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveNav('terminal'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'terminal'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                  }`}
+              >
+                <Terminal className={`w-4 h-4 ${activeNav === 'terminal' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <span>Terminal</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveNav('ssh'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'ssh'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                  }`}
+              >
+                <Server className={`w-4 h-4 ${activeNav === 'ssh' ? 'text-purple-600' : 'text-neutral-600'}`} />
+                <span>SSH Remote</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveNav('github'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'github'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                  }`}
+              >
+                <GitPullRequest className={`w-4 h-4 ${activeNav === 'github' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <span>GitHub</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveNav('automations'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'automations'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                  }`}
+              >
+                <Share2 className={`w-4 h-4 ${activeNav === 'automations' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <span>Automations</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveNav('mcp'); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'mcp'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                  }`}
+              >
+                <Cpu className={`w-4 h-4 ${activeNav === 'mcp' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <span>MCP Hub</span>
               </button>
 
               <button
                 onClick={() => setActiveNav('create')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'create'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <ImageIcon className="w-4 h-4 text-neutral-600" />
+                <ImageIcon className={`w-4 h-4 ${activeNav === 'create' ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Create</span>
               </button>
 
               <button
                 onClick={() => setActiveNav('documents')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'documents'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <FileText className="w-4 h-4 text-neutral-600" />
+                <FileText className={`w-4 h-4 ${activeNav === 'documents' ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Documents</span>
               </button>
 
               <button
                 onClick={() => setActiveNav('files')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'files'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <Folder className="w-4 h-4 text-neutral-600" />
+                <Folder className={`w-4 h-4 ${activeNav === 'files' ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Files</span>
               </button>
 
               <button
                 onClick={() => setActiveNav('agents')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'agents'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <Bot className="w-4 h-4 text-neutral-600" />
+                <Bot className={`w-4 h-4 ${activeNav === 'agents' ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Agents</span>
-              </button>
-
-              <button
-                onClick={() => setActiveNav('automations')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'automations'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
-                  }`}
-              >
-                <Share2 className="w-4 h-4 text-neutral-600" />
-                <span>Automations</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setActiveNav('terminal');
-                  setRightPanelView('terminal');
-                  setIsRightPanelOpen(true);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'terminal' || (rightPanelView === 'terminal' && isRightPanelOpen)
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
-                  }`}
-              >
-                <Terminal className="w-4 h-4 text-neutral-600" />
-                <span>Terminal</span>
               </button>
             </nav>
 
@@ -1004,31 +1059,66 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 px-4 flex items-center justify-between shrink-0">
-            {/* Model Selector Pill */}
-            <div className="flex items-center gap-2">
-              <div
-                onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
-                title={`Active Provider: ${activeProvider?.name} (Click to change)`}
-              >
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                <span className="text-[11px] font-semibold text-neutral-500">{activeProvider?.name.split(' (')[0]}:</span>
-                <span className="font-semibold text-neutral-900 truncate max-w-[150px]">{displayModelName}</span>
-                <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
-              </div>
-
-              {inChatMode && (
+            {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'files' && activeNav !== 'agents' ? (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={handleNewChat}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                  onClick={() => setActiveNav('chat')}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2.5 py-1 rounded-lg hover:bg-blue-50 transition-colors cursor-pointer flex items-center gap-1"
                 >
-                  ← Back to Home
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>AI Chat</span>
                 </button>
-              )}
-            </div>
+                <span className="text-neutral-300">/</span>
+                <span className="text-xs font-bold text-neutral-900 capitalize tracking-tight flex items-center gap-1.5">
+                  {activeNav === 'github' && <GitPullRequest className="w-3.5 h-3.5 text-blue-600" />}
+                  {activeNav === 'automations' && <Share2 className="w-3.5 h-3.5 text-blue-600" />}
+                  {activeNav === 'mcp' && <Cpu className="w-3.5 h-3.5 text-blue-600" />}
+                  {activeNav === 'terminal' && <Terminal className="w-3.5 h-3.5 text-blue-600" />}
+                  {activeNav === 'code' && <Code2 className="w-3.5 h-3.5 text-blue-600" />}
+                  <span>{activeNav} Workspace</span>
+                </span>
+              </div>
+            ) : (
+              /* Model Selector Pill */
+              <div className="flex items-center gap-2">
+                <div
+                  onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
+                  title={`Active Provider: ${activeProvider?.name} (Click to change)`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="text-[11px] font-semibold text-neutral-500">{activeProvider?.name.split(' (')[0]}:</span>
+                  <span className="font-semibold text-neutral-900 truncate max-w-[150px]">{displayModelName}</span>
+                  <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
+                </div>
+
+                {inChatMode && (
+                  <button
+                    onClick={handleNewChat}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                  >
+                    ← Back to Home
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Action Buttons on Right */}
             <div className="flex items-center gap-1">
+              <button
+                onClick={() => setApprovalCenterOpen(true)}
+                className={`p-2 rounded-lg transition-colors cursor-pointer relative ${
+                  pendingApproval
+                    ? 'text-amber-600 bg-amber-50 hover:bg-amber-100 ring-1 ring-amber-300'
+                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+                }`}
+                title={pendingApproval ? "Approval Required: Action paused" : "Security Approval & Audit Center"}
+              >
+                {pendingApproval ? <ShieldAlert className="w-4 h-4 text-amber-600" /> : <ShieldCheck className="w-4 h-4" />}
+                {pendingApproval && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                )}
+              </button>
               <button
                 onClick={() => setIsSearchOpen(true)}
                 className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
@@ -1056,8 +1146,78 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
             </div>
           </div>
 
-          {/* Center Content Area */}
-          <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-start select-text">
+          {/* Workspace Views */}
+          {activeNav === 'github' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <GitHubView
+                onSendMessage={(prompt) => {
+                  setActiveNav('chat');
+                  handleSendMessage(prompt, 'chat');
+                }}
+                onOpenTerminal={() => {
+                  setActiveNav('terminal');
+                }}
+              />
+            </div>
+          )}
+
+          {activeNav === 'automations' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <AutomationsView />
+            </div>
+          )}
+
+          {activeNav === 'mcp' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <McpView />
+            </div>
+          )}
+
+          {activeNav === 'explorer' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <FileExplorerView
+                onAskAiAboutFile={(path, content) => {
+                  setActiveNav('chat');
+                  setInputMessage(`Tolong analisa file ${path}:\n\`\`\`\n${content.slice(0, 4000)}\n\`\`\``);
+                }}
+                onOpenInTerminal={() => {
+                  setActiveNav('terminal');
+                }}
+              />
+            </div>
+          )}
+
+          {activeNav === 'ssh' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <SshTerminalView />
+            </div>
+          )}
+
+          {activeNav === 'terminal' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <TerminalView />
+            </div>
+          )}
+
+          {activeNav === 'code' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+              <CodeEditorView
+                files={codeFiles}
+                onRunPreview={() => {
+                  setRightPanelView('browser');
+                  setIsRightPanelOpen(true);
+                }}
+                onOpenTerminal={() => {
+                  setActiveNav('terminal');
+                }}
+              />
+            </div>
+          )}
+
+          {/* Center Content Area for Chat / Documents / Creative Tasks */}
+          {activeNav !== 'github' && activeNav !== 'automations' && activeNav !== 'mcp' && activeNav !== 'terminal' && activeNav !== 'code' && activeNav !== 'explorer' && activeNav !== 'ssh' && (
+            <>
+              <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-start select-text">
 
             {/* VIEW A: WELCOME HERO (EXACT MATCH TO DESIGN) */}
             {!inChatMode && (
@@ -1536,6 +1696,8 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               </div>
             </div>
           </div>
+            </>
+          )}
         </main>
 
         {/* ───────────────────────────────────────────────────────────
@@ -1966,6 +2128,14 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
           </>
         )}
       </div>
+
+      {/* Approval & Audit Center Modal */}
+      <ApprovalCenterModal
+        isOpen={approvalCenterOpen}
+        onClose={() => setApprovalCenterOpen(false)}
+        pendingApproval={pendingApproval as any}
+        onDecideApproval={decideApproval}
+      />
 
       {/* Settings Modal */}
       <SettingsModal

@@ -18,8 +18,33 @@ pub mod web_ext;
 
 pub use registry::{Tool, ToolContext, ToolRegistry, ToolSchema};
 
+#[allow(dead_code)]
+fn register_prioritized_gap_tools(reg: &mut ToolRegistry) {
+    // 8. Approval & Session Operations
+    reg.register(Box::new(ops_ext::ApprovalListTool));
+    reg.register(Box::new(ops_ext::ApprovalDecideTool));
+    reg.register(Box::new(ops_ext::SessionListTool));
+    reg.register(Box::new(ops_ext::SessionExportTool));
+
+    // 9. Memory & Knowledge
+    reg.register(Box::new(memory::MemoryStoreTool));
+    reg.register(Box::new(memory::MemoryRecallTool));
+    reg.register(Box::new(ops_ext::MemorySearchTool));
+
+    // 10. Artifact Lifecycle
+    reg.register(Box::new(artifact_gen::ArtifactUpdateTool));
+    reg.register(Box::new(ops_ext::ArtifactDeleteTool));
+    reg.register(Box::new(ops_ext::ArtifactExportTool));
+
+    // 11. Runtime Controls
+    reg.register(Box::new(shell_ext::ProcessKillTool));
+    reg.register(Box::new(system::EnvListTool));
+    reg.register(Box::new(system::EnvGetTool));
+}
+
 pub fn build_full_tool_registry() -> ToolRegistry {
     let mut reg = ToolRegistry::new();
+    register_prioritized_gap_tools(&mut reg);
 
     // 1. Filesystem & Termigo Compatibility
     reg.register(Box::new(fs::FsReadTool));

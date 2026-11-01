@@ -492,3 +492,4 @@ export const AutomationsView: React.FC = () => {
     </div>
   );
 };
+

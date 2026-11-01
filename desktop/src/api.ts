@@ -28,6 +28,52 @@ export interface OAuthLoginResponse {
   account?: OAuthAccountInfo;
 }
 
+export interface FsEntryItem {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  modified_at?: string;
+  extension?: string;
+}
+
+export interface FsListResult {
+  current_path: string;
+  workspace_root: string;
+  entries: FsEntryItem[];
+  error?: string;
+}
+
+export interface FsReadResult {
+  path: string;
+  name: string;
+  size: number;
+  is_text: boolean;
+  content?: string;
+  base64?: string;
+  error?: string;
+}
+
+export interface SshProfile {
+  id: string;
+  alias: string;
+  host: string;
+  port: number;
+  user: string;
+  key_path?: string;
+  auth_type: string;
+  description?: string;
+  created_at: string;
+}
+
+export interface SkillItemInfo {
+  name: string;
+  title: string;
+  description: string;
+  path: string;
+  content: string;
+}
+
 export const api = {
   getBaseUrl(): string {
     if (typeof window !== 'undefined') {
@@ -347,6 +393,103 @@ export const api = {
   async getAutomationLogs(): Promise<any[]> {
     const res = await fetch(`${this.getBaseUrl()}/api/automations/logs`);
     if (!res.ok) return [];
+    return res.json();
+  },
+
+  // File Explorer APIs
+  async fsList(path?: string): Promise<FsListResult> {
+    const url = path ? `${this.getBaseUrl()}/api/fs/list?path=${encodeURIComponent(path)}` : `${this.getBaseUrl()}/api/fs/list`;
+    const res = await fetch(url);
+    if (!res.ok) return { current_path: '', workspace_root: '', entries: [], error: 'Failed to list directory' };
+    return res.json();
+  },
+
+  async fsRead(path: string): Promise<FsReadResult> {
+    const res = await fetch(`${this.getBaseUrl()}/api/fs/read?path=${encodeURIComponent(path)}`);
+    if (!res.ok) return { path, name: '', size: 0, is_text: false, error: 'Failed to read file' };
+    return res.json();
+  },
+
+  async fsWrite(path: string, content: string): Promise<{ success: boolean; error?: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/fs/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, content }),
+    });
+    return res.json();
+  },
+
+  async fsMkdir(path: string): Promise<{ success: boolean; error?: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/fs/mkdir`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    return res.json();
+  },
+
+  async fsDelete(path: string): Promise<{ success: boolean; error?: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/fs/delete?path=${encodeURIComponent(path)}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+
+  // SSH Remote APIs
+  async getSshProfiles(): Promise<{ profiles: SshProfile[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/ssh/profiles`);
+    if (!res.ok) return { profiles: [] };
+    return res.json();
+  },
+
+  async saveSshProfile(profile: SshProfile): Promise<{ success: boolean; profiles: SshProfile[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/ssh/profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    });
+    return res.json();
+  },
+
+  async deleteSshProfile(id: string): Promise<{ success: boolean; profiles: SshProfile[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/ssh/profiles/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+
+  async execSsh(payload: { profile_id?: string; host?: string; port?: number; user?: string; key_path?: string; command: string }): Promise<TerminalExecResult> {
+    const res = await fetch(`${this.getBaseUrl()}/api/ssh/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      return { exit_code: 1, stdout: '', stderr: 'SSH execution request failed', success: false, cwd: '' };
+    }
+    return res.json();
+  },
+
+  // Skills APIs
+  async getSkills(): Promise<{ skills: SkillItemInfo[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/skills`);
+    if (!res.ok) return { skills: [] };
+    return res.json();
+  },
+
+  async saveSkill(name: string, content: string): Promise<{ success: boolean; path?: string; error?: string }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/skills`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content }),
+    });
+    return res.json();
+  },
+
+  async deleteSkill(name: string): Promise<{ success: boolean }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/skills/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
     return res.json();
   },
 

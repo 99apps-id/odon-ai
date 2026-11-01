@@ -33,3 +33,4 @@ futures-util = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 reqwest = { workspace = true }
+base64 = { workspace = true }

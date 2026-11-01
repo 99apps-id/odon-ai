@@ -334,7 +334,20 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/terminal/exec", post(execute_terminal))
                 .route("/api/terminal/ws", get(ws_terminal_handler))
                 .route("/api/events", get(sse_events))
-                .route("/api/files/{*path}", get(serve_file));
+                .route("/api/files/{*path}", get(serve_file))
+                // File Explorer APIs
+                .route("/api/fs/list", get(fs_list_dir))
+                .route("/api/fs/read", get(fs_read_file))
+                .route("/api/fs/write", post(fs_write_file))
+                .route("/api/fs/mkdir", post(fs_mkdir))
+                .route("/api/fs/delete", axum::routing::delete(fs_delete_path))
+                // SSH Remote APIs
+                .route("/api/ssh/profiles", get(get_ssh_profiles).post(save_ssh_profile))
+                .route("/api/ssh/profiles/{id}", axum::routing::delete(delete_ssh_profile))
+                .route("/api/ssh/exec", post(exec_ssh_command))
+                // Skills APIs
+                .route("/api/skills", get(get_skills_list).post(save_skill_item))
+                .route("/api/skills/{name}", axum::routing::delete(delete_skill_item));
 
             let dist_path = std::path::Path::new("desktop/dist");
             if dist_path.exists() {
@@ -1647,4 +1660,449 @@ async fn trigger_automation(
 async fn get_automation_logs(State(state): State<AppState>) -> impl IntoResponse {
     let logs = state.automation_logs.read().await.clone();
     Json(json!(logs))
+}
+
+// ─────────────────────────────────────────────────────────────
+// FILE EXPLORER HANDLERS
+// ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct FsListQuery {
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FsEntryItem {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+    modified_at: Option<String>,
+    extension: Option<String>,
+}
+
+async fn fs_list_dir(
+    State(state): State<AppState>,
+    Query(q): Query<FsListQuery>,
+) -> impl IntoResponse {
+    let target = q.path.unwrap_or_else(|| ".".to_string());
+    let path = std::path::Path::new(&target);
+
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::path::Path::new(&state.workspace_root).join(path)
+    };
+
+    let read_res = std::fs::read_dir(&abs);
+    match read_res {
+        Ok(entries) => {
+            let mut list = Vec::new();
+            for entry in entries.flatten() {
+                let p = entry.path();
+                let is_dir = p.is_dir();
+                let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let size = if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) };
+                let ext = p.extension().map(|e| e.to_string_lossy().to_string());
+                let modified = entry.metadata().ok().and_then(|m| m.modified().ok()).map(|t| {
+                    chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
+                });
+                let rel = p.strip_prefix(&state.workspace_root)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+
+                list.push(FsEntryItem {
+                    name,
+                    path: rel,
+                    is_dir,
+                    size,
+                    modified_at: modified,
+                    extension: ext,
+                });
+            }
+
+            // Sort directories first, then alphabetical
+            list.sort_by(|a, b| {
+                if a.is_dir != b.is_dir {
+                    b.is_dir.cmp(&a.is_dir)
+                } else {
+                    a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                }
+            });
+
+            Json(json!({
+                "current_path": abs.to_string_lossy().replace('\\', "/"),
+                "workspace_root": state.workspace_root,
+                "entries": list
+            }))
+        }
+        Err(e) => Json(json!({
+            "error": format!("Cannot open path: {}", e),
+            "entries": []
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct FsReadQuery {
+    path: String,
+}
+
+async fn fs_read_file(
+    State(state): State<AppState>,
+    Query(q): Query<FsReadQuery>,
+) -> impl IntoResponse {
+    let p = std::path::Path::new(&q.path);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::Path::new(&state.workspace_root).join(p)
+    };
+
+    match std::fs::read(&abs) {
+        Ok(bytes) => {
+            let size = bytes.len() as u64;
+            match String::from_utf8(bytes.clone()) {
+                Ok(content) => Json(json!({
+                    "path": q.path,
+                    "name": abs.file_name().unwrap_or_default().to_string_lossy(),
+                    "size": size,
+                    "is_text": true,
+                    "content": content
+                })),
+                Err(_) => {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    Json(json!({
+                        "path": q.path,
+                        "name": abs.file_name().unwrap_or_default().to_string_lossy(),
+                        "size": size,
+                        "is_text": false,
+                        "base64": b64
+                    }))
+                }
+            }
+        }
+        Err(e) => Json(json!({ "error": format!("Failed to read file: {}", e) })),
+    }
+}
+
+#[derive(Deserialize)]
+struct FsWritePayload {
+    path: String,
+    content: String,
+}
+
+async fn fs_write_file(
+    State(state): State<AppState>,
+    Json(payload): Json<FsWritePayload>,
+) -> impl IntoResponse {
+    let p = std::path::Path::new(&payload.path);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::Path::new(&state.workspace_root).join(p)
+    };
+
+    if let Some(parent) = abs.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    match std::fs::write(&abs, payload.content.as_bytes()) {
+        Ok(_) => Json(json!({ "success": true, "path": payload.path })),
+        Err(e) => Json(json!({ "success": false, "error": e.to_string() })),
+    }
+}
+
+#[derive(Deserialize)]
+struct FsMkdirPayload {
+    path: String,
+}
+
+async fn fs_mkdir(
+    State(state): State<AppState>,
+    Json(payload): Json<FsMkdirPayload>,
+) -> impl IntoResponse {
+    let p = std::path::Path::new(&payload.path);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::Path::new(&state.workspace_root).join(p)
+    };
+
+    match std::fs::create_dir_all(&abs) {
+        Ok(_) => Json(json!({ "success": true, "path": payload.path })),
+        Err(e) => Json(json!({ "success": false, "error": e.to_string() })),
+    }
+}
+
+#[derive(Deserialize)]
+struct FsDeleteQuery {
+    path: String,
+}
+
+async fn fs_delete_path(
+    State(state): State<AppState>,
+    Query(q): Query<FsDeleteQuery>,
+) -> impl IntoResponse {
+    let p = std::path::Path::new(&q.path);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::path::Path::new(&state.workspace_root).join(p)
+    };
+
+    let res = if abs.is_dir() {
+        std::fs::remove_dir_all(&abs)
+    } else {
+        std::fs::remove_file(&abs)
+    };
+
+    match res {
+        Ok(_) => Json(json!({ "success": true, "path": q.path })),
+        Err(e) => Json(json!({ "success": false, "error": e.to_string() })),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SSH REMOTE PROFILE & EXEC HANDLERS
+// ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+struct SshProfile {
+    id: String,
+    alias: String,
+    host: String,
+    port: u16,
+    user: String,
+    key_path: Option<String>,
+    auth_type: String,
+    description: Option<String>,
+    created_at: String,
+}
+
+fn get_ssh_profiles_path() -> PathBuf {
+    let base = std::env::var_os("ODON_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(".odon").join("ssh-profiles.json")
+}
+
+fn load_ssh_profiles() -> Vec<SshProfile> {
+    let path = get_ssh_profiles_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(profiles) = serde_json::from_str::<Vec<SshProfile>>(&data) {
+            return profiles;
+        }
+    }
+    vec![
+        SshProfile {
+            id: "vps-naracitra".to_string(),
+            alias: "vps-naracitra".to_string(),
+            host: "103.126.116.111".to_string(),
+            port: 2233,
+            user: "naracitrasolusindo".to_string(),
+            key_path: Some("~/.ssh/Nara.pem".to_string()),
+            auth_type: "key".to_string(),
+            description: Some("Ubuntu 24.04 Production VPS (Naracitra)".to_string()),
+            created_at: "2026-10-19T00:00:00Z".to_string(),
+        },
+        SshProfile {
+            id: "laptop-farka1in".to_string(),
+            alias: "laptop-farka1in".to_string(),
+            host: "100.68.30.91".to_string(),
+            port: 22,
+            user: "iwan".to_string(),
+            key_path: None,
+            auth_type: "key".to_string(),
+            description: Some("Tailscale Windows 10 Home Workstation".to_string()),
+            created_at: "2026-10-19T00:00:00Z".to_string(),
+        },
+    ]
+}
+
+fn save_ssh_profiles_to_disk(profiles: &[SshProfile]) {
+    let path = get_ssh_profiles_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(data) = serde_json::to_string_pretty(profiles) {
+        let _ = std::fs::write(&path, data);
+    }
+}
+
+async fn get_ssh_profiles() -> impl IntoResponse {
+    let profiles = load_ssh_profiles();
+    Json(json!({ "profiles": profiles }))
+}
+
+async fn save_ssh_profile(
+    Json(profile): Json<SshProfile>,
+) -> impl IntoResponse {
+    let mut profiles = load_ssh_profiles();
+    if let Some(idx) = profiles.iter().position(|p| p.id == profile.id) {
+        profiles[idx] = profile;
+    } else {
+        profiles.push(profile);
+    }
+    save_ssh_profiles_to_disk(&profiles);
+    Json(json!({ "success": true, "profiles": profiles }))
+}
+
+async fn delete_ssh_profile(
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut profiles = load_ssh_profiles();
+    profiles.retain(|p| p.id != id);
+    save_ssh_profiles_to_disk(&profiles);
+    Json(json!({ "success": true, "profiles": profiles }))
+}
+
+#[derive(Deserialize)]
+struct SshExecPayload {
+    profile_id: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    user: Option<String>,
+    key_path: Option<String>,
+    command: String,
+}
+
+async fn exec_ssh_command(
+    Json(req): Json<SshExecPayload>,
+) -> impl IntoResponse {
+    let profiles = load_ssh_profiles();
+    let profile = req.profile_id.as_ref().and_then(|pid| profiles.iter().find(|p| &p.id == pid || &p.alias == pid));
+
+    let host = req.host.as_deref().or_else(|| profile.map(|p| p.host.as_str())).unwrap_or("localhost");
+    let port = req.port.or_else(|| profile.map(|p| p.port)).unwrap_or(22);
+    let user = req.user.as_deref().or_else(|| profile.map(|p| p.user.as_str())).unwrap_or("root");
+    let key = req.key_path.as_deref().or_else(|| profile.and_then(|p| p.key_path.as_deref()));
+
+    let mut cmd = tokio::process::Command::new("ssh");
+    cmd.arg("-p").arg(port.to_string());
+    cmd.arg("-o").arg("StrictHostKeyChecking=no");
+    cmd.arg("-o").arg("ConnectTimeout=10");
+
+    if let Some(k) = key {
+        let expanded = if k.starts_with('~') {
+            if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+                let home_str = home.to_string_lossy().to_string();
+                k.replacen('~', &home_str, 1)
+            } else {
+                k.to_string()
+            }
+        } else {
+            k.to_string()
+        };
+        cmd.arg("-i").arg(expanded);
+    }
+
+    cmd.arg(format!("{user}@{host}"));
+    cmd.arg(&req.command);
+
+    match cmd.output().await {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Json(json!({
+                "exit_code": output.status.code().unwrap_or(-1),
+                "stdout": stdout,
+                "stderr": stderr,
+                "success": output.status.success()
+            }))
+        }
+        Err(e) => Json(json!({
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": format!("Failed to execute ssh: {}", e),
+            "success": false
+        })),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SKILLS HANDLERS (.odon/skills)
+// ─────────────────────────────────────────────────────────────
+
+fn get_skills_dir() -> PathBuf {
+    let base = std::env::var_os("ODON_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(".odon").join("skills")
+}
+
+#[derive(Serialize)]
+struct SkillItemInfo {
+    name: String,
+    title: String,
+    description: String,
+    path: String,
+    content: String,
+}
+
+async fn get_skills_list() -> impl IntoResponse {
+    let dir = get_skills_dir();
+    let mut skills = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().map_or(false, |ext| ext == "md") {
+                let name = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                let content = std::fs::read_to_string(&p).unwrap_or_default();
+                let first_line = content.lines().next().unwrap_or("").trim_start_matches('#').trim().to_string();
+                let title = if first_line.is_empty() { name.clone() } else { first_line };
+                let desc = content.lines().nth(1).unwrap_or("").trim().to_string();
+
+                skills.push(SkillItemInfo {
+                    name,
+                    title,
+                    description: desc,
+                    path: p.to_string_lossy().to_string(),
+                    content,
+                });
+            }
+        }
+    }
+
+    Json(json!({ "skills": skills }))
+}
+
+#[derive(Deserialize)]
+struct SaveSkillPayload {
+    name: String,
+    content: String,
+}
+
+async fn save_skill_item(
+    Json(payload): Json<SaveSkillPayload>,
+) -> impl IntoResponse {
+    let dir = get_skills_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let filename = format!("{}.md", payload.name.trim().replace(' ', "-").to_lowercase());
+    let path = dir.join(filename);
+
+    match std::fs::write(&path, payload.content.as_bytes()) {
+        Ok(_) => Json(json!({ "success": true, "path": path.to_string_lossy() })),
+        Err(e) => Json(json!({ "success": false, "error": e.to_string() })),
+    }
+}
+
+async fn delete_skill_item(
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let dir = get_skills_dir();
+    let filename = format!("{}.md", name);
+    let path = dir.join(filename);
+
+    match std::fs::remove_file(&path) {
+        Ok(_) => Json(json!({ "success": true })),
+        Err(e) => Json(json!({ "success": false, "error": e.to_string() })),
+    }
 }

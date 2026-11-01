@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,108 +7,173 @@ import {
   ExternalLink,
   Monitor,
   Smartphone,
-  Search,
-  Plus,
-  BookOpen,
-  Tag,
-  Clock,
-  Trash2,
-  SlidersHorizontal,
+  Tablet,
+  Globe,
+  FileCode,
+  Copy,
+  Check,
+  Send,
+  Eye,
+  Terminal,
+  Sparkles,
+  Info,
+  Maximize2,
 } from 'lucide-react';
 
-interface NoteItem {
-  id: string;
-  title: string;
-  body: string;
-  tag: 'architecture' | 'odon' | 'research';
-  createdAt: string;
+interface BrowserPreviewViewProps {
+  initialUrl?: string;
+  initialHtml?: string;
+  onSendToAgent?: (text: string) => void;
 }
 
-export function BrowserPreviewView() {
-  const [url, setUrl] = useState('http://localhost:3000/preview/notes');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [viewportMode, setViewportMode] = useState<'desktop' | 'mobile'>('desktop');
-  
-  // Interactive notes state
-  const [search, setSearch] = useState('');
-  const [selectedTag, setSelectedTag] = useState<string>('all');
-  const [notes, setNotes] = useState<NoteItem[]>([
-    {
-      id: '1',
-      title: 'React 19 Architecture',
-      body: 'Exploring useActionState, useOptimistic, and Server Actions for responsive asynchronous UI state.',
-      tag: 'architecture',
-      createdAt: '10:15 AM',
-    },
-    {
-      id: '2',
-      title: 'ODON Runtime Integration',
-      body: 'Autonomous tool loops with risk-tier policy gating and streaming action chips.',
-      tag: 'odon',
-      createdAt: '10:22 AM',
-    },
-    {
-      id: '3',
-      title: 'Local Knowledge Retrieval',
-      body: 'High-speed local vector storage backed by SQLite and BM25 indexers.',
-      tag: 'research',
-      createdAt: '10:24 AM',
-    },
-  ]);
+export function BrowserPreviewView({
+  initialUrl = 'http://127.0.0.1:4096/api/status',
+  initialHtml,
+  onSendToAgent,
+}: BrowserPreviewViewProps) {
+  const [url, setUrl] = useState<string>(initialUrl);
+  const [inputUrl, setInputUrl] = useState<string>(initialUrl);
+  const [htmlContent, setHtmlContent] = useState<string | null>(initialHtml || null);
+  const [mode, setMode] = useState<'iframe' | 'reader' | 'html'>('iframe');
+  const [viewportMode, setViewportMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [history, setHistory] = useState<string[]>([initialUrl]);
+  const [historyIndex, setHistoryIndex] = useState<number>(0);
+  const [extractedText, setExtractedText] = useState<string>('');
+  const [copied, setCopied] = useState<boolean>(false);
+  const [agentSent, setAgentSent] = useState<boolean>(false);
 
-  const [newTitle, setNewTitle] = useState('');
-  const [newBody, setNewBody] = useState('');
-  const [newTag, setNewTag] = useState<'architecture' | 'odon' | 'research'>('odon');
-  const [isAdding, setIsAdding] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Listen for global custom events to open URL or HTML in browser panel
+  useEffect(() => {
+    const handleOpenBrowser = (e: Event) => {
+      const customEvent = e as CustomEvent<{ url?: string; html?: string; mode?: 'iframe' | 'reader' | 'html' }>;
+      if (customEvent.detail?.url) {
+        navigateTo(customEvent.detail.url);
+      }
+      if (customEvent.detail?.html) {
+        setHtmlContent(customEvent.detail.html);
+        setMode('html');
+      }
+    };
+
+    window.addEventListener('odon:open-browser', handleOpenBrowser);
+    return () => window.removeEventListener('odon:open-browser', handleOpenBrowser);
+  }, [historyIndex, history]);
+
+  const navigateTo = (newUrl: string) => {
+    let formatted = newUrl.trim();
+    if (!formatted.startsWith('http://') && !formatted.startsWith('https://') && !formatted.startsWith('data:')) {
+      formatted = `https://${formatted}`;
+    }
+    setInputUrl(formatted);
+    setUrl(formatted);
+    setHtmlContent(null);
+    setMode('iframe');
+    setIsLoading(true);
+
+    const updatedHistory = history.slice(0, historyIndex + 1);
+    updatedHistory.push(formatted);
+    setHistory(updatedHistory);
+    setHistoryIndex(updatedHistory.length - 1);
+
+    // Fetch page text content in background for the Agent Reader
+    fetchPageText(formatted);
+  };
+
+  const fetchPageText = async (targetUrl: string) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:4096/api/fs/read?path=${encodeURIComponent(targetUrl)}`).catch(() => null);
+      if (res && res.ok) {
+        const text = await res.text();
+        setExtractedText(text.slice(0, 5000));
+        return;
+      }
+    } catch {
+      // Fallback text
+    }
+    setExtractedText(`URL: ${targetUrl}\nNavigated at: ${new Date().toLocaleTimeString()}\nMode: Embedded Web Preview`);
+  };
 
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 500);
+    setIsLoading(true);
+    if (iframeRef.current) {
+      iframeRef.current.src = url;
+    }
+    setTimeout(() => setIsLoading(false), 800);
   };
 
-  const handleAddNote = (e: React.FormEvent) => {
+  const handleBack = () => {
+    if (historyIndex > 0) {
+      const prev = history[historyIndex - 1];
+      setHistoryIndex(historyIndex - 1);
+      setUrl(prev);
+      setInputUrl(prev);
+    }
+  };
+
+  const handleForward = () => {
+    if (historyIndex < history.length - 1) {
+      const next = history[historyIndex + 1];
+      setHistoryIndex(historyIndex + 1);
+      setUrl(next);
+      setInputUrl(next);
+    }
+  };
+
+  const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim()) return;
-    const newNote: NoteItem = {
-      id: Date.now().toString(),
-      title: newTitle.trim(),
-      body: newBody.trim() || 'No description provided.',
-      tag: newTag,
-      createdAt: 'Just now',
-    };
-    setNotes([newNote, ...notes]);
-    setNewTitle('');
-    setNewBody('');
-    setIsAdding(false);
+    navigateTo(inputUrl);
   };
 
-  const handleDeleteNote = (id: string) => {
-    setNotes(notes.filter((n) => n.id !== id));
+  const handleSendToAgent = () => {
+    const payload = `Saya sedang membuka web browser di panel dengan URL: ${url}\n\nKonten halaman / ringkasan:\n\`\`\`text\n${extractedText || 'Web page loaded at ' + url}\n\`\`\`\nMohon analisa halaman ini dan jelaskan fungsinya.`;
+    
+    if (onSendToAgent) {
+      onSendToAgent(payload);
+    } else {
+      window.dispatchEvent(new CustomEvent('odon:send-to-agent', { detail: { text: payload } }));
+    }
+
+    setAgentSent(true);
+    setTimeout(() => setAgentSent(false), 2500);
   };
 
-  const filteredNotes = notes.filter((n) => {
-    const matchesSearch = n.title.toLowerCase().includes(search.toLowerCase()) || n.body.toLowerCase().includes(search.toLowerCase());
-    const matchesTag = selectedTag === 'all' || n.tag === selectedTag;
-    return matchesSearch && matchesTag;
-  });
+  const handleCopyText = () => {
+    navigator.clipboard.writeText(extractedText || url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
-    <div className="h-full flex flex-col bg-white rounded-lg overflow-hidden border border-neutral-200 shadow-xs">
+    <div className="h-full flex flex-col bg-white rounded-2xl overflow-hidden border border-neutral-200/90 shadow-2xs font-sans">
       {/* ─────────────────────────────────────────────────────────────
-          MINIMALIST BROWSER BAR
+          MINIMALIST BROWSER TOP BAR
       ───────────────────────────────────────────────────────────── */}
-      <div className="bg-[#f9f9f9] border-b border-neutral-200 px-3 py-2 flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-1">
-          <button className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60 transition-colors" title="Back">
+      <div className="bg-[#f9fafb] border-b border-neutral-200/80 px-3 py-2 flex items-center justify-between gap-2 shrink-0">
+        {/* Navigation Arrows & Refresh */}
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={handleBack}
+            disabled={historyIndex <= 0}
+            className="p-1 rounded-md text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/60 transition-colors disabled:opacity-30 cursor-pointer"
+            title="Back"
+          >
             <ArrowLeft className="w-3.5 h-3.5" />
           </button>
-          <button className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60 transition-colors" title="Forward">
+          <button
+            onClick={handleForward}
+            disabled={historyIndex >= history.length - 1}
+            className="p-1 rounded-md text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/60 transition-colors disabled:opacity-30 cursor-pointer"
+            title="Forward"
+          >
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleRefresh}
-            className={`p-1 rounded text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/60 transition-colors ${
-              isRefreshing ? 'animate-spin text-neutral-900' : ''
+            className={`p-1 rounded-md text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/60 transition-colors cursor-pointer ${
+              isLoading ? 'animate-spin text-blue-600' : ''
             }`}
             title="Reload preview"
           >
@@ -116,200 +181,187 @@ export function BrowserPreviewView() {
           </button>
         </div>
 
-        {/* URL Bar */}
-        <div className="flex-1 max-w-sm bg-white border border-neutral-300 rounded-md px-2.5 py-1 flex items-center gap-1.5 shadow-2xs">
-          <Lock className="w-3 h-3 text-neutral-500 shrink-0" />
+        {/* URL Address Bar */}
+        <form onSubmit={handleUrlSubmit} className="flex-1 max-w-md bg-white border border-neutral-300/80 rounded-xl px-2.5 py-1 flex items-center gap-1.5 shadow-2xs focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+          <Lock className="w-3 h-3 text-emerald-600 shrink-0" />
           <input
             type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            className="flex-1 text-xs font-mono text-neutral-700 outline-none bg-transparent"
+            value={inputUrl}
+            onChange={(e) => setInputUrl(e.target.value)}
+            placeholder="Type URL (e.g. http://localhost:3000)..."
+            className="flex-1 text-xs font-mono text-neutral-800 outline-none bg-transparent"
           />
           <span className="text-[10px] font-mono text-neutral-500 px-1 py-0.2 rounded bg-neutral-100 shrink-0">
-            200 OK
+            {isLoading ? 'Loading...' : 'Ready'}
           </span>
-        </div>
+        </form>
 
-        {/* Viewport switch & Popout */}
+        {/* Viewport switch & Actions */}
         <div className="flex items-center gap-1">
-          <div className="flex items-center bg-neutral-200/70 p-0.5 rounded">
+          {/* Mode Switcher */}
+          <div className="flex items-center bg-neutral-200/70 p-0.5 rounded-lg text-[11px] font-medium text-neutral-600">
+            <button
+              onClick={() => setMode('iframe')}
+              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${mode === 'iframe' ? 'bg-white text-blue-600 font-semibold shadow-2xs' : 'hover:text-neutral-900'}`}
+              title="Interactive Web View"
+            >
+              <span className="flex items-center gap-1">
+                <Globe className="w-3 h-3" />
+                <span className="hidden sm:inline">Web</span>
+              </span>
+            </button>
+            <button
+              onClick={() => setMode('reader')}
+              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${mode === 'reader' ? 'bg-white text-blue-600 font-semibold shadow-2xs' : 'hover:text-neutral-900'}`}
+              title="Agent Text Reader & Inspector"
+            >
+              <span className="flex items-center gap-1">
+                <Eye className="w-3 h-3" />
+                <span className="hidden sm:inline">Reader</span>
+              </span>
+            </button>
+          </div>
+
+          {/* Viewport Width */}
+          <div className="flex items-center bg-neutral-200/70 p-0.5 rounded-lg">
             <button
               onClick={() => setViewportMode('desktop')}
-              className={`p-1 rounded transition-all ${viewportMode === 'desktop' ? 'bg-white text-neutral-900 shadow-2xs' : 'text-neutral-500'}`}
-              title="Desktop view"
+              className={`p-1 rounded-md transition-all cursor-pointer ${viewportMode === 'desktop' ? 'bg-white text-neutral-900 shadow-2xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+              title="Desktop viewport (100%)"
             >
               <Monitor className="w-3.5 h-3.5" />
             </button>
             <button
+              onClick={() => setViewportMode('tablet')}
+              className={`p-1 rounded-md transition-all cursor-pointer ${viewportMode === 'tablet' ? 'bg-white text-neutral-900 shadow-2xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+              title="Tablet viewport (768px)"
+            >
+              <Tablet className="w-3.5 h-3.5" />
+            </button>
+            <button
               onClick={() => setViewportMode('mobile')}
-              className={`p-1 rounded transition-all ${viewportMode === 'mobile' ? 'bg-white text-neutral-900 shadow-2xs' : 'text-neutral-500'}`}
-              title="Mobile view"
+              className={`p-1 rounded-md transition-all cursor-pointer ${viewportMode === 'mobile' ? 'bg-white text-neutral-900 shadow-2xs' : 'text-neutral-500 hover:text-neutral-800'}`}
+              title="Mobile viewport (375px)"
             >
               <Smartphone className="w-3.5 h-3.5" />
             </button>
           </div>
 
+          {/* Popout to OS Browser */}
           <a
-            href="http://localhost:3000"
+            href={url}
             target="_blank"
             rel="noreferrer"
-            className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded transition-colors"
-            title="Open in new window"
+            className="p-1.5 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+            title="Open in default browser window"
           >
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>
       </div>
 
+      {/* Quick URL Preset Chips */}
+      <div className="bg-[#fcfdfd] border-b border-neutral-100 px-3 py-1.5 flex items-center gap-2 overflow-x-auto text-[11px] shrink-0">
+        <span className="text-neutral-400 font-medium">Quick links:</span>
+        {[
+          { label: 'Daemon Status', target: 'http://127.0.0.1:4096/api/status' },
+          { label: 'Dev Server :3000', target: 'http://localhost:3000' },
+          { label: 'Vite :5173', target: 'http://localhost:5173' },
+          { label: 'Registered Tools', target: 'http://127.0.0.1:4096/api/tools' },
+          { label: 'MCP Servers', target: 'http://127.0.0.1:4096/api/mcp/servers' },
+        ].map((preset) => (
+          <button
+            key={preset.target}
+            onClick={() => navigateTo(preset.target)}
+            className="px-2 py-0.5 rounded-md bg-neutral-100 hover:bg-neutral-200/80 text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer shrink-0"
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+
       {/* ─────────────────────────────────────────────────────────────
-          CANVAS VIEWPORT
+          CANVAS VIEWPORT AREA
       ───────────────────────────────────────────────────────────── */}
-      <div className={`flex-1 overflow-auto bg-[#f4f4f4] p-4 flex justify-center items-start ${isRefreshing ? 'opacity-40 transition-opacity' : ''}`}>
-        <div
-          className={`bg-white text-neutral-900 rounded-lg shadow-sm border border-neutral-200 flex flex-col transition-all overflow-hidden ${
-            viewportMode === 'mobile' ? 'w-[360px] min-h-[540px]' : 'w-full min-h-full'
-          }`}
-        >
-          {/* Minimalist App Header */}
-          <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-md bg-neutral-900 flex items-center justify-center text-white">
-                <BookOpen className="w-3.5 h-3.5" />
-              </div>
-              <div>
-                <h1 className="text-sm font-semibold text-neutral-900 leading-none">Personal Notes</h1>
-                <span className="text-[11px] text-neutral-400">React 19 • Local Storage</span>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setIsAdding(!isAdding)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              New Note
-            </button>
+      <div className="flex-1 overflow-auto bg-neutral-100/60 p-3 flex justify-center items-stretch relative">
+        {mode === 'iframe' && (
+          <div
+            className={`bg-white rounded-xl shadow-xs border border-neutral-200/90 overflow-hidden flex flex-col transition-all duration-200 ${
+              viewportMode === 'mobile'
+                ? 'w-[375px]'
+                : viewportMode === 'tablet'
+                ? 'w-[768px]'
+                : 'w-full'
+            }`}
+          >
+            <iframe
+              ref={iframeRef}
+              src={htmlContent ? undefined : url}
+              srcDoc={htmlContent || undefined}
+              onLoad={() => setIsLoading(false)}
+              className="w-full h-full border-0 bg-white"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              title="Browser Preview Viewport"
+            />
           </div>
+        )}
 
-          {/* Search & Tags */}
-          <div className="p-4 border-b border-neutral-100 bg-neutral-50/50 space-y-3">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder="Search notes..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 rounded-md bg-white border border-neutral-200 text-xs text-neutral-900 placeholder-neutral-400 outline-none focus:border-neutral-900 transition-colors shadow-2xs"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-              {[
-                { id: 'all', label: 'All' },
-                { id: 'architecture', label: 'Architecture' },
-                { id: 'odon', label: 'ODON' },
-                { id: 'research', label: 'Research' },
-              ].map((tag) => (
+        {mode === 'reader' && (
+          <div className="w-full max-w-3xl bg-white rounded-xl border border-neutral-200 p-5 shadow-xs overflow-y-auto flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-600" />
+                <h3 className="font-bold text-xs text-neutral-900">Agent Page Reader & DOM Inspector</h3>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
-                  key={tag.id}
-                  onClick={() => setSelectedTag(tag.id)}
-                  className={`px-2.5 py-1 rounded text-xs transition-colors shrink-0 ${
-                    selectedTag === tag.id
-                      ? 'bg-neutral-900 text-white font-medium'
-                      : 'bg-white text-neutral-600 hover:text-neutral-900 border border-neutral-200'
-                  }`}
+                  onClick={handleCopyText}
+                  className="px-2.5 py-1 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer"
                 >
-                  {tag.label}
+                  {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                  <span>{copied ? 'Copied' : 'Copy Text'}</span>
                 </button>
-              ))}
+                <button
+                  onClick={handleSendToAgent}
+                  className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>{agentSent ? 'Sent to Agent!' : 'Send Page to Agent'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 mb-3 text-xs font-mono space-y-1">
+              <div><strong className="text-neutral-500 font-sans">Active URL:</strong> {url}</div>
+              <div><strong className="text-neutral-500 font-sans">Mode:</strong> Headless Reading & Analysis</div>
+              <div><strong className="text-neutral-500 font-sans">Last Read:</strong> {new Date().toLocaleTimeString()}</div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 bg-neutral-900 text-neutral-100 rounded-xl font-mono text-xs leading-relaxed">
+              <pre className="whitespace-pre-wrap">{extractedText || `Inspecting web content at ${url}...\n\nUse 'Send Page to Agent' so ODON can read, extract data, and reason about this page.`}</pre>
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Add Form */}
-          {isAdding && (
-            <form onSubmit={handleAddNote} className="p-4 bg-neutral-50 border-b border-neutral-200 space-y-2.5">
-              <div className="text-xs font-semibold text-neutral-800">New Note</div>
-              <input
-                type="text"
-                placeholder="Title"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                required
-                className="w-full px-3 py-1.5 rounded-md bg-white border border-neutral-300 text-xs text-neutral-900 outline-none focus:border-neutral-900"
-              />
-              <textarea
-                placeholder="Note body..."
-                value={newBody}
-                onChange={(e) => setNewBody(e.target.value)}
-                rows={2}
-                className="w-full px-3 py-1.5 rounded-md bg-white border border-neutral-300 text-xs text-neutral-900 outline-none focus:border-neutral-900 resize-none"
-              />
-              <div className="flex items-center justify-between pt-1">
-                <select
-                  value={newTag}
-                  onChange={(e) => setNewTag(e.target.value as any)}
-                  className="bg-white border border-neutral-300 text-xs text-neutral-700 rounded px-2 py-1 outline-none"
-                >
-                  <option value="architecture">Architecture</option>
-                  <option value="odon">ODON</option>
-                  <option value="research">Research</option>
-                </select>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setIsAdding(false)}
-                    className="px-2.5 py-1 rounded text-xs text-neutral-500 hover:text-neutral-800"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-3 py-1 rounded bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            </form>
-          )}
-
-          {/* Note List */}
-          <div className="flex-1 p-4 overflow-y-auto divide-y divide-neutral-100">
-            {filteredNotes.length === 0 ? (
-              <div className="text-center py-12 text-neutral-400 text-xs">
-                No notes found.
-              </div>
-            ) : (
-              filteredNotes.map((note) => (
-                <div key={note.id} className="py-3 first:pt-0 last:pb-0 group">
-                  <div className="flex items-baseline justify-between mb-1">
-                    <h3 className="font-medium text-xs text-neutral-900">{note.title}</h3>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-neutral-400 font-mono">{note.createdAt}</span>
-                      <button
-                        onClick={() => handleDeleteNote(note.id)}
-                        className="text-neutral-300 hover:text-neutral-700 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete note"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-xs text-neutral-600 leading-relaxed mb-2">{note.body}</p>
-                  <span className="inline-block text-[10px] font-mono text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded">
-                    #{note.tag}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Footer status */}
-          <div className="px-4 py-2 border-t border-neutral-100 bg-neutral-50 flex items-center justify-between text-[11px] text-neutral-400 font-mono">
-            <span>{notes.length} notes stored</span>
-            <span>Ready</span>
-          </div>
+      {/* ─────────────────────────────────────────────────────────────
+          BOTTOM STATUS STRIP
+      ───────────────────────────────────────────────────────────── */}
+      <div className="px-3.5 py-1.5 bg-white border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500 font-mono shrink-0">
+        <div className="flex items-center gap-2 truncate">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+          <span className="truncate max-w-sm">{url}</span>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={handleSendToAgent}
+            className="text-blue-600 hover:underline font-medium font-sans flex items-center gap-1 cursor-pointer"
+            title="Send current webpage context to ODON agent"
+          >
+            <Send className="w-3 h-3" />
+            <span>{agentSent ? 'Sent!' : 'Send to Agent'}</span>
+          </button>
+          <span>{viewportMode.toUpperCase()}</span>
         </div>
       </div>
     </div>

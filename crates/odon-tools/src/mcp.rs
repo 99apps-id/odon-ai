@@ -61,8 +61,14 @@ pub fn load_mcp_servers() -> Vec<McpServerConfig> {
             name: "GitHub MCP Server".to_string(),
             transport: "stdio".to_string(),
             command: Some("npx".to_string()),
-            args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-github".to_string()]),
-            env: Some(HashMap::from([("GITHUB_PERSONAL_ACCESS_TOKEN".to_string(), "".to_string())])),
+            args: Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-github".to_string(),
+            ]),
+            env: Some(HashMap::from([(
+                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
+                "".to_string(),
+            )])),
             url: None,
             enabled: true,
             tools: vec![
@@ -83,31 +89,37 @@ pub fn load_mcp_servers() -> Vec<McpServerConfig> {
             name: "PostgreSQL MCP Server".to_string(),
             transport: "stdio".to_string(),
             command: Some("npx".to_string()),
-            args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-postgres".to_string(), "postgresql://localhost/mydb".to_string()]),
+            args: Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-postgres".to_string(),
+                "postgresql://localhost/mydb".to_string(),
+            ]),
             env: None,
             url: None,
             enabled: false,
-            tools: vec![
-                McpToolInfo {
-                    name: "postgres_query".to_string(),
-                    description: "Run read-only SQL queries on connected database".to_string(),
-                    input_schema: json!({ "type": "object", "properties": { "sql": { "type": "string" } }, "required": ["sql"] }),
-                },
-            ],
+            tools: vec![McpToolInfo {
+                name: "postgres_query".to_string(),
+                description: "Run read-only SQL queries on connected database".to_string(),
+                input_schema: json!({ "type": "object", "properties": { "sql": { "type": "string" } }, "required": ["sql"] }),
+            }],
         },
         McpServerConfig {
             id: "memory".to_string(),
             name: "Memory Graph MCP Server".to_string(),
             transport: "stdio".to_string(),
             command: Some("npx".to_string()),
-            args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-memory".to_string()]),
+            args: Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-memory".to_string(),
+            ]),
             env: None,
             url: None,
             enabled: true,
             tools: vec![
                 McpToolInfo {
                     name: "memory_create_entities".to_string(),
-                    description: "Create new nodes/entities in the memory knowledge graph".to_string(),
+                    description: "Create new nodes/entities in the memory knowledge graph"
+                        .to_string(),
                     input_schema: json!({ "type": "object", "properties": { "entities": { "type": "array" } } }),
                 },
                 McpToolInfo {
@@ -122,17 +134,19 @@ pub fn load_mcp_servers() -> Vec<McpServerConfig> {
             name: "Filesystem MCP Server".to_string(),
             transport: "stdio".to_string(),
             command: Some("npx".to_string()),
-            args: Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string(), ".".to_string()]),
+            args: Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-filesystem".to_string(),
+                ".".to_string(),
+            ]),
             env: None,
             url: None,
             enabled: true,
-            tools: vec![
-                McpToolInfo {
-                    name: "fs_read_file".to_string(),
-                    description: "Read complete contents of a file".to_string(),
-                    input_schema: json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }),
-                },
-            ],
+            tools: vec![McpToolInfo {
+                name: "fs_read_file".to_string(),
+                description: "Read complete contents of a file".to_string(),
+                input_schema: json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }),
+            }],
         },
     ]
 }
@@ -142,10 +156,12 @@ pub fn save_mcp_servers(servers: &[McpServerConfig]) -> Result<()> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let data = serde_json::to_string_pretty(servers)
-        .map_err(|e| odon_core::OdonError::Internal(format!("Failed to serialize MCP servers: {}", e)))?;
-    std::fs::write(&path, data)
-        .map_err(|e| odon_core::OdonError::Internal(format!("Failed to write MCP servers: {}", e)))?;
+    let data = serde_json::to_string_pretty(servers).map_err(|e| {
+        odon_core::OdonError::Internal(format!("Failed to serialize MCP servers: {}", e))
+    })?;
+    std::fs::write(&path, data).map_err(|e| {
+        odon_core::OdonError::Internal(format!("Failed to write MCP servers: {}", e))
+    })?;
     Ok(())
 }
 
@@ -204,13 +220,18 @@ impl Tool for McpCallTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let server = args.get("server").and_then(|s| s.as_str()).unwrap_or("default");
+        let server = args
+            .get("server")
+            .and_then(|s| s.as_str())
+            .unwrap_or("default");
         let tool = args.get("tool").and_then(|t| t.as_str()).unwrap_or("ping");
         let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
-        
+
         let servers = load_mcp_servers();
-        let matched = servers.iter().find(|s| s.id == server || s.name.eq_ignore_ascii_case(server));
-        
+        let matched = servers
+            .iter()
+            .find(|s| s.id == server || s.name.eq_ignore_ascii_case(server));
+
         Ok(json!({
             "status": "success",
             "server": server,

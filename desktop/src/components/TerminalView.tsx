@@ -14,6 +14,8 @@ import {
   Loader2,
   ChevronDown,
   Square,
+  Sparkles,
+  Send,
 } from 'lucide-react';
 import { api } from '../api';
 import { TerminalInfo, TerminalExecResult } from '../types';
@@ -41,11 +43,12 @@ interface TerminalTab {
 
 interface TerminalViewProps {
   onClose?: () => void;
+  onSendToAgent?: (text: string) => void;
 }
 
 const DEFAULT_CWD = 'C:/Project/odon-ai';
 
-export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
+export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAgent }) => {
   const [terminalInfo, setTerminalInfo] = useState<TerminalInfo | null>(null);
   const [daemonOnline, setDaemonOnline] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
@@ -106,6 +109,69 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeTab?.history, activeTab?.isRunning]);
 
+  // Listen for global custom events to run command in terminal or receive agent tool calls
+  useEffect(() => {
+    const handleRunTerminalEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ command: string; focusPanel?: boolean }>;
+      if (customEvent.detail?.command) {
+        handleRunCommand(customEvent.detail.command);
+      }
+    };
+
+    const handleAgentTerminalEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<any>;
+      const p = customEvent.detail;
+      if (!p) return;
+      const cmd = p.arguments?.command || p.arguments?.script || p.tool_name || 'Agent Command';
+      const output = p.result ? (typeof p.result === 'string' ? p.result : JSON.stringify(p.result, null, 2)) : '';
+      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      setTabs((prev) => {
+        let agentTab = prev.find((t) => t.id === 'tab-agent');
+        if (!agentTab) {
+          agentTab = {
+            id: 'tab-agent',
+            title: '🤖 Agent Terminal',
+            shell: 'Agent Runner',
+            cwd: DEFAULT_CWD,
+            history: [],
+            commandHistory: [],
+            historyIndex: -1,
+            isRunning: false,
+          };
+          prev = [...prev, agentTab];
+        }
+
+        return prev.map((t) =>
+          t.id === 'tab-agent'
+            ? {
+                ...t,
+                history: [
+                  ...t.history,
+                  {
+                    id: `${Date.now()}-${Math.random()}`,
+                    command: cmd,
+                    stdout: output,
+                    stderr: '',
+                    exit_code: 0,
+                    cwd: DEFAULT_CWD,
+                    timestamp: nowStr,
+                  },
+                ],
+              }
+            : t
+        );
+      });
+    };
+
+    window.addEventListener('odon:run-terminal', handleRunTerminalEvent);
+    window.addEventListener('odon:agent-terminal-event', handleAgentTerminalEvent);
+    return () => {
+      window.removeEventListener('odon:run-terminal', handleRunTerminalEvent);
+      window.removeEventListener('odon:agent-terminal-event', handleAgentTerminalEvent);
+    };
+  }, [activeTabId, tabs]);
+
   const handleCreateTab = () => {
     const newId = `tab-${Date.now()}`;
     const newNumber = tabs.length + 1;
@@ -158,6 +224,15 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSendOutputToAgent = (item: HistoryItem) => {
+    const prompt = `Berikut hasil eksekusi terminal untuk perintah \`${item.command}\`:\n\n\`\`\`\n${item.stdout}${item.stderr ? '\n' + item.stderr : ''}\n\`\`\`\nMohon analisa output ini dan berikan rekomendasi atau tindakan selanjutnya.`;
+    if (onSendToAgent) {
+      onSendToAgent(prompt);
+    } else {
+      window.dispatchEvent(new CustomEvent('odon:send-to-agent', { detail: { text: prompt } }));
+    }
   };
 
   const handleRunCommand = async (cmdToRun?: string) => {
@@ -245,15 +320,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
             : t
         )
       );
-    } finally {
-      setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!activeTab) return;
     if (e.key === 'Enter') {
-      e.preventDefault();
       handleRunCommand();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
@@ -289,7 +360,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] text-[#c9d1d9] font-mono text-xs select-text">
+    <div className="flex flex-col h-full bg-[#0d1117] text-[#c9d1d9] font-mono text-xs select-text rounded-2xl overflow-hidden border border-neutral-800">
       {/* Tab bar header */}
       <div className="flex items-center justify-between px-3 py-2 bg-[#161b22] border-b border-[#30363d] shrink-0">
         <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
@@ -303,7 +374,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
                   setActiveTabId(tab.id);
                   setTimeout(() => inputRef.current?.focus(), 50);
                 }}
-                className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all font-medium border ${
+                className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all font-medium border cursor-pointer ${
                   isActive
                     ? 'bg-[#0d1117] text-white border-[#388bfd] shadow-sm'
                     : 'bg-[#21262d] text-[#8b949e] border-transparent hover:text-[#c9d1d9] hover:bg-[#30363d]'
@@ -314,7 +385,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
                 {tabs.length > 1 && (
                   <span
                     onClick={(e) => handleCloseTab(tab.id, e)}
-                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 rounded p-0.5 ml-1 transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 rounded p-0.5 ml-1 transition-opacity cursor-pointer"
                   >
                     <X className="w-3 h-3" />
                   </span>
@@ -326,7 +397,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
             type="button"
             onClick={handleCreateTab}
             title="New Terminal Tab"
-            className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#21262d] text-[#8b949e] hover:text-white hover:bg-[#30363d] transition-all"
+            className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#21262d] text-[#8b949e] hover:text-white hover:bg-[#30363d] transition-all cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -341,7 +412,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
             type="button"
             onClick={handleCopyHistory}
             title="Copy Output"
-            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors"
+            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors cursor-pointer"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
@@ -349,7 +420,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
             type="button"
             onClick={handleClear}
             title="Clear Buffer"
-            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors"
+            className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -358,7 +429,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
               type="button"
               onClick={onClose}
               title="Close Terminal"
-              className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors ml-1"
+              className="p-1.5 rounded-md hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors ml-1 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -371,46 +442,58 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
         <span className="text-[#8b949e] uppercase tracking-wider text-[10px]">Quick:</span>
         <button
           onClick={() => handleRunCommand('cargo test -p odon-tools')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#58a6ff] border border-[#30363d] transition-colors"
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#58a6ff] border border-[#30363d] transition-colors cursor-pointer"
         >
           cargo test
         </button>
         <button
           onClick={() => handleRunCommand('git status -s')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#7ee787] border border-[#30363d] transition-colors"
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#7ee787] border border-[#30363d] transition-colors cursor-pointer"
         >
           git status
         </button>
         <button
           onClick={() => handleRunCommand('git log -5 --oneline')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#d2a8ff] border border-[#30363d] transition-colors"
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#d2a8ff] border border-[#30363d] transition-colors cursor-pointer"
         >
           git log
         </button>
         <button
-          onClick={() => handleRunCommand('ls')}
-          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#ffa657] border border-[#30363d] transition-colors"
+          onClick={() => handleRunCommand('Get-Process -Name odond')}
+          className="px-2 py-0.5 rounded bg-[#161b22] hover:bg-[#30363d] text-[#ffa657] border border-[#30363d] transition-colors cursor-pointer"
         >
-          ls
+          check odond
         </button>
       </div>
 
       {/* Terminal Output Log Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {activeTab?.history.map((item) => (
-          <div key={item.id} className="space-y-1">
-            <div className="flex items-center gap-2 text-[#8b949e]">
-              <span className="text-[#58a6ff] font-semibold">❯</span>
-              <span className="text-[#e6edf3] font-semibold">{item.command}</span>
-              <span className="text-[10px] ml-auto opacity-60">{item.timestamp}</span>
+          <div key={item.id} className="space-y-1.5 group">
+            <div className="flex items-center justify-between text-[#8b949e]">
+              <div className="flex items-center gap-2">
+                <span className="text-[#58a6ff] font-semibold">❯</span>
+                <span className="text-[#e6edf3] font-semibold">{item.command}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSendOutputToAgent(item)}
+                  className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded text-[10.5px] text-[#58a6ff] hover:text-white bg-[#21262d] hover:bg-[#388bfd]/30 border border-[#30363d] transition-all flex items-center gap-1 cursor-pointer font-sans"
+                  title="Send terminal command and output to ODON agent for explanation or troubleshooting"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>Send to Agent</span>
+                </button>
+                <span className="text-[10px] opacity-60 font-mono">{item.timestamp}</span>
+              </div>
             </div>
             {item.stdout && (
-              <pre className="text-[#c9d1d9] whitespace-pre-wrap break-all pl-4 border-l border-[#30363d]/60 leading-relaxed">
+              <pre className="text-[#c9d1d9] whitespace-pre-wrap break-all pl-4 border-l-2 border-[#30363d] leading-relaxed font-mono">
                 {item.stdout}
               </pre>
             )}
             {item.stderr && (
-              <pre className="text-[#ff7b72] whitespace-pre-wrap break-all pl-4 border-l border-[#ff7b72]/40 leading-relaxed">
+              <pre className="text-[#ff7b72] whitespace-pre-wrap break-all pl-4 border-l-2 border-[#ff7b72]/60 leading-relaxed font-mono">
                 {item.stderr}
               </pre>
             )}
@@ -418,9 +501,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
         ))}
 
         {activeTab?.isRunning && (
-          <div className="flex items-center gap-2 text-[#58a6ff] py-1">
+          <div className="flex items-center gap-2 text-[#58a6ff] py-1 font-sans text-xs">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span className="text-xs">Executing command...</span>
+            <span>Executing command in native session...</span>
           </div>
         )}
 
@@ -448,7 +531,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
           type="button"
           onClick={() => handleRunCommand()}
           disabled={!inputVal.trim() || activeTab?.isRunning}
-          className="p-1.5 rounded-md bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:hover:bg-[#238636] text-white transition-colors"
+          className="p-1.5 rounded-md bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:hover:bg-[#238636] text-white transition-colors cursor-pointer"
         >
           <Play className="w-3.5 h-3.5" />
         </button>

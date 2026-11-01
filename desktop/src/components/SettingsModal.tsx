@@ -21,8 +21,16 @@ import {
   Radio,
   Plus,
   Trash2,
+  Bot,
+  Terminal,
+  Layers,
+  FileCode,
+  Play,
+  ShieldAlert,
+  Wifi,
+  FileText,
 } from 'lucide-react';
-import { api, OAuthAccountInfo, OAuthLoginResponse } from '../api';
+import { api, OAuthAccountInfo, OAuthLoginResponse, SshProfile, SkillItemInfo } from '../api';
 import { ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from '../types';
 import { ProviderLogo } from './ProviderLogo';
 
@@ -73,7 +81,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentModel,
   onSelectModel,
 }) => {
-  const [activeTab, setActiveTab] = useState<'providers' | 'system'>('providers');
+  type SettingsTab = 'providers' | 'agents' | 'skills' | 'mcp' | 'harness' | 'ssh' | 'system';
+  const [activeTab, setActiveTab] = useState<SettingsTab>('providers');
+
+  // Agents & Personas State
+  const [activePersona, setActivePersona] = useState<string>(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('odon_active_persona') || 'coder';
+    return 'coder';
+  });
+  const [customInstructions, setCustomInstructions] = useState<string>(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('odon_custom_instructions') || '';
+    return '';
+  });
+  const [effortLevel, setEffortLevel] = useState<string>(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('odon_effort_level') || 'high';
+    return 'high';
+  });
+
+  // Skills State
+  const [skillsList, setSkillsList] = useState<SkillItemInfo[]>([]);
+  const [newSkillName, setNewSkillName] = useState<string>('');
+  const [newSkillContent, setNewSkillContent] = useState<string>('');
+  const [isSkillFormOpen, setIsSkillFormOpen] = useState<boolean>(false);
+
+  // MCP Servers State
+  const [mcpServers, setMcpServers] = useState<any[]>([]);
+  const [newMcpName, setNewMcpName] = useState<string>('');
+  const [newMcpCommand, setNewMcpCommand] = useState<string>('');
+  const [newMcpTransport, setNewMcpTransport] = useState<string>('stdio');
+
+  // Harness & Policies State
+  const [executionMode, setExecutionMode] = useState<string>('Autonomous');
+  const [planMode, setPlanMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('odon_plan_mode') === 'true';
+    return false;
+  });
+  const [policies, setPolicies] = useState<string[]>([]);
+
+  // SSH Profiles State
+  const [sshProfiles, setSshProfiles] = useState<SshProfile[]>([]);
+
   const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
     return activeProviderId || (typeof window !== 'undefined' ? localStorage.getItem('odon_active_provider') : null) || 'openai';
@@ -198,6 +245,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
     }).catch(() => { });
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (activeTab === 'skills') {
+      api.getSkills().then((d) => setSkillsList(d.skills || [])).catch(() => {});
+    } else if (activeTab === 'mcp') {
+      api.getMcpServers().then((d) => setMcpServers(d || [])).catch(() => {});
+    } else if (activeTab === 'ssh') {
+      api.getSshProfiles().then((d) => setSshProfiles(d.profiles || [])).catch(() => {});
+    } else if (activeTab === 'harness') {
+      api.getApprovalPolicies().then((d) => setPolicies(d || [])).catch(() => {});
+      api.getSettings().then((s) => setExecutionMode(s.execution_mode || 'Autonomous')).catch(() => {});
+    }
+  }, [isOpen, activeTab]);
 
   const currentProvider = providers.find((p) => p.id === selectedProviderId) || providers[0];
 
@@ -335,7 +396,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
       <div
-        className="w-full max-w-4xl h-[650px] bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-neutral-200 dark:border-neutral-800 flex flex-col overflow-hidden text-neutral-900 dark:text-neutral-100"
+        className="w-full max-w-5xl h-[700px] bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-neutral-200 dark:border-neutral-800 flex flex-col overflow-hidden text-neutral-900 dark:text-neutral-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -345,30 +406,89 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Sliders className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-neutral-900 dark:text-white">Settings & Models</h3>
-              <p className="text-xs text-neutral-500">Configure OAuth accounts, official BYOK keys, and daemon</p>
+              <h3 className="font-bold text-sm text-neutral-900 dark:text-white">ODON Settings Center</h3>
+              <p className="text-xs text-neutral-500">Configure models, personas, skills, MCP, safety harness & remote SSH</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex bg-neutral-100 dark:bg-neutral-800 p-1 rounded-lg text-xs font-medium">
+            <div className="flex bg-neutral-100 dark:bg-neutral-800 p-1 rounded-xl text-xs font-medium overflow-x-auto max-w-2xl gap-0.5">
               <button
                 onClick={() => setActiveTab('providers')}
-                className={`px-3 py-1 rounded-md transition-all ${activeTab === 'providers'
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'providers'
                     ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
                     : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
-                  }`}
+                }`}
               >
-                Model Providers
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Providers</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('agents')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'agents'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Bot className="w-3.5 h-3.5" />
+                <span>Agents</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('skills')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'skills'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Skills</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('mcp')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'mcp'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>MCP</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('harness')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'harness'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>Harness</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('ssh')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'ssh'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Server className="w-3.5 h-3.5" />
+                <span>SSH</span>
               </button>
               <button
                 onClick={() => setActiveTab('system')}
-                className={`px-3 py-1 rounded-md transition-all ${activeTab === 'system'
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'system'
                     ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
                     : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
-                  }`}
+                }`}
               >
-                System & Daemon
+                <Globe className="w-3.5 h-3.5" />
+                <span>System</span>
               </button>
             </div>
             <button
@@ -933,6 +1053,520 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </div>
             )}
+          </div>
+        ) : activeTab === 'agents' ? (
+          /* Agents & Personas Tab */
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 text-[13px]">
+            <div className="space-y-3">
+              <div>
+                <span className="font-bold text-sm text-neutral-900 dark:text-white block">
+                  Autonomous Agent Personas
+                </span>
+                <span className="text-xs text-neutral-500">
+                  Select the active behavioral specialization for the AI engineer.
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  {
+                    id: 'coder',
+                    name: 'Autonomous Coder',
+                    badge: 'Fullstack Dev',
+                    desc: 'Decisive pair-programming, fast surgical edits, right-sized code without over-engineering.',
+                    icon: FileCode,
+                  },
+                  {
+                    id: 'auditor',
+                    name: 'Security Auditor',
+                    badge: 'Code Review & Audit',
+                    desc: 'Deep multi-layer static analysis, traces caller graphs, validates invariants & race conditions.',
+                    icon: ShieldAlert,
+                  },
+                  {
+                    id: 'pentest',
+                    name: 'Pentester & RE',
+                    badge: 'Offensive Security',
+                    desc: 'Authorized security auditing, port scanning, web application recon, and vulnerability verification.',
+                    icon: Wifi,
+                  },
+                  {
+                    id: 'architect',
+                    name: 'Systems Architect',
+                    badge: 'RFC & Architecture',
+                    desc: 'High-level systems design, PRDs, component interaction flows, and database schemas.',
+                    icon: Layers,
+                  },
+                  {
+                    id: 'sentinel',
+                    name: 'Autonomous Sentinel',
+                    badge: 'DevOps & Watchdog',
+                    desc: 'Continuous background monitoring, automated health probing, log analysis, and auto-healing.',
+                    icon: Server,
+                  },
+                ].map((persona) => {
+                  const isSelected = activePersona === persona.id;
+                  const Icon = persona.icon;
+                  return (
+                    <div
+                      key={persona.id}
+                      onClick={() => {
+                        setActivePersona(persona.id);
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('odon_active_persona', persona.id);
+                        }
+                      }}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer space-y-1.5 ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30'
+                          : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-850 hover:border-neutral-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Icon className={`w-4 h-4 ${isSelected ? 'text-blue-600' : 'text-neutral-500'}`} />
+                          <span className="font-semibold text-xs text-neutral-900 dark:text-white">
+                            {persona.name}
+                          </span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400">
+                          {persona.badge}
+                        </span>
+                      </div>
+                      <p className="text-[11.5px] text-neutral-500 leading-snug">{persona.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom System Prompt */}
+            <div className="space-y-2">
+              <label className="font-semibold text-neutral-800 dark:text-neutral-200 block">
+                Custom User Instructions & Guardrails
+              </label>
+              <textarea
+                value={customInstructions}
+                onChange={(e) => {
+                  setCustomInstructions(e.target.value);
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('odon_custom_instructions', e.target.value);
+                  }
+                }}
+                rows={4}
+                placeholder="Misal: Saya adalah Iwan, tuan kamu dan agen cybersecurity, fullstack developer, jago desain..."
+                className="w-full p-3 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/80 text-xs text-neutral-800 dark:text-neutral-200 outline-none focus:border-blue-500 font-mono"
+              />
+              <p className="text-[11.5px] text-neutral-500">
+                Instruksi ini akan disisipkan ke dalam context setiap kali agent berinteraksi.
+              </p>
+            </div>
+
+            {/* Effort Level */}
+            <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+              <div>
+                <span className="font-semibold text-neutral-800 dark:text-neutral-200 block">
+                  Thinking Reasoning Effort Level
+                </span>
+                <span className="text-xs text-neutral-500">
+                  Controls depth of scratchpad reasoning tokens before execution.
+                </span>
+              </div>
+              <div className="flex gap-1.5 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-lg text-xs font-semibold">
+                {['low', 'medium', 'high'].map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => {
+                      setEffortLevel(lvl);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('odon_effort_level', lvl);
+                      }
+                    }}
+                    className={`px-3 py-1 rounded-md uppercase tracking-wider text-[11px] transition-all ${
+                      effortLevel === lvl
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                    }`}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : activeTab === 'skills' ? (
+          /* Skills System Tab */
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-[13px]">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-bold text-sm text-neutral-900 dark:text-white block">
+                  Autonomous Skills (.odon/skills)
+                </span>
+                <span className="text-xs text-neutral-500">
+                  Reusable markdown procedures and automated routines callable by the agent.
+                </span>
+              </div>
+              <button
+                onClick={() => setIsSkillFormOpen(!isSkillFormOpen)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 cursor-pointer shadow-xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Skill</span>
+              </button>
+            </div>
+
+            {/* Create Skill Form */}
+            {isSkillFormOpen && (
+              <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-xs text-neutral-900 dark:text-white">Record New Skill</span>
+                  <button onClick={() => setIsSkillFormOpen(false)} className="text-neutral-400 hover:text-neutral-700">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={newSkillName}
+                  onChange={(e) => setNewSkillName(e.target.value)}
+                  placeholder="Skill name (e.g. pentest-recon, deploy-vps)"
+                  className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-mono outline-none focus:border-blue-500 bg-white dark:bg-neutral-800"
+                />
+                <textarea
+                  value={newSkillContent}
+                  onChange={(e) => setNewSkillContent(e.target.value)}
+                  rows={4}
+                  placeholder="# Pentest Recon Routine&#10;1. Scan target domain ports&#10;2. Check HTTP security headers&#10;3. Report findings"
+                  className="w-full p-3 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-mono outline-none focus:border-blue-500 bg-white dark:bg-neutral-800"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={async () => {
+                      if (!newSkillName.trim() || !newSkillContent.trim()) return;
+                      await api.saveSkill(newSkillName.trim(), newSkillContent);
+                      const res = await api.getSkills();
+                      setSkillsList(res.skills || []);
+                      setNewSkillName('');
+                      setNewSkillContent('');
+                      setIsSkillFormOpen(false);
+                    }}
+                    disabled={!newSkillName.trim()}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-xs"
+                  >
+                    Save Skill
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Skills List */}
+            {skillsList.length === 0 ? (
+              <div className="p-8 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-400">
+                Belum ada skill kustom di `.odon/skills`. Klik New Skill di atas untuk membuat resep prosedur otomatisasi.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-2.5">
+                {skillsList.map((skill) => (
+                  <div
+                    key={skill.name}
+                    className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-850 flex items-center justify-between"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-500" />
+                        <span className="font-semibold text-xs text-neutral-900 dark:text-white">
+                          {skill.title}
+                        </span>
+                        <span className="text-[10px] font-mono bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-600">
+                          {skill.name}.md
+                        </span>
+                      </div>
+                      <p className="text-[11.5px] text-neutral-500">{skill.description || 'Autonomous multi-step procedure.'}</p>
+                    </div>
+
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Delete skill ${skill.name}?`)) return;
+                        await api.deleteSkill(skill.name);
+                        const res = await api.getSkills();
+                        setSkillsList(res.skills || []);
+                      }}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'mcp' ? (
+          /* MCP Servers Tab */
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-[13px]">
+            <div>
+              <span className="font-bold text-sm text-neutral-900 dark:text-white block">
+                Model Context Protocol (MCP) Servers
+              </span>
+              <span className="text-xs text-neutral-500">
+                Connect external tool servers via standard stdio or SSE transport protocols.
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-850/50 space-y-3">
+              <span className="font-semibold text-xs text-neutral-800 dark:text-neutral-200 block">
+                Add MCP Server Connection
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Server ID</label>
+                  <input
+                    type="text"
+                    value={newMcpName}
+                    onChange={(e) => setNewMcpName(e.target.value)}
+                    placeholder="github-mcp, filesystem-mcp"
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-mono outline-none bg-white dark:bg-neutral-800"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Transport</label>
+                  <select
+                    value={newMcpTransport}
+                    onChange={(e) => setNewMcpTransport(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs outline-none bg-white dark:bg-neutral-800"
+                  >
+                    <option value="stdio">stdio (Local Command)</option>
+                    <option value="sse">sse (HTTP Server-Sent Events)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Command / Endpoint</label>
+                  <input
+                    type="text"
+                    value={newMcpCommand}
+                    onChange={(e) => setNewMcpCommand(e.target.value)}
+                    placeholder="npx -y @modelcontextprotocol/server-..."
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-mono outline-none bg-white dark:bg-neutral-800"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!newMcpName.trim() || !newMcpCommand.trim()) return;
+                  await api.saveMcpServer({
+                    name: newMcpName.trim(),
+                    transport: newMcpTransport,
+                    command: newMcpCommand.trim(),
+                    status: 'connected',
+                  });
+                  const servers = await api.getMcpServers();
+                  setMcpServers(servers || []);
+                  setNewMcpName('');
+                  setNewMcpCommand('');
+                }}
+                disabled={!newMcpName.trim()}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 cursor-pointer shadow-xs"
+              >
+                Register MCP Server
+              </button>
+            </div>
+
+            {/* List MCP Servers */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                Connected MCP Servers ({mcpServers.length})
+              </span>
+              {mcpServers.length === 0 ? (
+                <div className="p-6 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-400">
+                  No custom MCP servers configured. Built-in tools (149) are active.
+                </div>
+              ) : (
+                mcpServers.map((s, idx) => (
+                  <div key={idx} className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-850 flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-xs text-neutral-900 dark:text-white">{s.name}</div>
+                      <div className="text-[11px] text-neutral-400 font-mono">{s.command}</div>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                      Connected
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ) : activeTab === 'harness' ? (
+          /* Mode Harness & Security Tab */
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-[13px]">
+            <div>
+              <span className="font-bold text-sm text-neutral-900 dark:text-white block">
+                Mode Harness & Execution Safety Policy
+              </span>
+              <span className="text-xs text-neutral-500">
+                Configure agent autonomy, plan mode, and approval gates for dangerous operations.
+              </span>
+            </div>
+
+            {/* Execution Autonomy */}
+            <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-850/50 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-xs text-neutral-900 dark:text-white block">
+                    Execution Mode: {executionMode}
+                  </span>
+                  <span className="text-xs text-neutral-500">
+                    Autonomous mode automatically executes safe tools; Supervised pauses for confirmation.
+                  </span>
+                </div>
+                <div className="flex gap-1.5 bg-neutral-200 dark:bg-neutral-800 p-1 rounded-lg text-xs font-semibold">
+                  <button
+                    onClick={async () => {
+                      setExecutionMode('Autonomous');
+                      await api.updateSettings({ mode: 'Autonomous' });
+                    }}
+                    className={`px-3 py-1 rounded-md transition-all ${
+                      executionMode === 'Autonomous' ? 'bg-white text-blue-600 shadow-xs' : 'text-neutral-500'
+                    }`}
+                  >
+                    Autonomous
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setExecutionMode('Supervised');
+                      await api.updateSettings({ mode: 'Supervised' });
+                    }}
+                    className={`px-3 py-1 rounded-md transition-all ${
+                      executionMode === 'Supervised' ? 'bg-white text-blue-600 shadow-xs' : 'text-neutral-500'
+                    }`}
+                  >
+                    Supervised
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Plan Mode Toggle */}
+            <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+              <div>
+                <span className="font-semibold text-xs text-neutral-900 dark:text-white block">
+                  Enforce Plan Mode
+                </span>
+                <span className="text-xs text-neutral-500">
+                  Agent must formulate a structured plan (todo_write) before executing any mutating tool.
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  const next = !planMode;
+                  setPlanMode(next);
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('odon_plan_mode', String(next));
+                  }
+                }}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+                  planMode ? 'bg-blue-600 text-white' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600'
+                }`}
+              >
+                {planMode ? 'Plan Mode ON' : 'Plan Mode OFF'}
+              </button>
+            </div>
+
+            {/* Stored Approval Policies */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                  Always-Allowed Permissions ({policies.length})
+                </span>
+                {policies.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      for (const p of policies) {
+                        await api.deleteApprovalPolicy(p);
+                      }
+                      setPolicies([]);
+                    }}
+                    className="text-xs text-red-600 hover:underline cursor-pointer"
+                  >
+                    Revoke All
+                  </button>
+                )}
+              </div>
+
+              {policies.length === 0 ? (
+                <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 text-center text-xs text-neutral-400">
+                  No permanently remembered approval decisions yet. Click "Always Allow" on any approval prompt to whitelist.
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {policies.map((p) => (
+                    <div
+                      key={p}
+                      className="p-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between text-xs font-mono"
+                    >
+                      <span className="truncate">{p}</span>
+                      <button
+                        onClick={async () => {
+                          await api.deleteApprovalPolicy(p);
+                          setPolicies((prev) => prev.filter((item) => item !== p));
+                        }}
+                        className="text-neutral-400 hover:text-red-600 p-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : activeTab === 'ssh' ? (
+          /* SSH Remote Profiles Tab */
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-[13px]">
+            <div>
+              <span className="font-bold text-sm text-neutral-900 dark:text-white block">
+                Saved Remote SSH Host Profiles
+              </span>
+              <span className="text-xs text-neutral-500">
+                Manage pre-configured SSH targets for one-click connection and remote agent operations.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              {sshProfiles.map((p) => (
+                <div
+                  key={p.id}
+                  className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-850 flex items-center justify-between"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Server className="w-4 h-4 text-purple-600" />
+                      <span className="font-semibold text-xs text-neutral-900 dark:text-white">{p.alias}</span>
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-purple-50 text-purple-700">
+                        {p.user}@{p.host}:{p.port}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-500">{p.description || 'Remote Linux workstation/server.'}</p>
+                    {p.key_path && (
+                      <div className="text-[11px] text-neutral-400 font-mono flex items-center gap-1">
+                        <Key className="w-3 h-3" />
+                        <span>{p.key_path}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Delete profile ${p.alias}?`)) return;
+                        const res = await api.deleteSshProfile(p.id);
+                        setSshProfiles(res.profiles || []);
+                      }}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           /* System & Daemon Tab */

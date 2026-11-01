@@ -542,3 +542,4 @@ impl Tool for GitHubWorkflowRunTool {
         Ok(json!({ "status": "dispatched", "workflow": w_id, "ref": r_ref, "code": resp.status().as_u16() }))
     }
 }
+

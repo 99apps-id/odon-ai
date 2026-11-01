@@ -838,3 +838,4 @@ impl Tool for EditorReloadTool {
         Ok(json!({ "path": rel, "content": content, "status": "reloaded" }))
     }
 }
+

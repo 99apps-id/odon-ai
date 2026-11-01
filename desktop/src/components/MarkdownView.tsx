@@ -1,152 +1,517 @@
 import React, { useState } from 'react';
-import { Check, Copy, Download, ExternalLink, Image as ImageIcon } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  Image as ImageIcon,
+  Play,
+  Terminal,
+  Globe,
+  Info,
+  Sparkles,
+  AlertCircle,
+  AlertTriangle,
+  ShieldAlert,
+  ChevronRight,
+  Code2,
+} from 'lucide-react';
 
 interface MarkdownViewProps {
   content: string;
   className?: string;
+  onRunTerminal?: (cmd: string) => void;
+  onOpenBrowser?: (url: string) => void;
 }
 
-export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) => {
-  // Simple, robust markdown block parser
+export const MarkdownView: React.FC<MarkdownViewProps> = ({
+  content,
+  className = '',
+  onRunTerminal,
+  onOpenBrowser,
+}) => {
+  const triggerRunTerminal = (cmd: string) => {
+    if (onRunTerminal) {
+      onRunTerminal(cmd);
+    } else {
+      window.dispatchEvent(new CustomEvent('odon:run-terminal', { detail: { command: cmd, focusPanel: true } }));
+    }
+  };
+
+  const triggerOpenBrowser = (url: string) => {
+    if (onOpenBrowser) {
+      onOpenBrowser(url);
+    } else {
+      window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { url } }));
+    }
+  };
+
+  // High-fidelity Markdown & GFM Block Parser
   const renderFormatted = (text: string) => {
-    const lines = text.split('\n');
+    if (!text) return null;
+
+    const rawLines = text.split('\n');
     const elements: React.ReactNode[] = [];
-    let inCodeBlock = false;
-    let codeLanguage = '';
-    let codeBuffer: string[] = [];
-    let listBuffer: string[] = [];
 
-    const flushList = (key: string) => {
-      if (listBuffer.length > 0) {
-        elements.push(
-          <ul key={key} className="my-2 space-y-1 list-disc pl-5 text-[13.5px] text-neutral-800 dark:text-neutral-200">
-            {listBuffer.map((item, idx) => (
-              <li key={idx} dangerouslySetInnerHTML={{ __html: formatInline(item) }} />
-            ))}
-          </ul>
-        );
-        listBuffer = [];
-      }
-    };
+    let i = 0;
+    while (i < rawLines.length) {
+      const line = rawLines[i];
+      const trimmed = line.trim();
 
-    lines.forEach((line, index) => {
-      // Code blocks
-      if (line.trim().startsWith('```')) {
-        if (!inCodeBlock) {
-          flushList(`list-${index}`);
-          inCodeBlock = true;
-          codeLanguage = line.trim().replace(/^```/, '') || 'text';
-          codeBuffer = [];
-        } else {
-          inCodeBlock = false;
-          const codeContent = codeBuffer.join('\n');
-          elements.push(
-            <CodeBlock key={`code-${index}`} language={codeLanguage} code={codeContent} />
-          );
-          codeBuffer = [];
+      // 1. Code Blocks (```)
+      if (trimmed.startsWith('```')) {
+        const lang = trimmed.replace(/^```/, '').trim() || 'text';
+        const codeLines: string[] = [];
+        i++;
+        while (i < rawLines.length && !rawLines[i].trim().startsWith('```')) {
+          codeLines.push(rawLines[i]);
+          i++;
         }
-        return;
+        i++; // skip closing ```
+        const codeString = codeLines.join('\n');
+        elements.push(
+          <CodeBlock
+            key={`code-${i}`}
+            language={lang}
+            code={codeString}
+            onRunTerminal={triggerRunTerminal}
+            onOpenBrowser={triggerOpenBrowser}
+          />
+        );
+        continue;
       }
 
-      if (inCodeBlock) {
-        codeBuffer.push(line);
-        return;
-      }
-
-      // Check if line is a standalone markdown image: ![alt](url)
-      const imgMatch = line.trim().match(/^!\[(.*?)\]\((.*?)\)$/);
+      // 2. Standalone Markdown Image ![alt](url)
+      const imgMatch = trimmed.match(/^!\[(.*?)\]\((.*?)\)$/);
       if (imgMatch) {
-        flushList(`list-before-img-${index}`);
-        elements.push(
-          <MarkdownImage key={`img-${index}`} alt={imgMatch[1]} src={imgMatch[2]} />
-        );
-        return;
+        elements.push(<MarkdownImage key={`img-${i}`} alt={imgMatch[1]} src={imgMatch[2]} />);
+        i++;
+        continue;
       }
 
-      // Lists
-      if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-        listBuffer.push(line.trim().replace(/^[-*]\s+/, ''));
-        return;
-      } else {
-        flushList(`list-before-${index}`);
+      // 3. Horizontal Rule (---, ***, ___)
+      if (/^(\*\*\*|---|___)$/.test(trimmed)) {
+        elements.push(<hr key={`hr-${i}`} className="my-5 border-neutral-200/90" />);
+        i++;
+        continue;
       }
 
-      // Empty line
-      if (!line.trim()) {
-        elements.push(<div key={`empty-${index}`} className="h-2" />);
-        return;
+      // 4. Tables (| col 1 | col 2 |)
+      if (trimmed.startsWith('|') && trimmed.endsWith('|') && i + 1 < rawLines.length && rawLines[i + 1].includes('---')) {
+        const tableLines: string[] = [];
+        while (i < rawLines.length && rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|')) {
+          tableLines.push(rawLines[i].trim());
+          i++;
+        }
+        elements.push(<TableBlock key={`table-${i}`} lines={tableLines} onOpenBrowser={triggerOpenBrowser} />);
+        continue;
       }
 
-      // Headings
-      if (line.startsWith('### ')) {
+      // 5. GitHub Alert Banners (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION])
+      const alertMatch = trimmed.match(/^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
+      if (alertMatch) {
+        const alertType = alertMatch[1].toUpperCase();
+        const alertLines: string[] = [];
+        i++;
+        while (i < rawLines.length && rawLines[i].trim().startsWith('>')) {
+          alertLines.push(rawLines[i].trim().replace(/^>\s*/, ''));
+          i++;
+        }
         elements.push(
-          <h3 key={`h3-${index}`} className="text-[15px] font-semibold text-neutral-900 dark:text-neutral-100 mt-4 mb-2 tracking-tight">
-            {line.replace('### ', '')}
-          </h3>
+          <AlertBlock
+            key={`alert-${i}`}
+            type={alertType as any}
+            content={alertLines.join(' ')}
+            onOpenBrowser={triggerOpenBrowser}
+          />
         );
-        return;
-      }
-      if (line.startsWith('## ')) {
-        elements.push(
-          <h2 key={`h2-${index}`} className="text-[17px] font-semibold text-neutral-900 dark:text-neutral-100 mt-5 mb-2 tracking-tight">
-            {line.replace('## ', '')}
-          </h2>
-        );
-        return;
-      }
-      if (line.startsWith('# ')) {
-        elements.push(
-          <h1 key={`h1-${index}`} className="text-[19px] font-bold text-neutral-900 dark:text-neutral-100 mt-6 mb-3 tracking-tight">
-            {line.replace('# ', '')}
-          </h1>
-        );
-        return;
+        continue;
       }
 
-      // Blockquotes
-      if (line.startsWith('> ')) {
+      // 6. Standard Blockquotes (> text)
+      if (trimmed.startsWith('>')) {
+        const quoteLines: string[] = [];
+        while (i < rawLines.length && rawLines[i].trim().startsWith('>')) {
+          quoteLines.push(rawLines[i].trim().replace(/^>\s*/, ''));
+          i++;
+        }
         elements.push(
-          <blockquote key={`quote-${index}`} className="border-l-2 border-neutral-300 dark:border-neutral-700 pl-3 my-2 text-neutral-600 dark:text-neutral-400 italic text-[13px]">
-            {line.replace('> ', '')}
+          <blockquote
+            key={`quote-${i}`}
+            className="border-l-3 border-neutral-300 dark:border-neutral-600 pl-4 py-1.5 my-3.5 bg-neutral-50/70 dark:bg-neutral-800/40 rounded-r-xl italic text-[13.5px] text-neutral-700 dark:text-neutral-300 leading-relaxed"
+          >
+            <span dangerouslySetInnerHTML={{ __html: formatInline(quoteLines.join(' '), triggerOpenBrowser) }} />
           </blockquote>
         );
-        return;
+        continue;
       }
 
-      // Paragraph
-      elements.push(
-        <p
-          key={`p-${index}`}
-          className="text-[13.5px] leading-relaxed text-neutral-800 dark:text-neutral-200 my-1"
-          dangerouslySetInnerHTML={{ __html: formatInline(line) }}
-        />
-      );
-    });
+      // 7. Headings (#, ##, ###, ####)
+      if (trimmed.startsWith('#')) {
+        const hMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+        if (hMatch) {
+          const level = hMatch[1].length;
+          const textContent = hMatch[2];
+          if (level === 1) {
+            elements.push(
+              <h1 key={`h1-${i}`} className="text-xl font-bold text-neutral-900 dark:text-neutral-100 mt-6 mb-3 tracking-tight border-b border-neutral-200/80 pb-2">
+                <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser) }} />
+              </h1>
+            );
+          } else if (level === 2) {
+            elements.push(
+              <h2 key={`h2-${i}`} className="text-lg font-bold text-neutral-900 dark:text-neutral-100 mt-5 mb-2.5 tracking-tight">
+                <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser) }} />
+              </h2>
+            );
+          } else if (level === 3) {
+            elements.push(
+              <h3 key={`h3-${i}`} className="text-base font-semibold text-neutral-900 dark:text-neutral-100 mt-4 mb-2 tracking-tight">
+                <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser) }} />
+              </h3>
+            );
+          } else {
+            elements.push(
+              <h4 key={`h4-${i}`} className="text-sm font-semibold text-neutral-800 dark:text-neutral-200 mt-3 mb-1.5 tracking-tight">
+                <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser) }} />
+              </h4>
+            );
+          }
+          i++;
+          continue;
+        }
+      }
 
-    flushList('list-end');
+      // 8. Lists (Unordered, Ordered, and Task Lists)
+      const isListItem = /^(-|\*|\d+\.)\s+/.test(trimmed);
+      if (isListItem) {
+        const listItems: { text: string; isTask?: boolean; isChecked?: boolean }[] = [];
+        const isOrdered = /^\d+\.\s+/.test(trimmed);
 
-    // If code block was not closed
-    if (inCodeBlock && codeBuffer.length > 0) {
-      elements.push(
-        <CodeBlock key="code-unclosed" language={codeLanguage} code={codeBuffer.join('\n')} />
-      );
+        while (i < rawLines.length && /^(-|\*|\d+\.)\s+/.test(rawLines[i].trim())) {
+          let itemText = rawLines[i].trim().replace(/^(-|\*|\d+\.)\s+/, '');
+          let isTask = false;
+          let isChecked = false;
+
+          const taskMatch = itemText.match(/^\[([ xX])\]\s+(.*)$/);
+          if (taskMatch) {
+            isTask = true;
+            isChecked = taskMatch[1].toLowerCase() === 'x';
+            itemText = taskMatch[2];
+          }
+
+          listItems.push({ text: itemText, isTask, isChecked });
+          i++;
+        }
+
+        if (isOrdered) {
+          elements.push(
+            <ol key={`ol-${i}`} className="my-3 space-y-2 list-decimal pl-5 text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+              {listItems.map((item, idx) => (
+                <li key={idx} dangerouslySetInnerHTML={{ __html: formatInline(item.text, triggerOpenBrowser) }} />
+              ))}
+            </ol>
+          );
+        } else {
+          elements.push(
+            <ul key={`ul-${i}`} className="my-3 space-y-2 list-disc pl-5 text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+              {listItems.map((item, idx) => (
+                <li key={idx} className={item.isTask ? 'list-none -ml-4 flex items-start gap-2.5 my-1' : ''}>
+                  {item.isTask && (
+                    <input
+                      type="checkbox"
+                      checked={item.isChecked}
+                      readOnly
+                      className="mt-1 rounded border-neutral-300 text-blue-600 focus:ring-blue-500 cursor-default"
+                    />
+                  )}
+                  <span className={item.isChecked ? 'line-through text-neutral-400 dark:text-neutral-500' : ''} dangerouslySetInnerHTML={{ __html: formatInline(item.text, triggerOpenBrowser) }} />
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        continue;
+      }
+
+      // 9. Empty lines (spacing separator)
+      if (!trimmed) {
+        i++;
+        continue;
+      }
+
+      // 10. Paragraph (consecutive lines aggregated into one spacious paragraph)
+      const paragraphLines: string[] = [];
+      while (
+        i < rawLines.length &&
+        rawLines[i].trim() &&
+        !rawLines[i].trim().startsWith('```') &&
+        !rawLines[i].trim().startsWith('#') &&
+        !rawLines[i].trim().startsWith('>') &&
+        !rawLines[i].trim().startsWith('|') &&
+        !/^(-|\*|\d+\.)\s+/.test(rawLines[i].trim()) &&
+        !/^(\*\*\*|---|___)$/.test(rawLines[i].trim()) &&
+        !rawLines[i].trim().match(/^!\[(.*?)\]\((.*?)\)$/)
+      ) {
+        paragraphLines.push(rawLines[i].trim());
+        i++;
+      }
+
+      if (paragraphLines.length > 0) {
+        elements.push(
+          <p
+            key={`p-${i}`}
+            className="text-[14px] leading-[1.7] text-neutral-800 dark:text-neutral-200 my-3.5 select-text font-normal"
+            dangerouslySetInnerHTML={{ __html: formatInline(paragraphLines.join(' '), triggerOpenBrowser) }}
+          />
+        );
+      }
     }
 
     return elements;
   };
 
-  return <div className={`space-y-1 font-sans ${className}`}>{renderFormatted(content)}</div>;
+  return <div className={`font-sans select-text ${className}`}>{renderFormatted(content)}</div>;
 };
 
-function formatInline(text: string): string {
+// ─────────────────────────────────────────────────────────────
+// INLINE FORMATTING (Bold, Italic, Code, Links, Keyboard keys)
+// ─────────────────────────────────────────────────────────────
+function formatInline(text: string, onOpenBrowser?: (url: string) => void): string {
+  if (!text) return '';
+
   return text
+    // Escaped HTML tags allow-listing (e.g. <kbd>, <mark>, <b>, <i>, <br>)
     .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-neutral-900 dark:text-neutral-100">$1</strong>')
+    .replace(/__(.*?)__/g, '<strong class="font-semibold text-neutral-900 dark:text-neutral-100">$1</strong>')
     .replace(/\*(.*?)\*/g, '<em class="italic">$1</em>')
+    .replace(/_([^_]+)_/g, '<em class="italic">$1</em>')
+    .replace(/~~(.*?)~~/g, '<del class="line-through text-neutral-400 dark:text-neutral-500">$1</del>')
     .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded text-[12.5px] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700">$1</code>')
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<a href="$2" download="$1" target="_blank" rel="noreferrer" title="Click to open or save image"><img src="$2" alt="$1" class="my-2 rounded-lg max-h-80 object-contain border border-neutral-200 hover:shadow-md transition-shadow cursor-pointer" /></a>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer" class="text-neutral-900 dark:text-neutral-100 underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900">$1</a>');
+    .replace(/<kbd>(.*?)<\/kbd>/gi, '<kbd class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-neutral-200/80 dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 shadow-2xs font-semibold">$1</kbd>')
+    // Links with Preview chip if localhost or web
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+      const isWeb = href.startsWith('http://') || href.startsWith('https://');
+      const isLocalhost = href.includes('localhost') || href.includes('127.0.0.1');
+      if (isWeb || isLocalhost) {
+        return `<a href="${href}" target="_blank" rel="noreferrer" class="text-blue-600 dark:text-blue-400 font-medium underline decoration-blue-300 hover:decoration-blue-600 transition-colors inline-flex items-center gap-1">${label}</a>`;
+      }
+      return `<a href="${href}" target="_blank" rel="noreferrer" class="text-neutral-900 dark:text-neutral-100 underline decoration-neutral-300 hover:decoration-neutral-900 transition-colors">${label}</a>`;
+    });
 }
 
+// ─────────────────────────────────────────────────────────────
+// RICH CODE BLOCK WITH "RUN IN TERMINAL" & "PREVIEW"
+// ─────────────────────────────────────────────────────────────
+function CodeBlock({
+  language,
+  code,
+  onRunTerminal,
+  onOpenBrowser,
+}: {
+  language: string;
+  code: string;
+  onRunTerminal?: (cmd: string) => void;
+  onOpenBrowser?: (url: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const langLower = language.toLowerCase();
+  const isTerminalLang = ['bash', 'sh', 'shell', 'zsh', 'terminal', 'powershell', 'ps1', 'cmd'].includes(langLower);
+  const isWebLang = ['html', 'svg', 'xml', 'htm'].includes(langLower);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRun = () => {
+    if (onRunTerminal) {
+      onRunTerminal(code);
+    }
+  };
+
+  const handlePreview = () => {
+    if (onOpenBrowser) {
+      const dataUri = `data:text/html;charset=utf-8,${encodeURIComponent(code)}`;
+      onOpenBrowser(dataUri);
+    }
+  };
+
+  return (
+    <div className="my-4 rounded-2xl overflow-hidden border border-neutral-200/90 dark:border-neutral-800 bg-[#1e1e1e] text-neutral-100 shadow-2xs font-sans">
+      <div className="flex items-center justify-between px-4 py-2 bg-[#252526] border-b border-neutral-800 text-xs font-mono text-neutral-400">
+        <div className="flex items-center gap-2">
+          {isTerminalLang ? (
+            <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+          ) : isWebLang ? (
+            <Globe className="w-3.5 h-3.5 text-blue-400" />
+          ) : (
+            <Code2 className="w-3.5 h-3.5 text-purple-400" />
+          )}
+          <span className="font-semibold text-neutral-300">{language || 'text'}</span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {isTerminalLang && (
+            <button
+              onClick={handleRun}
+              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-emerald-200 font-sans text-[11px] font-medium transition-colors border border-emerald-500/30 cursor-pointer"
+              title="Execute in ODON Terminal panel"
+            >
+              <Play className="w-3 h-3 fill-current" />
+              <span>Run in Terminal</span>
+            </button>
+          )}
+
+          {isWebLang && (
+            <button
+              onClick={handlePreview}
+              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 font-sans text-[11px] font-medium transition-colors border border-blue-500/30 cursor-pointer"
+              title="Preview in Browser panel"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>Preview in Browser</span>
+            </button>
+          )}
+
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white font-sans text-[11px] font-medium transition-colors cursor-pointer"
+          >
+            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
+      </div>
+      <pre className="p-4 text-[13px] font-mono leading-relaxed overflow-x-auto text-neutral-200 scrollbar-thin">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// GFM TABLES
+// ─────────────────────────────────────────────────────────────
+function TableBlock({ lines, onOpenBrowser }: { lines: string[]; onOpenBrowser?: (url: string) => void }) {
+  if (lines.length < 2) return null;
+
+  const headerCells = lines[0]
+    .split('|')
+    .slice(1, -1)
+    .map((c) => c.trim());
+
+  // skip line 1 (the separator |---|---|)
+  const bodyRows = lines.slice(2).map((row) =>
+    row
+      .split('|')
+      .slice(1, -1)
+      .map((c) => c.trim())
+  );
+
+  return (
+    <div className="my-4 overflow-x-auto rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-2xs">
+      <table className="w-full text-xs text-left border-collapse font-sans">
+        <thead className="bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-semibold border-b border-neutral-200 dark:border-neutral-700">
+          <tr>
+            {headerCells.map((h, idx) => (
+              <th key={idx} className="px-4 py-2.5 border-r last:border-r-0 border-neutral-200 dark:border-neutral-700">
+                <span dangerouslySetInnerHTML={{ __html: formatInline(h, onOpenBrowser) }} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800 text-neutral-800 dark:text-neutral-200">
+          {bodyRows.map((row, rIdx) => (
+            <tr key={rIdx} className="even:bg-neutral-50/60 dark:even:bg-neutral-900/40 hover:bg-neutral-100/40 transition-colors">
+              {row.map((cell, cIdx) => (
+                <td key={cIdx} className="px-4 py-2 border-r last:border-r-0 border-neutral-200/60 dark:border-neutral-700">
+                  <span dangerouslySetInnerHTML={{ __html: formatInline(cell, onOpenBrowser) }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// GFM ALERTS (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION])
+// ─────────────────────────────────────────────────────────────
+function AlertBlock({
+  type,
+  content,
+  onOpenBrowser,
+}: {
+  type: 'NOTE' | 'TIP' | 'IMPORTANT' | 'WARNING' | 'CAUTION';
+  content: string;
+  onOpenBrowser?: (url: string) => void;
+}) {
+  const configs = {
+    NOTE: {
+      border: 'border-blue-500',
+      bg: 'bg-blue-50/80 dark:bg-blue-950/30',
+      titleColor: 'text-blue-900 dark:text-blue-200',
+      textColor: 'text-blue-950 dark:text-blue-100',
+      icon: <Info className="w-4 h-4 text-blue-600" />,
+      title: 'Note',
+    },
+    TIP: {
+      border: 'border-emerald-500',
+      bg: 'bg-emerald-50/80 dark:bg-emerald-950/30',
+      titleColor: 'text-emerald-900 dark:text-emerald-200',
+      textColor: 'text-emerald-950 dark:text-emerald-100',
+      icon: <Sparkles className="w-4 h-4 text-emerald-600" />,
+      title: 'Tip',
+    },
+    IMPORTANT: {
+      border: 'border-purple-500',
+      bg: 'bg-purple-50/80 dark:bg-purple-950/30',
+      titleColor: 'text-purple-900 dark:text-purple-200',
+      textColor: 'text-purple-950 dark:text-purple-100',
+      icon: <AlertCircle className="w-4 h-4 text-purple-600" />,
+      title: 'Important',
+    },
+    WARNING: {
+      border: 'border-amber-500',
+      bg: 'bg-amber-50/80 dark:bg-amber-950/30',
+      titleColor: 'text-amber-900 dark:text-amber-200',
+      textColor: 'text-amber-950 dark:text-amber-100',
+      icon: <AlertTriangle className="w-4 h-4 text-amber-600" />,
+      title: 'Warning',
+    },
+    CAUTION: {
+      border: 'border-rose-500',
+      bg: 'bg-rose-50/80 dark:bg-rose-950/30',
+      titleColor: 'text-rose-900 dark:text-rose-200',
+      textColor: 'text-rose-950 dark:text-rose-100',
+      icon: <ShieldAlert className="w-4 h-4 text-rose-600" />,
+      title: 'Caution',
+    },
+  };
+
+  const conf = configs[type] || configs.NOTE;
+
+  return (
+    <div className={`my-3.5 p-3.5 rounded-xl border-l-4 ${conf.border} ${conf.bg} border-y border-r border-neutral-200/60 dark:border-neutral-800 font-sans`}>
+      <div className={`flex items-center gap-1.5 font-semibold text-xs mb-1 ${conf.titleColor}`}>
+        {conf.icon}
+        <span>{conf.title}</span>
+      </div>
+      <div
+        className={`text-[13.5px] leading-relaxed ${conf.textColor}`}
+        dangerouslySetInnerHTML={{ __html: formatInline(content, onOpenBrowser) }}
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// MARKDOWN IMAGE
+// ─────────────────────────────────────────────────────────────
 export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
   const [downloading, setDownloading] = useState(false);
   const fullSrc = src.startsWith('/api/') ? `http://127.0.0.1:4096${src}` : src;
@@ -173,7 +538,7 @@ export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
   };
 
   return (
-    <div className="my-3 rounded-2xl border border-neutral-200/90 bg-white shadow-2xs overflow-hidden max-w-lg">
+    <div className="my-4 rounded-2xl border border-neutral-200/90 bg-white shadow-2xs overflow-hidden max-w-lg font-sans">
       <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden">
         <img
           src={fullSrc}
@@ -192,7 +557,7 @@ export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => window.open(fullSrc, '_blank')}
-            className="p-1 text-neutral-400 hover:text-neutral-700 rounded transition-colors"
+            className="p-1 text-neutral-400 hover:text-neutral-700 rounded transition-colors cursor-pointer"
             title="Open in new tab"
           >
             <ExternalLink className="w-3.5 h-3.5" />
@@ -207,34 +572,6 @@ export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function CodeBlock({ language, code }: { language: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="my-3 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-[#1e1e1e] text-neutral-100 shadow-xs">
-      <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#252526] border-b border-neutral-800 text-[11px] font-mono text-neutral-400">
-        <span>{language}</span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1.5 py-1 px-2 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors cursor-pointer"
-        >
-          {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-          <span>{copied ? 'Copied' : 'Copy code'}</span>
-        </button>
-      </div>
-      <pre className="p-4 text-[13px] font-mono leading-relaxed overflow-x-auto text-neutral-200">
-        <code>{code}</code>
-      </pre>
     </div>
   );
 }
