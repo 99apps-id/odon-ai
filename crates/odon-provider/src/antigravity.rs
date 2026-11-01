@@ -1,28 +1,34 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use reqwest::Client;
+use futures_util::StreamExt;
+use odon_core::{MessageRole, OdonError, Result};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
 use crate::stream::StreamEvent;
 use crate::trait_def::{ChatRequest, ModelProvider};
 
-const DEFAULT_HOST: &str = "https://antigravity-gemini.google.com";
+const ANTIGRAVITY_HOST: &str = "https://antigravity-gemini.google.com";
 
 pub struct AntigravityProvider {
-    client: Client,
+    client: reqwest::Client,
     base_url: String,
     access_token: String,
     account_id: Option<String>,
 }
 
 impl AntigravityProvider {
-    pub fn new(client: Client, access_token: impl Into<String>, account_id: Option<String>) -> Self {
+    pub fn new(
+        access_token: impl Into<String>,
+        account_id: Option<String>,
+        custom_base: Option<&str>,
+    ) -> Self {
         Self {
-            client,
-            base_url: std::env::var("ANTIGRAVITY_API_HOST")
-                .unwrap_or_else(|_| DEFAULT_HOST.to_string()),
+            client: reqwest::Client::new(),
+            base_url: custom_base
+                .unwrap_or(ANTIGRAVITY_HOST)
+                .to_string(),
             access_token: access_token.into(),
             account_id,
         }
@@ -40,58 +46,57 @@ impl ModelProvider for AntigravityProvider {
         request: ChatRequest,
         event_sender: Sender<StreamEvent>,
         cancellation: CancellationToken,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         let endpoint = format!(
             "{}/v1beta/chat/completions",
             self.base_url.trim_end_matches('/')
         );
 
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", self.access_token))
+                .map_err(|e| OdonError::Auth(e.to_string()))?,
         );
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.access_token)) {
-            headers.insert(reqwest::header::AUTHORIZATION, val);
-        }
         headers.insert(
-            reqwest::header::USER_AGENT,
-            reqwest::header::HeaderValue::from_static("antigravity/ide/cli"),
+            USER_AGENT,
+            HeaderValue::from_static("antigravity/ide/cli"),
         );
         if let Some(acc) = &self.account_id {
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(acc) {
-                headers.insert(reqwest::header::HeaderName::from_static("account"), val);
+            if let Ok(val) = HeaderValue::from_str(acc) {
+                headers.insert("account", val);
             }
         }
 
         let mut input_items = Vec::new();
         for msg in request.messages {
             let role_str = match msg.role {
-                odon_core::MessageRole::User => "user",
-                odon_core::MessageRole::Assistant => "assistant",
-                odon_core::MessageRole::System => "system",
-                odon_core::MessageRole::Tool => "tool",
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::System => "system",
+                MessageRole::Tool => "tool",
             };
-            input_items.push(serde_json::json!({
+            input_items.push(json!({
                 "role": role_str,
                 "content": msg.content.text,
             }));
         }
 
-        let mut body = serde_json::json!({
+        let mut body = json!({
             "model": request.model,
             "stream": true,
             "input": input_items,
         });
 
         if let Some(sys) = request.system_prompt {
-            body["system_instruction"] = serde_json::json!({
+            body["system_instruction"] = json!({
                 "parts": [{ "text": sys }]
             });
         }
 
         if let Some(effort) = request.effort {
-            body["generationConfig"] = serde_json::json!({
+            body["generationConfig"] = json!({
                 "thinkingConfig": {
                     "thinkingBudget": match effort.as_str() {
                         "low" => 2048,
@@ -111,18 +116,18 @@ impl ModelProvider for AntigravityProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::OdonError::Provider {
+            .map_err(|e| OdonError::Provider {
                 provider: "antigravity".to_string(),
                 message: format!("Antigravity HTTP request failed: {}", e),
             })?;
 
         if resp.status() == 401 {
-            return Err(crate::OdonError::Auth("Antigravity token expired or invalid".to_string()));
+            return Err(OdonError::Auth("Antigravity token expired or invalid".to_string()));
         }
 
         if !resp.status().is_success() {
             let err_body = resp.text().await.unwrap_or_default();
-            return Err(crate::OdonError::Provider {
+            return Err(OdonError::Provider {
                 provider: "antigravity".to_string(),
                 message: format!("Antigravity HTTP status error: {}", err_body),
             });

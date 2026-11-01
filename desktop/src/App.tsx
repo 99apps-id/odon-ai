@@ -39,7 +39,7 @@ import { BrowserPreviewView } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { api } from './api';
-import { Session, Message, Artifact, SystemStatus } from './types';
+import { Session, Message, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS } from './types';
 
 interface ChatMessage {
   id: string;
@@ -51,13 +51,7 @@ interface ChatMessage {
   toolCalls?: string[];
 }
 
-const AVAILABLE_MODELS = [
-  { id: 'Auto (GPT-4o)', name: 'Auto (GPT-4o)', desc: 'Adaptive routing with high-speed intelligence', badge: 'Default' },
-  { id: 'Claude 3.7 Sonnet', name: 'Claude 3.7 Sonnet', desc: 'Hybrid reasoning and deep coding architecture', badge: 'Pro' },
-  { id: 'DeepSeek R1', name: 'DeepSeek R1', desc: 'Open reasoning with transparent chain-of-thought', badge: 'Reasoning' },
-  { id: 'Odon Local (Ollama)', name: 'Odon Local (Ollama)', desc: '100% offline private local execution on localhost:11434', badge: 'Private' },
-  { id: 'Offline Simulated', name: 'Offline Simulated', desc: 'Instant mocked responses without network requests', badge: 'Test' },
-];
+// Model lists are now dynamically populated from the active provider chosen in Settings.
 
 const REGISTERED_TOOLS = [
   { name: 'fs_read', category: 'File System', tier: 'Tier 0', desc: 'Read file contents' },
@@ -85,7 +79,20 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('chat');
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
-  const [selectedModel, setSelectedModel] = useState('Auto (GPT-4o)');
+  // Provider & Model States (Synchronized with Settings)
+  const [providers, setProviders] = useState<ProviderItem[]>(FALLBACK_PROVIDERS);
+  const [activeProviderId, setActiveProviderId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('odon_active_provider') || 'openai';
+    }
+    return 'openai';
+  });
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('odon_selected_model') || 'gpt-4o';
+    }
+    return 'gpt-4o';
+  });
   const [inputMessage, setInputMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -98,6 +105,47 @@ export default function App() {
   const [showAllRecent, setShowAllRecent] = useState(false);
   const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Active Provider & Model resolution
+  const activeProvider = providers.find((p) => p.id === activeProviderId) || providers[0] || FALLBACK_PROVIDERS[0];
+  const activeModels = activeProvider?.models || [];
+  const currentModelObj = activeModels.find((m) => m.id === selectedModel || `${activeProvider?.id}::${m.id}` === selectedModel || m.name === selectedModel) || activeModels[0];
+  const displayModelName = currentModelObj ? currentModelObj.name : selectedModel;
+
+  const handleSelectProvider = (providerId: string) => {
+    setActiveProviderId(providerId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('odon_active_provider', providerId);
+    }
+    const prov = providers.find((p) => p.id === providerId);
+    if (prov && prov.models.length > 0) {
+      const rec = prov.models.find((m) => m.recommended) || prov.models[0];
+      setSelectedModel(rec.id);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('odon_selected_model', rec.id);
+      }
+    }
+  };
+
+  const handleSelectModel = (modelId: string) => {
+    if (modelId.includes('::')) {
+      const [pId, mId] = modelId.split('::');
+      setActiveProviderId(pId);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('odon_active_provider', pId);
+      }
+      setSelectedModel(mId);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('odon_selected_model', mId);
+      }
+    } else {
+      setSelectedModel(modelId);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('odon_selected_model', modelId);
+      }
+    }
+    setIsModelMenuOpen(false);
+  };
 
   // Resizable Right Panel State
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
@@ -198,6 +246,13 @@ export default function App() {
   useEffect(() => {
     checkDaemonStatus();
     loadSessions();
+    api.getModels().then((data) => {
+      if (data?.providers?.length) {
+        setProviders(data.providers);
+      }
+    }).catch(() => {
+      // Use fallback
+    });
 
     const statusInterval = setInterval(checkDaemonStatus, 5000);
 
@@ -731,10 +786,11 @@ export default function App() {
               <div
                 onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
-                title="Select Active AI Model"
+                title={`Active Provider: ${activeProvider?.name} (Click to change)`}
               >
-                <Sparkles className="w-3.5 h-3.5 text-neutral-700" />
-                <span>{selectedModel}</span>
+                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                <span className="text-[11px] font-semibold text-neutral-500">{activeProvider?.name.split(' (')[0]}:</span>
+                <span className="font-semibold text-neutral-900 truncate max-w-[150px]">{displayModelName}</span>
                 <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
               </div>
 
@@ -1034,13 +1090,6 @@ export default function App() {
                   >
                     <Plus className="w-4 h-4" />
                   </button>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer"
-                    title="Attach document or code snippet"
-                  >
-                    <Paperclip className="w-4 h-4" />
-                  </button>
 
                   {/* Tools Dropdown */}
                   <div className="relative">
@@ -1062,10 +1111,11 @@ export default function App() {
                     <button
                       onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
                       className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors border border-neutral-200/60 cursor-pointer"
-                      title="Select Model"
+                      title={`Active Provider: ${activeProvider?.name}`}
                     >
                       <Sparkles className="w-3 h-3 text-blue-500" />
-                      <span className="truncate max-w-[130px] font-medium">{selectedModel}</span>
+                      <span className="text-[10px] text-neutral-400 font-normal">{activeProvider?.name.split(' (')[0]}:</span>
+                      <span className="truncate max-w-[130px] font-medium">{displayModelName}</span>
                       <ChevronDown className="w-3 h-3 text-neutral-400" />
                     </button>
                   </div>
@@ -1519,12 +1569,14 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         isDark={false}
         onToggleTheme={() => { }}
+        activeProviderId={activeProviderId}
+        onSelectProvider={handleSelectProvider}
         currentModel={selectedModel}
-        onSelectModel={(modelId) => setSelectedModel(modelId)}
+        onSelectModel={handleSelectModel}
       />
 
       {/* ─────────────────────────────────────────────────────────────
-          FLOATING MODEL SELECTOR POPOVER
+          FLOATING MODEL SELECTOR POPOVER (FOLLOWS SETTINGS PROVIDER)
       ───────────────────────────────────────────────────────────── */}
       {isModelMenuOpen && (
         <div
@@ -1533,45 +1585,113 @@ export default function App() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-80 bg-white rounded-2xl border border-neutral-200 shadow-xl p-3 animate-in fade-in zoom-in-95 duration-100"
+            className="w-[430px] max-h-[85vh] flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-xl p-3.5 animate-in fade-in zoom-in-95 duration-100"
           >
-            <div className="flex items-center justify-between px-2 pb-2 border-b border-neutral-100 mb-2">
-              <span className="font-bold text-xs text-neutral-900">Select AI Model</span>
-              <button
-                onClick={() => setIsModelMenuOpen(false)}
-                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+            {/* Popover Header */}
+            <div className="flex items-center justify-between px-1 pb-2.5 border-b border-neutral-100 mb-2">
+              <div>
+                <div className="font-bold text-xs text-neutral-900">Select AI Model</div>
+                <div className="text-[11px] text-neutral-500 flex items-center gap-1.5 mt-0.5">
+                  <span>Provider:</span>
+                  <span className="font-semibold text-blue-600">{activeProvider?.name}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setIsModelMenuOpen(false);
+                    setSettingsOpen(true);
+                  }}
+                  className="text-[11px] text-blue-600 hover:text-blue-800 font-medium underline cursor-pointer"
+                  title="Configure API keys and providers in Settings"
+                >
+                  Configure in Settings →
+                </button>
+                <button
+                  onClick={() => setIsModelMenuOpen(false)}
+                  className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-            <div className="space-y-1">
-              {AVAILABLE_MODELS.map((m) => {
-                const isSelected = selectedModel === m.name;
+
+            {/* Quick Provider Switcher Strip */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-2 mb-2 shrink-0 border-b border-neutral-100">
+              {providers.map((p) => {
+                const isActive = p.id === activeProviderId;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => handleSelectProvider(p.id)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      isActive
+                        ? 'bg-neutral-900 text-white shadow-2xs'
+                        : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-600'
+                    }`}
+                  >
+                    <span>{p.name.split(' (')[0]}</span>
+                    {isActive && <Check className="w-2.5 h-2.5 text-white" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Models List belonging to Active Provider */}
+            <div className="space-y-1.5 overflow-y-auto max-h-[360px] pr-1">
+              <div className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider px-1 mb-1">
+                {activeProvider?.name} Models ({activeModels.length})
+              </div>
+
+              {activeModels.map((m) => {
+                const isSelected = selectedModel === m.id || selectedModel === m.name || `${activeProvider.id}::${m.id}` === selectedModel;
                 return (
                   <button
                     key={m.id}
-                    onClick={() => {
-                      setSelectedModel(m.name);
-                      setIsModelMenuOpen(false);
-                    }}
-                    className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-start justify-between ${isSelected
-                        ? 'bg-blue-50/70 border border-blue-200/80 text-blue-900'
-                        : 'hover:bg-neutral-50 text-neutral-800'
-                      }`}
+                    onClick={() => handleSelectModel(m.id)}
+                    className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-start justify-between border ${
+                      isSelected
+                        ? 'bg-blue-50/80 border-blue-200 text-blue-900 shadow-2xs'
+                        : 'border-transparent hover:border-neutral-200 hover:bg-neutral-50 text-neutral-800'
+                    }`}
                   >
                     <div>
-                      <div className="flex items-center gap-1.5 font-semibold text-xs">
+                      <div className="flex items-center gap-2 font-semibold text-xs">
                         <span>{m.name}</span>
-                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-normal">
-                          {m.badge}
-                        </span>
+                        {m.recommended && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">
+                            Recommended
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[10px] text-neutral-500 mt-0.5 leading-tight">{m.desc}</div>
+                      <div className="text-[11px] text-neutral-500 mt-0.5 flex items-center gap-2">
+                        <span className="font-mono text-[10px] text-neutral-400">id: {m.id}</span>
+                        <span>·</span>
+                        <span>{m.context > 0 ? `${(m.context / 1000).toFixed(0)}k context` : 'auto context'}</span>
+                      </div>
                     </div>
                     {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />}
                   </button>
                 );
               })}
+
+              {/* Offline fallback button */}
+              <div className="pt-2 mt-2 border-t border-neutral-100">
+                <button
+                  onClick={() => handleSelectModel('odon-simulated')}
+                  className={`w-full text-left p-2 rounded-xl transition-all cursor-pointer flex items-center justify-between text-xs ${
+                    selectedModel === 'odon-simulated'
+                      ? 'bg-neutral-100 font-semibold text-neutral-900'
+                      : 'hover:bg-neutral-50 text-neutral-500'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] px-1.5 py-0.5 bg-neutral-200 rounded text-neutral-600 font-mono">Mock</span>
+                    <span>Offline Simulated Mode</span>
+                  </div>
+                  {selectedModel === 'odon-simulated' && <Check className="w-3.5 h-3.5 text-neutral-700" />}
+                </button>
+              </div>
             </div>
           </div>
         </div>

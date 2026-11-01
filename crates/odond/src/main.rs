@@ -674,6 +674,7 @@ async fn register_oauth_provider(state: &AppState, catalog_id: &'static str, tok
         "antigravity" => Some(Arc::new(odon_provider::AntigravityProvider::new(
             token.access_token.clone(),
             None,
+            None,
         ))),
         "github-copilot" => Some(Arc::new(OpenAiCompatibleProvider::new(
             "https://api.githubcopilot.com".to_string(),
