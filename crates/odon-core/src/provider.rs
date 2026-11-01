@@ -9,6 +9,10 @@ pub enum ProviderKind {
     Muse,
     Anthropic,
     OpenRouter,
+    DeepSeek,
+    Qwen,
+    AlibabaDashScope,
+    StepFun,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,7 +99,47 @@ impl ProviderConfig {
                 expires_at: None,
                 account_id: None,
             },
-            default_model: "muse-code".to_string(),
+            default_model: "muse-claude-3-7-sonnet".to_string(),
+            custom_headers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn new_deepseek(api_key: impl Into<String>, model: Option<String>) -> Self {
+        Self {
+            kind: ProviderKind::DeepSeek,
+            base_url: "https://api.deepseek.com/v1".to_string(),
+            auth: AuthKind::ApiKey(api_key.into()),
+            default_model: model.unwrap_or_else(|| "deepseek-chat".to_string()),
+            custom_headers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn new_qwen(api_key: impl Into<String>, model: Option<String>) -> Self {
+        Self {
+            kind: ProviderKind::Qwen,
+            base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string(),
+            auth: AuthKind::ApiKey(api_key.into()),
+            default_model: model.unwrap_or_else(|| "qwen-max-latest".to_string()),
+            custom_headers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn new_alibaba(api_key: impl Into<String>, model: Option<String>) -> Self {
+        Self {
+            kind: ProviderKind::AlibabaDashScope,
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string(),
+            auth: AuthKind::ApiKey(api_key.into()),
+            default_model: model.unwrap_or_else(|| "qwen-plus-latest".to_string()),
+            custom_headers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn new_stepfun(api_key: impl Into<String>, model: Option<String>) -> Self {
+        Self {
+            kind: ProviderKind::StepFun,
+            base_url: "https://api.stepfun.com/v1".to_string(),
+            auth: AuthKind::ApiKey(api_key.into()),
+            default_model: model.unwrap_or_else(|| "step-2-16k".to_string()),
             custom_headers: std::collections::HashMap::new(),
         }
     }

@@ -30,6 +30,22 @@ impl OpenAiCompatibleProvider {
             provider_label: label.unwrap_or("openai-compatible").to_string(),
         }
     }
+
+    pub fn new_deepseek(api_key: impl Into<String>) -> Self {
+        Self::new("https://api.deepseek.com/v1", api_key, Some("deepseek"))
+    }
+
+    pub fn new_qwen(api_key: impl Into<String>) -> Self {
+        Self::new("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", api_key, Some("qwen"))
+    }
+
+    pub fn new_alibaba(api_key: impl Into<String>) -> Self {
+        Self::new("https://dashscope.aliyuncs.com/compatible-mode/v1", api_key, Some("alibaba"))
+    }
+
+    pub fn new_stepfun(api_key: impl Into<String>) -> Self {
+        Self::new("https://api.stepfun.com/v1", api_key, Some("stepfun"))
+    }
 }
 
 #[async_trait]

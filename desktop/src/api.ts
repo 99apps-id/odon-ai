@@ -6,6 +6,9 @@ import {
   ApprovalRequest,
   SystemStatus,
   AgentEvent,
+  ProviderItem,
+  TerminalInfo,
+  TerminalExecResult,
 } from './types';
 
 const API_BASE = (typeof window !== 'undefined' && localStorage.getItem('odon_api_base')) || 'http://127.0.0.1:4096';
@@ -109,17 +112,35 @@ export const api = {
     return res.ok;
   },
 
-  async executeTerminal(command: string): Promise<{ exit_code: number; stdout: string; stderr: string; success: boolean }> {
+  async getModels(): Promise<{ providers: ProviderItem[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/models`);
+    if (!res.ok) throw new Error(`Failed to fetch models: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getTerminalInfo(): Promise<TerminalInfo> {
+    const res = await fetch(`${this.getBaseUrl()}/api/terminal/info`);
+    if (!res.ok) throw new Error(`Failed to fetch terminal info: ${res.statusText}`);
+    return res.json();
+  },
+
+  async executeTerminal(command: string, cwd?: string): Promise<TerminalExecResult> {
     const res = await fetch(`${this.getBaseUrl()}/api/terminal/exec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ command, cwd }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Execution failed with status ${res.status}`);
     }
     return res.json();
+  },
+
+  createTerminalWs(): WebSocket {
+    const baseUrl = this.getBaseUrl();
+    const wsUrl = baseUrl.replace(/^http/, 'ws') + '/api/terminal/ws';
+    return new WebSocket(wsUrl);
   },
 
   subscribeEvents(onEvent: (event: AgentEvent) => void): () => void {

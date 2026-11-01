@@ -109,3 +109,36 @@ export type AgentEvent =
   | { type: 'artifact_created'; payload: { session_id: string; artifact: Artifact } }
   | { type: 'approval_requested'; payload: { session_id: string; approval_id: string; tool_name: string; risk_tier: number; description: string } }
   | { type: 'error'; payload: { session_id: string; message: string } };
+
+export interface ModelItem {
+  id: string;
+  name: string;
+  context: number;
+  recommended?: boolean;
+}
+
+export interface ProviderItem {
+  id: string;
+  name: string;
+  category: 'oauth' | 'byok';
+  auth_type: 'oauth' | 'api_key';
+  description: string;
+  default_base_url?: string;
+  models: ModelItem[];
+}
+
+export interface TerminalInfo {
+  shell: string;
+  os: string;
+  arch: string;
+  default_cwd: string;
+  user: string;
+}
+
+export interface TerminalExecResult {
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  cwd: string;
+  success: boolean;
+}

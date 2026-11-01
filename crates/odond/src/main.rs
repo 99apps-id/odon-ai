@@ -1,5 +1,8 @@
 use axum::{
-    extract::{Path, State},
+    extract::{
+        ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
+        Path, State,
+    },
     http::{header, Method, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -10,10 +13,13 @@ use axum::{
 };
 use clap::{Parser, Subcommand};
 use futures_util::stream::Stream;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
@@ -59,6 +65,7 @@ struct AppState {
     runtime: Arc<AgentRuntime>,
     storage: Arc<StorageEngine>,
     approval: Arc<ApprovalEngine>,
+    #[allow(dead_code)]
     audit: Arc<AuditLogger>,
     tools: Arc<ToolRegistry>,
     event_tx: broadcast::Sender<AgentEvent>,
@@ -176,7 +183,10 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/approvals", get(list_approvals))
                 .route("/api/approvals/{id}", post(resolve_approval))
                 .route("/api/settings", get(get_settings).post(update_settings))
+                .route("/api/models", get(get_models))
+                .route("/api/terminal/info", get(get_terminal_info))
                 .route("/api/terminal/exec", post(execute_terminal))
+                .route("/api/terminal/ws", get(ws_terminal_handler))
                 .route("/api/events", get(sse_events));
 
             let dist_path = std::path::Path::new("desktop/dist");
@@ -400,44 +410,364 @@ async fn update_settings(
 #[derive(Deserialize)]
 struct TerminalExecRequest {
     command: String,
+    cwd: Option<String>,
+}
+
+async fn get_terminal_info(State(state): State<AppState>) -> impl IntoResponse {
+    let username = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "developer".to_string());
+
+    let shell_name = if cfg!(target_os = "windows") {
+        "PowerShell"
+    } else {
+        "bash"
+    };
+
+    Json(json!({
+        "shell": shell_name,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "default_cwd": state.workspace_root,
+        "user": username,
+    }))
 }
 
 async fn execute_terminal(
     State(state): State<AppState>,
     Json(req): Json<TerminalExecRequest>,
 ) -> impl IntoResponse {
-    let args = json!({ "command": req.command });
-    let ctx = odon_tools::ToolContext {
-        session_id: "terminal".to_string(),
-        workspace_root: state.workspace_root.clone(),
-        approval_engine: state.approval.clone(),
-        audit_logger: state.audit.clone(),
-        storage: Some(state.storage.clone()),
-    };
-    if let Some(tool) = state.tools.get("shell_exec") {
-        match tool.execute(&ctx, args).await {
-            Ok(val) => (StatusCode::OK, Json(val)),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "exit_code": -1,
-                    "stdout": "",
-                    "stderr": e.to_string(),
-                    "success": false
-                })),
-            ),
-        }
+    let working_dir = req.cwd.unwrap_or_else(|| state.workspace_root.clone());
+    let working_path = std::path::Path::new(&working_dir);
+    let final_dir = if working_path.exists() {
+        working_dir
     } else {
-        (
-            StatusCode::NOT_FOUND,
+        state.workspace_root.clone()
+    };
+
+    let command_str = req.command.trim();
+    if command_str.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "cwd": final_dir,
+                "success": true,
+            })),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let script = format!(
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); Set-Location -LiteralPath '{}'; {}; Write-Host \"`n__ODON_CWD__:$($ExecutionContext.SessionState.Path.CurrentLocation.Path)\"",
+            final_dir.replace('\'', "''"),
+            command_str
+        );
+        let mut c = tokio::process::Command::new("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script]);
+        c
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = {
+        let script = format!(
+            "cd '{}' && {} && printf \"\\n__ODON_CWD__:%s\\n\" \"$(pwd)\"",
+            final_dir.replace('\'', "'\\''"),
+            command_str
+        );
+        let mut c = tokio::process::Command::new("sh");
+        c.args(["-c", &script]);
+        c
+    };
+
+    cmd.current_dir(&final_dir);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    match cmd.output().await {
+        Ok(output) => {
+            let full_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+
+            let mut updated_cwd = final_dir;
+            let mut cleaned_stdout = full_stdout;
+            if let Some(pos) = cleaned_stdout.rfind("__ODON_CWD__:") {
+                let cwd_part = cleaned_stdout[pos + 13..].trim();
+                if let Some(first_line) = cwd_part.lines().next() {
+                    let extracted = first_line.trim().to_string();
+                    if !extracted.is_empty() && std::path::Path::new(&extracted).exists() {
+                        updated_cwd = extracted;
+                    }
+                }
+                cleaned_stdout.truncate(pos);
+                if cleaned_stdout.ends_with("\r\n") {
+                    cleaned_stdout.truncate(cleaned_stdout.len() - 2);
+                } else if cleaned_stdout.ends_with('\n') {
+                    cleaned_stdout.truncate(cleaned_stdout.len() - 1);
+                }
+            }
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "exit_code": exit_code,
+                    "stdout": cleaned_stdout,
+                    "stderr": stderr,
+                    "cwd": updated_cwd,
+                    "success": exit_code == 0,
+                })),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "exit_code": -1,
                 "stdout": "",
-                "stderr": "shell_exec tool not available".to_string(),
-                "success": false
+                "stderr": format!("Process execution failed: {}", e),
+                "cwd": final_dir,
+                "success": false,
             })),
-        )
+        ),
     }
+}
+
+async fn ws_terminal_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let workspace = state.workspace_root.clone();
+    ws.on_upgrade(move |socket| handle_terminal_socket(socket, workspace))
+}
+
+async fn handle_terminal_socket(socket: WebSocket, workspace: String) {
+    #[cfg(target_os = "windows")]
+    let mut cmd = tokio::process::Command::new("powershell.exe");
+    #[cfg(target_os = "windows")]
+    cmd.args(["-NoLogo", "-NoExit", "-Command", "-"]);
+
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = tokio::process::Command::new("sh");
+
+    cmd.current_dir(&workspace);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let (mut ws_tx, _) = socket.split();
+            let _ = ws_tx
+                .send(WsMessage::Text(format!("Failed to spawn shell: {}\r\n", e).into()))
+                .await;
+            return;
+        }
+    };
+
+    let mut stdin = match child.stdin.take() {
+        Some(s) => s,
+        None => return,
+    };
+    let mut stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => return,
+    };
+    let mut stderr = match child.stderr.take() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+
+    let ws_send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if ws_tx.send(WsMessage::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let tx_stdout = tx.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = [0u8; 1024];
+        loop {
+            match stdout.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                    if tx_stdout.send(s).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let tx_stderr = tx.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = [0u8; 1024];
+        loop {
+            match stderr.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                    if tx_stderr.send(s).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    while let Some(Ok(msg)) = ws_rx.next().await {
+        match msg {
+            WsMessage::Text(text) => {
+                let mut data = text.as_bytes().to_vec();
+                if !data.ends_with(b"\n") {
+                    data.push(b'\n');
+                }
+                if stdin.write_all(&data).await.is_err() {
+                    break;
+                }
+            }
+            WsMessage::Binary(bin) => {
+                if stdin.write_all(&bin).await.is_err() {
+                    break;
+                }
+            }
+            WsMessage::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    let _ = child.kill().await;
+    stdout_task.abort();
+    stderr_task.abort();
+    ws_send_task.abort();
+}
+
+async fn get_models() -> impl IntoResponse {
+    Json(json!({
+        "providers": [
+            {
+                "id": "antigravity",
+                "name": "Antigravity (Google / DeepMind)",
+                "category": "oauth",
+                "auth_type": "oauth",
+                "description": "High-throughput intelligence via Antigravity OAuth proxy with hybrid reasoning support",
+                "models": [
+                    { "id": "claude-3-7-sonnet", "name": "Claude 3.7 Sonnet (Hybrid Reasoning)", "context": 200000, "recommended": true },
+                    { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet v2", "context": 200000, "recommended": false },
+                    { "id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "context": 1048576, "recommended": true },
+                    { "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "context": 2097152, "recommended": false },
+                    { "id": "claude-3-5-haiku", "name": "Claude 3.5 Haiku", "context": 200000, "recommended": false }
+                ]
+            },
+            {
+                "id": "codex",
+                "name": "OpenAI Codex / ChatGPT",
+                "category": "oauth",
+                "auth_type": "oauth",
+                "description": "Official OpenAI OAuth authorization with specialized coding & reasoning models",
+                "models": [
+                    { "id": "o3-mini", "name": "o3-mini (Reasoning & Coding)", "context": 200000, "recommended": true },
+                    { "id": "o1", "name": "o1 (Advanced Deep Reasoning)", "context": 200000, "recommended": false },
+                    { "id": "gpt-4o", "name": "GPT-4o (Omnimodal Flagship)", "context": 128000, "recommended": true },
+                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini (Fast & Light)", "context": 128000, "recommended": false }
+                ]
+            },
+            {
+                "id": "muse",
+                "name": "Muse (Live SSE)",
+                "category": "oauth",
+                "auth_type": "oauth",
+                "description": "Ultra low-latency live SSE model streaming with token-level events",
+                "models": [
+                    { "id": "muse-claude-3-7-sonnet", "name": "Muse Claude 3.7 Sonnet", "context": 200000, "recommended": true },
+                    { "id": "muse-claude-3-5-sonnet", "name": "Muse Claude 3.5 Sonnet", "context": 200000, "recommended": false },
+                    { "id": "muse-code-v2", "name": "Muse Code v2", "context": 128000, "recommended": false }
+                ]
+            },
+            {
+                "id": "deepseek",
+                "name": "DeepSeek (BYOK)",
+                "category": "byok",
+                "auth_type": "api_key",
+                "default_base_url": "https://api.deepseek.com/v1",
+                "description": "DeepSeek V3 and R1 reasoning models with transparent BYOK pricing",
+                "models": [
+                    { "id": "deepseek-chat", "name": "DeepSeek-V3 (Chat & Coding)", "context": 64000, "recommended": true },
+                    { "id": "deepseek-reasoner", "name": "DeepSeek-R1 (Deep Reasoning)", "context": 64000, "recommended": true },
+                    { "id": "deepseek-coder", "name": "DeepSeek Coder", "context": 32000, "recommended": false }
+                ]
+            },
+            {
+                "id": "qwen",
+                "name": "Qwen Plan / DashScope Global",
+                "category": "byok",
+                "auth_type": "api_key",
+                "default_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                "description": "Alibaba Cloud international AI gateway: Qwen 2.5 Coder, QwQ Reasoning, and Qwen Max",
+                "models": [
+                    { "id": "qwen-max-latest", "name": "Qwen Max Latest (Flagship)", "context": 32768, "recommended": true },
+                    { "id": "qwen-plus-latest", "name": "Qwen Plus Latest", "context": 131072, "recommended": false },
+                    { "id": "qwen-turbo-latest", "name": "Qwen Turbo Latest (Speed)", "context": 131072, "recommended": false },
+                    { "id": "qwen-2.5-coder-32b-instruct", "name": "Qwen 2.5 Coder 32B", "context": 131072, "recommended": true },
+                    { "id": "qwq-32b-preview", "name": "QwQ 32B Reasoning Preview", "context": 32768, "recommended": false },
+                    { "id": "qwen2.5-72b-instruct", "name": "Qwen 2.5 72B Instruct", "context": 131072, "recommended": false }
+                ]
+            },
+            {
+                "id": "alibaba",
+                "name": "Alibaba Tongyi Qianwen (China)",
+                "category": "byok",
+                "auth_type": "api_key",
+                "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "description": "Alibaba domestic gateway for high-throughput mainland access",
+                "models": [
+                    { "id": "qwen-max", "name": "Qwen Max (Domestic)", "context": 32768, "recommended": true },
+                    { "id": "qwen-plus", "name": "Qwen Plus (Domestic)", "context": 131072, "recommended": false },
+                    { "id": "qwen-turbo", "name": "Qwen Turbo (Domestic)", "context": 131072, "recommended": false }
+                ]
+            },
+            {
+                "id": "stepfun",
+                "name": "StepFun Plan (阶跃星辰)",
+                "category": "byok",
+                "auth_type": "api_key",
+                "default_base_url": "https://api.stepfun.com/v1",
+                "description": "StepFun frontier reasoning, ultra-long 256K context, and multimodal vision models",
+                "models": [
+                    { "id": "step-2-16k", "name": "Step-2 16K (Multimodal Flagship)", "context": 16384, "recommended": true },
+                    { "id": "step-1-32k", "name": "Step-1 32K (Fast)", "context": 32768, "recommended": false },
+                    { "id": "step-1-128k", "name": "Step-1 128K (Long Context)", "context": 131072, "recommended": false },
+                    { "id": "step-1-256k", "name": "Step-1 256K (Ultra Long Context)", "context": 262144, "recommended": true },
+                    { "id": "step-1v-32k", "name": "Step-1V 32K (Vision Multimodal)", "context": 32768, "recommended": false }
+                ]
+            },
+            {
+                "id": "openai_compatible",
+                "name": "OpenAI Compatible (Custom / Local)",
+                "category": "byok",
+                "auth_type": "api_key",
+                "default_base_url": "https://api.openai.com/v1",
+                "description": "Any OpenAI-compatible gateway: Official OpenAI, Ollama, vLLM, OpenRouter, Groq, Together",
+                "models": [
+                    { "id": "gpt-4o", "name": "GPT-4o", "context": 128000, "recommended": true },
+                    { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context": 128000, "recommended": false },
+                    { "id": "o3-mini", "name": "o3-mini", "context": 200000, "recommended": false },
+                    { "id": "custom", "name": "Custom Model (Manual input)", "context": 128000, "recommended": false }
+                ]
+            }
+        ]
+    }))
 }
 
 async fn sse_events(

@@ -175,3 +175,4 @@ mod urlencoding {
         url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
     }
 }
+

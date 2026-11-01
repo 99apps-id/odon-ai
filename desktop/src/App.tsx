@@ -35,6 +35,7 @@ import {
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView } from './components/BrowserPreviewView';
+import { TerminalView } from './components/TerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { api } from './api';
 import { Session, Message, Artifact, SystemStatus } from './types';
@@ -53,10 +54,54 @@ export default function App() {
   // Navigation & View States
   const [activeNav, setActiveNav] = useState('chat');
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
-  const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser'>('artifacts');
+  const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
   const [selectedModel, setSelectedModel] = useState('Auto (GPT-4o)');
   const [inputMessage, setInputMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Resizable Right Panel State
+  const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('odon_right_panel_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 280 && parsed <= 900) return parsed;
+      }
+    }
+    return 340;
+  });
+  const [isResizingRight, setIsResizingRight] = useState(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRight) return;
+      const newWidth = window.innerWidth - e.clientX - 16;
+      if (newWidth >= 280 && newWidth <= Math.min(850, window.innerWidth * 0.65)) {
+        setRightPanelWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isResizingRight) {
+        setIsResizingRight(false);
+        localStorage.setItem('odon_right_panel_width', rightPanelWidth.toString());
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+
+    if (isResizingRight) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingRight, rightPanelWidth]);
 
   // Backend & Data States
   const [daemonOnline, setDaemonOnline] = useState(false);
@@ -468,6 +513,22 @@ export default function App() {
                 <Share2 className="w-4 h-4 text-neutral-600" />
                 <span>Automations</span>
               </button>
+
+              <button
+                onClick={() => {
+                  setActiveNav('terminal');
+                  setRightPanelView('terminal');
+                  setIsRightPanelOpen(true);
+                }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                  activeNav === 'terminal' || (rightPanelView === 'terminal' && isRightPanelOpen)
+                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold'
+                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                }`}
+              >
+                <Terminal className="w-4 h-4 text-neutral-600" />
+                <span>Terminal</span>
+              </button>
             </nav>
 
             {/* Recent Section (Bound to SQLite Sessions) */}
@@ -748,6 +809,16 @@ export default function App() {
                             <Code2 className="w-3 h-3 text-neutral-500" />
                             Inspect Source
                           </button>
+                          <button
+                            onClick={() => {
+                              setRightPanelView('terminal');
+                              setIsRightPanelOpen(true);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                          >
+                            <Terminal className="w-3 h-3 text-neutral-500" />
+                            Terminal
+                          </button>
                         </div>
                       </div>
                     )}
@@ -828,8 +899,13 @@ export default function App() {
                 {/* Right Tools */}
                 <div className="flex items-center gap-2">
                   {/* Model Selector Pill */}
-                  <button className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors">
-                    <span>Auto (GPT-4o)</span>
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors border border-neutral-200/60"
+                    title="Change Model Provider"
+                  >
+                    <Sparkles className="w-3 h-3 text-blue-500" />
+                    <span className="truncate max-w-[130px] font-medium">{selectedModel}</span>
                     <ChevronDown className="w-3 h-3 text-neutral-400" />
                   </button>
 
@@ -848,15 +924,82 @@ export default function App() {
         </main>
 
         {/* ───────────────────────────────────────────────────────────
-            RIGHT PANEL: ARTIFACTS / RELAYS / CODE / BROWSER
+            RIGHT PANEL: ARTIFACTS / RELAYS / CODE / BROWSER / TERMINAL
         ─────────────────────────────────────────────────────────── */}
         {isRightPanelOpen && (
-          <aside className="w-[300px] shrink-0 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col p-4 overflow-hidden">
+          <>
+            {/* Draggable resize handle */}
+            <div
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingRight(true);
+              }}
+              className={`w-2 -mr-1 z-20 cursor-col-resize flex items-center justify-center group shrink-0 select-none transition-colors ${
+                isResizingRight ? 'bg-blue-500/20' : 'hover:bg-neutral-300/60'
+              }`}
+              title="Drag to resize panel"
+            >
+              <div
+                className={`w-0.5 h-8 rounded-full transition-colors ${
+                  isResizingRight ? 'bg-blue-600' : 'bg-neutral-300 group-hover:bg-neutral-500'
+                }`}
+              />
+            </div>
+
+            <aside
+              style={{ width: `${rightPanelWidth}px` }}
+              className="shrink-0 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col p-3.5 overflow-hidden relative"
+            >
             
+            {/* Top View Selector Tabs (Artifacts / Code / Browser / Terminal) */}
+            <div className="flex items-center gap-1 p-1 bg-neutral-100/80 rounded-xl mb-3 text-[11px] font-medium text-neutral-600 shrink-0 select-none">
+              <button
+                onClick={() => setRightPanelView('artifacts')}
+                className={`flex-1 py-1 px-1.5 rounded-lg text-center transition-all cursor-pointer ${
+                  rightPanelView === 'artifacts'
+                    ? 'bg-white text-neutral-900 font-semibold shadow-2xs'
+                    : 'hover:text-neutral-900'
+                }`}
+              >
+                Artifacts
+              </button>
+              <button
+                onClick={() => setRightPanelView('editor')}
+                className={`flex-1 py-1 px-1.5 rounded-lg text-center transition-all cursor-pointer ${
+                  rightPanelView === 'editor'
+                    ? 'bg-white text-neutral-900 font-semibold shadow-2xs'
+                    : 'hover:text-neutral-900'
+                }`}
+              >
+                Code
+              </button>
+              <button
+                onClick={() => setRightPanelView('browser')}
+                className={`flex-1 py-1 px-1.5 rounded-lg text-center transition-all cursor-pointer ${
+                  rightPanelView === 'browser'
+                    ? 'bg-white text-neutral-900 font-semibold shadow-2xs'
+                    : 'hover:text-neutral-900'
+                }`}
+              >
+                Browser
+              </button>
+              <button
+                onClick={() => setRightPanelView('terminal')}
+                className={`flex-1 py-1 px-1.5 rounded-lg text-center transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  rightPanelView === 'terminal'
+                    ? 'bg-white text-blue-600 font-semibold shadow-2xs'
+                    : 'hover:text-neutral-900 text-neutral-600'
+                }`}
+              >
+                <Terminal className="w-3 h-3 text-blue-600" />
+                <span>Terminal</span>
+              </button>
+            </div>
+
             {/* Right Panel Sub-View: Code Editor */}
             {rightPanelView === 'editor' && (
               <div className="h-full flex flex-col">
-                <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
+                <div className="flex items-center justify-between pb-2.5 border-b border-neutral-100 mb-2.5 shrink-0">
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setRightPanelView('artifacts')}
@@ -867,12 +1010,21 @@ export default function App() {
                     </button>
                     <span className="font-bold text-xs text-neutral-900">Code Editor</span>
                   </div>
-                  <button
-                    onClick={() => setRightPanelView('browser')}
-                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
-                  >
-                    Open Browser →
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setRightPanelView('terminal')}
+                      className="text-[11px] text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer flex items-center gap-1"
+                    >
+                      <Terminal className="w-3 h-3 text-neutral-500" />
+                      <span>Terminal</span>
+                    </button>
+                    <button
+                      onClick={() => setRightPanelView('browser')}
+                      className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                    >
+                      Browser →
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-hidden">
                   <CodeEditorView onRunPreview={() => setRightPanelView('browser')} />
@@ -883,7 +1035,7 @@ export default function App() {
             {/* Right Panel Sub-View: Browser Preview */}
             {rightPanelView === 'browser' && (
               <div className="h-full flex flex-col">
-                <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
+                <div className="flex items-center justify-between pb-2.5 border-b border-neutral-100 mb-2.5 shrink-0">
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setRightPanelView('artifacts')}
@@ -894,15 +1046,61 @@ export default function App() {
                     </button>
                     <span className="font-bold text-xs text-neutral-900">Browser Preview</span>
                   </div>
-                  <button
-                    onClick={() => setRightPanelView('editor')}
-                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
-                  >
-                    View Code →
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setRightPanelView('terminal')}
+                      className="text-[11px] text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer flex items-center gap-1"
+                    >
+                      <Terminal className="w-3 h-3 text-neutral-500" />
+                      <span>Terminal</span>
+                    </button>
+                    <button
+                      onClick={() => setRightPanelView('editor')}
+                      className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                    >
+                      View Code →
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-hidden">
                   <BrowserPreviewView />
+                </div>
+              </div>
+            )}
+
+            {/* Right Panel Sub-View: Integrated Terminal */}
+            {rightPanelView === 'terminal' && (
+              <div className="h-full flex flex-col">
+                <div className="flex items-center justify-between pb-2.5 border-b border-neutral-100 mb-2.5 shrink-0">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setRightPanelView('artifacts')}
+                      className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+                      title="Back to Artifacts"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="font-bold text-xs text-neutral-900">Integrated Terminal</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setRightPanelView('editor')}
+                      className="text-[11px] text-neutral-600 hover:text-neutral-900 font-medium cursor-pointer flex items-center gap-1"
+                    >
+                      <Code2 className="w-3 h-3 text-neutral-500" />
+                      <span>Code</span>
+                    </button>
+                    <button
+                      onClick={() => setRightPanelView('browser')}
+                      className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3 text-blue-600" />
+                      <span>Browser</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                  <TerminalView />
                 </div>
               </div>
             )}
@@ -1038,8 +1236,30 @@ export default function App() {
                     </button>
                   </div>
 
+                  {/* 1.5 Host Terminal Quick Launch Card */}
+                  <div
+                    onClick={() => setRightPanelView('terminal')}
+                    className="flex items-center justify-between p-2.5 rounded-xl border border-neutral-200/90 bg-neutral-50/70 hover:bg-neutral-100/70 transition-all cursor-pointer group shadow-2xs"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-neutral-900 text-white group-hover:scale-105 transition-transform">
+                        <Terminal className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-neutral-900 leading-tight flex items-center gap-1.5">
+                          <span>Host Terminal</span>
+                          <span className="text-[9px] px-1.5 py-0.2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded font-normal">Active</span>
+                        </div>
+                        <div className="text-[10px] text-neutral-500 mt-0.5">
+                          PowerShell / sh • Sandbox CLI • 18 Tools
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
+                  </div>
+
                   {/* Divider */}
-                  <div className="border-t border-neutral-100 my-4" />
+                  <div className="border-t border-neutral-100 my-3" />
 
                   {/* 2. Relays Section */}
                   <div>
@@ -1125,6 +1345,7 @@ export default function App() {
               </div>
             )}
           </aside>
+        </>
         )}
       </div>
 
@@ -1134,6 +1355,8 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         isDark={false}
         onToggleTheme={() => {}}
+        currentModel={selectedModel}
+        onSelectModel={(modelId) => setSelectedModel(modelId)}
       />
     </div>
   );
