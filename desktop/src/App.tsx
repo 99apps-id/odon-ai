@@ -38,6 +38,7 @@ import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
 import { SettingsModal } from './components/SettingsModal';
+import { ProviderLogo } from './components/ProviderLogo';
 import { api } from './api';
 import { Session, Message, Artifact, SystemStatus } from './types';
 
@@ -52,11 +53,16 @@ interface ChatMessage {
 }
 
 const AVAILABLE_MODELS = [
-  { id: 'Auto (GPT-4o)', name: 'Auto (GPT-4o)', desc: 'Adaptive routing with high-speed intelligence', badge: 'Default' },
-  { id: 'Claude 3.7 Sonnet', name: 'Claude 3.7 Sonnet', desc: 'Hybrid reasoning and deep coding architecture', badge: 'Pro' },
-  { id: 'DeepSeek R1', name: 'DeepSeek R1', desc: 'Open reasoning with transparent chain-of-thought', badge: 'Reasoning' },
-  { id: 'Odon Local (Ollama)', name: 'Odon Local (Ollama)', desc: '100% offline private local execution on localhost:11434', badge: 'Private' },
-  { id: 'Offline Simulated', name: 'Offline Simulated', desc: 'Instant mocked responses without network requests', badge: 'Test' },
+  { id: 'claude-3-7-sonnet', provider: 'antigravity', name: 'Claude 3.7 Sonnet', desc: 'Hybrid reasoning & deep agentic architecture', badge: 'Flagship' },
+  { id: 'o3-mini', provider: 'codex', name: 'o3-mini (OpenAI)', desc: 'Frontier STEM reasoning and code optimization', badge: 'Reasoning' },
+  { id: 'gpt-4o', provider: 'openai', name: 'Auto (GPT-4o)', desc: 'Adaptive routing with high-speed intelligence', badge: 'Default' },
+  { id: 'deepseek-reasoner', provider: 'deepseek', name: 'DeepSeek R1', desc: 'Open reasoning with transparent chain-of-thought', badge: 'Reasoning' },
+  { id: 'deepseek-chat', provider: 'deepseek', name: 'DeepSeek V3', desc: '671B MoE high-throughput general & coding tier', badge: 'V3' },
+  { id: 'qwen-2.5-coder-32b-instruct', provider: 'qwen', name: 'Qwen 2.5 Coder 32B', desc: 'Alibaba Cloud state-of-the-art code specialist', badge: 'Coder' },
+  { id: 'gemini-2.0-flash', provider: 'google', name: 'Gemini 2.0 Flash', desc: '1M token ultra-fast multimodal intelligence', badge: '1M Context' },
+  { id: 'step-2-16k', provider: 'stepfun', name: 'Step-2 16K (StepFun)', desc: 'StepFun frontier multimodal reasoning tier', badge: 'StepFun' },
+  { id: 'ollama-local', provider: 'ollama', name: 'Odon Local (Ollama)', desc: '100% offline private local execution on localhost:11434', badge: 'Private' },
+  { id: 'offline-simulated', provider: 'custom', name: 'Offline Simulated', desc: 'Instant mocked responses without network requests', badge: 'Test' },
 ];
 
 const REGISTERED_TOOLS = [
@@ -1562,7 +1568,7 @@ export default function App() {
             </div>
             <div className="space-y-1">
               {AVAILABLE_MODELS.map((m) => {
-                const isSelected = selectedModel === m.name;
+                const isSelected = selectedModel === m.name || selectedModel === m.id;
                 return (
                   <button
                     key={m.id}
@@ -1576,14 +1582,19 @@ export default function App() {
                         : 'hover:bg-neutral-50 text-neutral-800'
                     }`}
                   >
-                    <div>
-                      <div className="flex items-center gap-1.5 font-semibold text-xs">
-                        <span>{m.name}</span>
-                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-normal">
-                          {m.badge}
-                        </span>
+                    <div className="flex items-start gap-2.5">
+                      <div className="mt-0.5 shrink-0">
+                        <ProviderLogo providerId={m.provider} size={16} />
                       </div>
-                      <div className="text-[10px] text-neutral-500 mt-0.5 leading-tight">{m.desc}</div>
+                      <div>
+                        <div className="flex items-center gap-1.5 font-semibold text-xs">
+                          <span>{m.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-normal">
+                            {m.badge}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-neutral-500 mt-0.5 leading-tight">{m.desc}</div>
+                      </div>
                     </div>
                     {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />}
                   </button>

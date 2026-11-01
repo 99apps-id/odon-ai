@@ -11,11 +11,33 @@ import {
   TerminalExecResult,
 } from './types';
 
-const API_BASE = (typeof window !== 'undefined' && localStorage.getItem('odon_api_base')) || 'http://127.0.0.1:4096';
+export interface OAuthAccountInfo {
+  provider: string;
+  email: string | null;
+  plan: string | null;
+  account_id: string | null;
+  connected: boolean;
+}
+
+export interface OAuthLoginResponse {
+  auth_url?: string;
+  user_code?: string;
+  verification_uri?: string;
+  device_code?: string;
+  status: 'pending_browser' | 'pending_device' | 'completed';
+  account?: OAuthAccountInfo;
+}
 
 export const api = {
   getBaseUrl(): string {
-    return (typeof window !== 'undefined' && localStorage.getItem('odon_api_base')) || API_BASE;
+    if (typeof window !== 'undefined') {
+      const explicit = localStorage.getItem('odon_api_base');
+      if (explicit) return explicit;
+      // In browser development (Vite on port 3000) or served from daemon (port 4096),
+      // empty string uses the current host/proxy, avoiding CORS or 127.0.0.1 mismatch.
+      return '';
+    }
+    return 'http://127.0.0.1:4096';
   },
 
   setBaseUrl(url: string) {
@@ -135,6 +157,34 @@ export const api = {
       throw new Error(err.error || `Execution failed with status ${res.status}`);
     }
     return res.json();
+  },
+
+  async loginOAuth(provider: string): Promise<OAuthLoginResponse> {
+    const res = await fetch(`${this.getBaseUrl()}/api/oauth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `OAuth sign-in failed with status ${res.status}`);
+    }
+    return res.json();
+  },
+
+  async getOAuthAccounts(): Promise<OAuthAccountInfo[]> {
+    const res = await fetch(`${this.getBaseUrl()}/api/oauth/accounts`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async disconnectOAuth(provider: string): Promise<boolean> {
+    const res = await fetch(`${this.getBaseUrl()}/api/oauth/disconnect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    return res.ok;
   },
 
   createTerminalWs(): WebSocket {

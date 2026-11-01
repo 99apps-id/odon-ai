@@ -239,12 +239,18 @@ impl StorageEngine {
 
     pub fn save_message(&self, msg: &Message) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let role_str = serde_json::to_string(&msg.role)?;
+        let role_str = match msg.role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+            MessageRole::Tool => "tool",
+        };
         let content_json = serde_json::to_string(&msg.content)?;
         conn.execute(
             "INSERT INTO messages (id, session_id, role, content_json, model, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
+                session_id = excluded.session_id,
                 role = excluded.role,
                 content_json = excluded.content_json,
                 model = excluded.model",
@@ -274,7 +280,12 @@ impl StorageEngine {
             let model: Option<String> = row.get(4)?;
             let created_at_str: String = row.get(5)?;
 
-            let role: MessageRole = serde_json::from_str(&role_str).unwrap_or(MessageRole::User);
+            let role = match role_str.trim().trim_matches('"').to_lowercase().as_str() {
+                "assistant" => MessageRole::Assistant,
+                "system" => MessageRole::System,
+                "tool" => MessageRole::Tool,
+                _ => MessageRole::User,
+            };
             let content: MessageContent = serde_json::from_str(&content_json).unwrap_or(MessageContent {
                 text: String::new(),
                 thought: None,

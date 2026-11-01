@@ -97,13 +97,21 @@ impl Message {
     ) -> Self {
         let cid = call_id.into();
         Self {
-            id: cid.clone(),
+            id: Uuid::new_v4().to_string(),
             session_id: session_id.into(),
             role: MessageRole::Tool,
             content: MessageContent {
                 text: content.into(),
                 thought: None,
-                tool_calls: Vec::new(),
+                tool_calls: vec![ToolCallInfo {
+                    call_id: cid,
+                    tool_name: String::new(),
+                    arguments: serde_json::Value::Null,
+                    output: None,
+                    is_error: false,
+                    requires_approval: false,
+                    is_approved: Some(true),
+                }],
                 artifact_ids: Vec::new(),
                 action_chips: Vec::new(),
             },

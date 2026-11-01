@@ -38,30 +38,32 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+  const [daemonOnline, setDaemonOnline] = useState<boolean>(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const checkConnection = () => {
+    api.getTerminalInfo().then((info) => {
+      setTerminalInfo(info);
+      if (info.default_cwd) setCurrentCwd(info.default_cwd);
+      setDaemonOnline(true);
+    }).catch(() => {
+      setDaemonOnline(false);
+      setTerminalInfo({
+        shell: 'PowerShell',
+        os: 'windows',
+        arch: 'x86_64',
+        default_cwd: 'C:/Project/odon-ai',
+        user: 'developer',
+      });
+      if (!currentCwd) setCurrentCwd('C:/Project/odon-ai');
+    });
+  };
+
   // Load terminal info & cwd on mount
   useEffect(() => {
-    let isMounted = true;
-    api.getTerminalInfo().then((info) => {
-      if (isMounted) {
-        setTerminalInfo(info);
-        setCurrentCwd(info.default_cwd);
-      }
-    }).catch(() => {
-      if (isMounted) {
-        setTerminalInfo({
-          shell: 'PowerShell',
-          os: 'windows',
-          arch: 'x86_64',
-          default_cwd: 'C:/Project/odon-ai',
-          user: 'developer',
-        });
-        setCurrentCwd('C:/Project/odon-ai');
-      }
-    });
+    checkConnection();
 
     // Initial banner
     setHistory([
@@ -75,10 +77,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       },
     ]);
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
   // Auto scroll to bottom
@@ -92,16 +90,24 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
 
     setInputVal('');
     setHistoryIndex(-1);
+
+    // Special command: cls / clear clears the screen immediately
+    if (rawCmd.toLowerCase() === 'cls' || rawCmd.toLowerCase() === 'clear') {
+      handleClear();
+      return;
+    }
+
     setIsRunning(true);
 
     // Save to command history
     setCommandHistory((prev) => [rawCmd, ...prev.filter((c) => c !== rawCmd)]);
 
-    const cwdBefore = currentCwd || terminalInfo?.default_cwd || '';
+    const cwdBefore = currentCwd || terminalInfo?.default_cwd || 'C:/Project/odon-ai';
     const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     try {
       const result: TerminalExecResult = await api.executeTerminal(rawCmd, cwdBefore);
+      setDaemonOnline(true);
       if (result.cwd) {
         setCurrentCwd(result.cwd);
       }
@@ -119,13 +125,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
         },
       ]);
     } catch (err: any) {
+      setDaemonOnline(false);
+      const isConnectionError = err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError');
+      const errorMsg = isConnectionError
+        ? `Failed to communicate with ODON daemon (http://127.0.0.1:4096). Please ensure 'odond serve' is running.\nDetails: ${err.message}`
+        : (err.message || 'Execution failed');
+
       setHistory((prev) => [
         ...prev,
         {
           id: `${Date.now()}-${Math.random()}`,
           command: rawCmd,
           stdout: '',
-          stderr: err.message || 'Execution failed',
+          stderr: errorMsg,
           exit_code: 1,
           cwd: cwdBefore,
           timestamp: nowStr,
@@ -200,13 +212,33 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
             <span>{terminalInfo?.shell || 'PowerShell'}</span>
           </div>
 
-          <div className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-neutral-400 font-mono truncate max-w-[200px]" title={currentCwd}>
+          <button
+            onClick={checkConnection}
+            title={daemonOnline ? 'ODON Daemon is online on port 4096' : 'Click to re-check connection to daemon'}
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-sans transition-all ${
+              daemonOnline
+                ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/40'
+                : 'bg-amber-950/70 text-amber-400 border border-amber-800/40 hover:bg-amber-900/60'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${daemonOnline ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+            <span>{daemonOnline ? 'Daemon Online' : 'Daemon Offline'}</span>
+          </button>
+
+          <div className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-neutral-400 font-mono truncate max-w-[180px]" title={currentCwd}>
             <FolderOpen className="w-3 h-3 text-neutral-500 shrink-0" />
             <span className="truncate">{currentCwd || '...'}</span>
           </div>
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={checkConnection}
+            className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
+            title="Reconnect daemon"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={handleCopyAll}
             className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
@@ -217,7 +249,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose }) => {
           <button
             onClick={handleClear}
             className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
-            title="Clear terminal (Ctrl+L)"
+            title="Clear terminal (Ctrl+L / cls)"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

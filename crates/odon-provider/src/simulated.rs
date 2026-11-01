@@ -58,10 +58,11 @@ impl ModelProvider for SimulatedProvider {
         }
 
         // If the user asked to inspect files, system, or run tools and we haven't executed a tool yet:
-        if !has_tool_results && (last_user_msg.contains("system") || last_user_msg.contains("environment") || last_user_msg.contains("info")) {
+        if !has_tool_results && (last_user_msg.contains("system") || last_user_msg.contains("sistem") || last_user_msg.contains("environment") || last_user_msg.contains("info")) {
+            let call_id = format!("call_sys_info_{}", uuid::Uuid::new_v4().simple());
             let _ = event_sender.send(StreamEvent::ToolCallDelta {
                 index: 0,
-                id: Some("call_sys_info_1".to_string()),
+                id: Some(call_id),
                 name: Some("system_info".to_string()),
                 arguments_delta: Some("{}".to_string()),
             }).await;
@@ -69,10 +70,11 @@ impl ModelProvider for SimulatedProvider {
             return Ok(());
         }
 
-        if !has_tool_results && (last_user_msg.contains("list file") || last_user_msg.contains("dir") || last_user_msg.contains("check files")) {
+        if !has_tool_results && (last_user_msg.contains("list file") || last_user_msg.contains("dir") || last_user_msg.contains("check files") || last_user_msg.contains("berkas") || last_user_msg.contains("daftar file")) {
+            let call_id = format!("call_fs_list_{}", uuid::Uuid::new_v4().simple());
             let _ = event_sender.send(StreamEvent::ToolCallDelta {
                 index: 0,
-                id: Some("call_fs_list_1".to_string()),
+                id: Some(call_id),
                 name: Some("fs_list".to_string()),
                 arguments_delta: Some(r#"{"path":"."}"#.to_string()),
             }).await;
@@ -80,7 +82,15 @@ impl ModelProvider for SimulatedProvider {
             return Ok(());
         }
 
+        let latest_tool_output = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::Tool)
+            .map(|m| m.content.text.clone());
+
         // If the user requested code, app, or personal knowledge hub:
+        let generated_text;
         let response_text = if last_user_msg.contains("knowledge hub") || last_user_msg.contains("build") || last_user_msg.contains("react") {
             "I'm on it! I will build the **Personal Knowledge Hub** project end-to-end.\n\n\
             Here is what has been assembled for your workspace:\n\n\
@@ -88,10 +98,14 @@ impl ModelProvider for SimulatedProvider {
             2. **Product Requirement Document (PRD)**: Comprehensive specification covering goals, persona workflows, API contracts, and non-functional requirements.\n\
             3. **Visual Mockups**: High-resolution interface preview and hero branding cards.\n\n\
             You can preview, modify, or download the generated artifacts in the Artifacts panel to the right."
+        } else if let Some(tool_output) = latest_tool_output {
+            generated_text = format!(
+                "Berikut hasil eksekusi alat dan telemetri lingkungan kerja Anda:\n\n```json\n{}\n```\n\nEksekusi alat berhasil diselesaikan dan dicatat ke dalam database SQLite sesi aktif.",
+                tool_output
+            );
+            &generated_text
         } else if last_user_msg.contains("search") || last_user_msg.contains("cari") {
             "Here are the findings based on your inquiry. The parameters have been checked against the active workspace knowledge base and online documentation. Let me know if you would like me to drill down further or write a tailored script."
-        } else if has_tool_results {
-            "Tool execution completed successfully. The environment and workspace indicators have been recorded into the context session."
         } else {
             "Hello! I am **ODON (Open Digital Orchestration Network)**, your autonomous AI desktop assistant.\n\n\
             I can help you:\n\

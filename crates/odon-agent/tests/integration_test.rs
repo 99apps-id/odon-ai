@@ -187,11 +187,12 @@ async fn test_conversational_agent_turn_with_artifacts() {
     let session = Session::new("Knowledge Hub Turn", SessionMode::General, "odon-auto");
     storage.save_session(&session).unwrap();
 
-    let mut received_artifacts = 0;
+    let received_artifacts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let received_clone = received_artifacts.clone();
     tokio::spawn(async move {
         while let Ok(evt) = event_rx.recv().await {
             if let AgentEvent::ArtifactCreated { .. } = evt {
-                received_artifacts += 1;
+                received_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     });
@@ -283,4 +284,49 @@ async fn test_extended_tools_execution() {
         "key": "user_ui_preference"
     })).await.unwrap();
     assert!(recall_res.get("memory").is_some());
+}
+
+#[tokio::test]
+async fn test_simulated_provider_turn() {
+    let storage = std::sync::Arc::new(StorageEngine::new_in_memory().unwrap());
+    let policy = SecurityPolicy::default();
+    let approval = std::sync::Arc::new(ApprovalEngine::new(policy));
+    let audit = std::sync::Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let workspace = temp_dir.path().to_string_lossy().to_string();
+
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        std::sync::Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        workspace,
+    );
+
+    let provider = std::sync::Arc::new(odon_provider::SimulatedProvider::default());
+    runtime.register_provider("default", provider, true).await;
+
+    let session = Session::new("Simulated Turn", SessionMode::General, "odon-auto");
+    storage.save_session(&session).unwrap();
+
+    let cancel = CancellationToken::new();
+    let result = runtime
+        .execute_turn(
+            &session.id,
+            "tampilkan info ringkas sistem",
+            None,
+            cancel,
+        )
+        .await
+        .unwrap();
+
+    println!("RESULT_TEXT: {}", result.content.text);
+    let msgs = storage.list_messages(&session.id).unwrap();
+    println!("MSGS COUNT: {}", msgs.len());
+    for m in &msgs {
+        println!("MSG: role={:?} id={}", m.role, m.id);
+    }
 }
