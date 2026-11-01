@@ -6,7 +6,7 @@ use tracing::{error, info};
 
 use odon_core::{
     AgentEvent, AgentState, Artifact, Message, OdonError,
-    OutputActionChip, Result, ToolCallInfo,
+    OutputActionChip, Result, Session, SessionMode, ToolCallInfo,
 };
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent, ToolDefinition};
 use odon_security::{ApprovalEngine, AuditLogger};
@@ -141,6 +141,17 @@ impl AgentRuntime {
         cancellation: CancellationToken,
     ) -> Result<Message> {
         info!("Executing agent turn for session: {}", session_id);
+
+        // 0. Ensure session exists in storage
+        if self.storage.get_session(session_id).is_err() {
+            let title = if user_prompt.len() > 30 {
+                format!("{}...", &user_prompt[..30])
+            } else {
+                user_prompt.to_string()
+            };
+            let sess = Session::new(title, SessionMode::General, "odon-auto".to_string());
+            let _ = self.storage.save_session(&sess);
+        }
 
         // 1. Persist User Message
         let user_msg = Message::new_user(session_id, user_prompt);

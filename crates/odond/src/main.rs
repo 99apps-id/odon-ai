@@ -59,6 +59,7 @@ struct AppState {
     runtime: Arc<AgentRuntime>,
     storage: Arc<StorageEngine>,
     approval: Arc<ApprovalEngine>,
+    audit: Arc<AuditLogger>,
     tools: Arc<ToolRegistry>,
     event_tx: broadcast::Sender<AgentEvent>,
     workspace_root: String,
@@ -108,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
                 storage.clone(),
                 tools.clone(),
                 approval.clone(),
-                audit,
+                audit.clone(),
                 event_tx.clone(),
                 workspace.clone(),
             ));
@@ -174,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/approvals", get(list_approvals))
                 .route("/api/approvals/{id}", post(resolve_approval))
                 .route("/api/settings", get(get_settings).post(update_settings))
+                .route("/api/terminal/exec", post(execute_terminal))
                 .route("/api/events", get(sse_events));
 
             let dist_path = std::path::Path::new("desktop/dist");
@@ -392,6 +394,46 @@ async fn update_settings(
     }
     let policy = state.approval.get_policy().await;
     Json(json!({ "execution_mode": format!("{:?}", policy.mode) }))
+}
+
+#[derive(Deserialize)]
+struct TerminalExecRequest {
+    command: String,
+}
+
+async fn execute_terminal(
+    State(state): State<AppState>,
+    Json(req): Json<TerminalExecRequest>,
+) -> impl IntoResponse {
+    let args = json!({ "command": req.command });
+    let ctx = odon_tools::ToolContext {
+        session_id: "terminal".to_string(),
+        workspace_root: state.workspace_root.clone(),
+    };
+    if let Some(tool) = state.tools.get("shell_exec") {
+        match tool.execute(&ctx, args).await {
+            Ok(val) => (StatusCode::OK, Json(val)),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": e.to_string(),
+                    "success": false
+                })),
+            ),
+        }
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "shell_exec tool not available".to_string(),
+                "success": false
+            })),
+        )
+    }
 }
 
 async fn sse_events(
