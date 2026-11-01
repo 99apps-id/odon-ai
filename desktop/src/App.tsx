@@ -29,6 +29,7 @@ import {
   Layers,
   ArrowLeft,
   CheckCircle2,
+  Check,
   Terminal,
   Loader2,
 } from 'lucide-react';
@@ -50,6 +51,35 @@ interface ChatMessage {
   toolCalls?: string[];
 }
 
+const AVAILABLE_MODELS = [
+  { id: 'Auto (GPT-4o)', name: 'Auto (GPT-4o)', desc: 'Adaptive routing with high-speed intelligence', badge: 'Default' },
+  { id: 'Claude 3.7 Sonnet', name: 'Claude 3.7 Sonnet', desc: 'Hybrid reasoning and deep coding architecture', badge: 'Pro' },
+  { id: 'DeepSeek R1', name: 'DeepSeek R1', desc: 'Open reasoning with transparent chain-of-thought', badge: 'Reasoning' },
+  { id: 'Odon Local (Ollama)', name: 'Odon Local (Ollama)', desc: '100% offline private local execution on localhost:11434', badge: 'Private' },
+  { id: 'Offline Simulated', name: 'Offline Simulated', desc: 'Instant mocked responses without network requests', badge: 'Test' },
+];
+
+const REGISTERED_TOOLS = [
+  { name: 'fs_read', category: 'File System', tier: 'Tier 0', desc: 'Read file contents' },
+  { name: 'fs_write', category: 'File System', tier: 'Tier 1', desc: 'Write or overwrite file' },
+  { name: 'fs_edit', category: 'File System', tier: 'Tier 1', desc: 'Find and replace file text' },
+  { name: 'fs_search', category: 'File System', tier: 'Tier 0', desc: 'Search workspace files' },
+  { name: 'fs_delete', category: 'File System', tier: 'Tier 1', desc: 'Delete workspace file' },
+  { name: 'git_status', category: 'Git', tier: 'Tier 0', desc: 'Working tree status' },
+  { name: 'git_diff', category: 'Git', tier: 'Tier 0', desc: 'Inspect uncommitted diffs' },
+  { name: 'git_log', category: 'Git', tier: 'Tier 0', desc: 'View commit history' },
+  { name: 'git_branch', category: 'Git', tier: 'Tier 0', desc: 'List or create branches' },
+  { name: 'web_search', category: 'Web', tier: 'Tier 0', desc: 'DuckDuckGo web search' },
+  { name: 'web_fetch', category: 'Web', tier: 'Tier 0', desc: 'Fetch webpage content' },
+  { name: 'system_info', category: 'System', tier: 'Tier 0', desc: 'OS, CPU, memory details' },
+  { name: 'calc_eval', category: 'Utility', tier: 'Tier 0', desc: 'Safe math evaluator' },
+  { name: 'shell_exec', category: 'Execution', tier: 'Tier 2', desc: 'Run PowerShell / sh command' },
+  { name: 'process_spawn', category: 'Execution', tier: 'Tier 2', desc: 'Background daemon process' },
+  { name: 'memory_store', category: 'Memory', tier: 'Tier 0', desc: 'Save long-term project note' },
+  { name: 'memory_recall', category: 'Memory', tier: 'Tier 0', desc: 'Recall persistent memories' },
+  { name: 'artifact_create', category: 'Artifact', tier: 'Tier 0', desc: 'Synthesize code/doc/image' },
+];
+
 export default function App() {
   // Navigation & View States
   const [activeNav, setActiveNav] = useState('chat');
@@ -58,6 +88,16 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState('Auto (GPT-4o)');
   const [inputMessage, setInputMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Menus & Modals
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isBellOpen, setIsBellOpen] = useState(false);
+  const [showAllRecent, setShowAllRecent] = useState(false);
+  const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Resizable Right Panel State
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
@@ -338,9 +378,73 @@ export default function App() {
     handleSendMessage(promptText, mode);
   };
 
+  // File attachment handler
+  const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      const snippet = text.length > 2000 ? text.slice(0, 2000) + '\n... (truncated)' : text;
+      setInputMessage((prev) => `${prev ? prev + '\n' : ''}[Attached file: ${file.name}]\n\`\`\`\n${snippet}\n\`\`\`\n`);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // Dynamic input placeholder based on active navigation tab
+  const getPlaceholder = () => {
+    switch (activeNav) {
+      case 'code':
+        return 'Describe code to generate, refactor, or test...';
+      case 'create':
+        return 'Describe an image or visual creative asset to generate...';
+      case 'documents':
+        return 'Draft a PRD, technical specification, or document...';
+      case 'files':
+        return 'Ask ODON to search, inspect, or edit workspace files...';
+      case 'agents':
+        return 'Define an autonomous multi-step agent mission...';
+      case 'automations':
+        return 'Configure a background automation or scheduled workflow...';
+      case 'terminal':
+        return 'Ask ODON to run terminal commands or script in workspace...';
+      default:
+        return 'Ask ODON anything...';
+    }
+  };
+
+  // Window control actions
+  const handleMinimize = () => {
+    setIsRightPanelOpen(false);
+  };
+
+  const handleMaximize = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  const handleClose = () => {
+    handleNewChat();
+  };
+
+  // Extract generated code files for CodeEditorView
+  const latestCodeArtifact = artifacts.find((a) => a.kind === 'code');
+  const codeFiles = latestCodeArtifact && latestCodeArtifact.payload && 'data' in latestCodeArtifact.payload && 'files' in (latestCodeArtifact.payload as any).data
+    ? ((latestCodeArtifact.payload as any).data.files as any[]).map((f) => ({
+        name: f.path.split('/').pop() || f.path,
+        path: f.path,
+        language: (latestCodeArtifact.payload as any).data.language || 'typescript',
+        content: f.content,
+      }))
+    : undefined;
+
   // Session list to render
   const recentItems = sessions.length > 0
-    ? sessions.slice(0, 5).map((s) => ({
+    ? (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
         id: s.id,
         title: s.title,
         time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -354,18 +458,34 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans select-none">
+      {/* Hidden File Picker */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileAttach}
+        className="hidden"
+      />
+
       {/* ─────────────────────────────────────────────────────────────
           1. WINDOW TITLE BAR (DESKTOP CHROME)
       ───────────────────────────────────────────────────────────── */}
       <header className="h-8 shrink-0 flex items-center justify-between px-3 text-xs text-neutral-600 bg-[#f4f5f8]">
         {/* Left: App Logo & Name + Backend Status */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 font-medium text-neutral-800 tracking-tight">
+          <div
+            onClick={handleNewChat}
+            className="flex items-center gap-1.5 font-medium text-neutral-800 tracking-tight cursor-pointer hover:opacity-80 transition-opacity"
+            title="Return to Home"
+          >
             <CatLogo className="w-4 h-4 text-neutral-800" strokeWidth={2.4} />
             <span className="font-semibold text-[13px] tracking-wide">ODON</span>
           </div>
 
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/90 border border-neutral-200/80 text-[10px] text-neutral-600 shadow-2xs">
+          <div
+            onClick={() => setSettingsOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/90 border border-neutral-200/80 text-[10px] text-neutral-600 shadow-2xs cursor-pointer hover:bg-neutral-50 transition-colors"
+            title="Click to configure Daemon connection"
+          >
             <span
               className={`w-1.5 h-1.5 rounded-full ${
                 daemonOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
@@ -380,13 +500,25 @@ export default function App() {
 
         {/* Right: Window Controls */}
         <div className="flex items-center gap-1">
-          <button className="w-7 h-6 flex items-center justify-center rounded hover:bg-neutral-200/70 text-neutral-600 transition-colors">
+          <button
+            onClick={handleMinimize}
+            className="w-7 h-6 flex items-center justify-center rounded hover:bg-neutral-200/70 text-neutral-600 transition-colors cursor-pointer"
+            title="Collapse Panel"
+          >
             <Minus className="w-3.5 h-3.5" />
           </button>
-          <button className="w-7 h-6 flex items-center justify-center rounded hover:bg-neutral-200/70 text-neutral-600 transition-colors">
+          <button
+            onClick={handleMaximize}
+            className="w-7 h-6 flex items-center justify-center rounded hover:bg-neutral-200/70 text-neutral-600 transition-colors cursor-pointer"
+            title="Toggle Fullscreen"
+          >
             <Square className="w-3 h-3" />
           </button>
-          <button className="w-7 h-6 flex items-center justify-center rounded hover:bg-red-500 hover:text-white text-neutral-600 transition-colors">
+          <button
+            onClick={handleClose}
+            className="w-7 h-6 flex items-center justify-center rounded hover:bg-red-500 hover:text-white text-neutral-600 transition-colors cursor-pointer"
+            title="Reset to Home Screen"
+          >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -553,12 +685,21 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <button
-                onClick={loadSessions}
-                className="text-[11px] text-neutral-400 hover:text-neutral-700 px-2 py-1 mt-1 transition-colors"
-              >
-                Refresh list...
-              </button>
+              <div className="flex items-center justify-between px-1 mt-1 text-[11px] text-neutral-400">
+                <button
+                  onClick={() => setShowAllRecent(!showAllRecent)}
+                  className="hover:text-neutral-700 py-0.5 transition-colors cursor-pointer"
+                >
+                  {showAllRecent ? 'Show less' : 'Show more...'}
+                </button>
+                <button
+                  onClick={loadSessions}
+                  className="hover:text-neutral-700 py-0.5 transition-colors cursor-pointer"
+                  title="Reload from SQLite"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
           </div>
 
@@ -575,7 +716,7 @@ export default function App() {
             </div>
             <button
               onClick={() => setSettingsOpen(true)}
-              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors"
+              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
               title="Settings & Preferences"
             >
               <Settings className="w-4 h-4" />
@@ -592,7 +733,11 @@ export default function App() {
           <div className="h-12 border-b border-neutral-100 px-4 flex items-center justify-between shrink-0">
             {/* Model Selector Pill */}
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer">
+              <div
+                onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
+                title="Select Active AI Model"
+              >
                 <Sparkles className="w-3.5 h-3.5 text-neutral-700" />
                 <span>{selectedModel}</span>
                 <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
@@ -601,7 +746,7 @@ export default function App() {
               {inChatMode && (
                 <button
                   onClick={handleNewChat}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-md hover:bg-blue-50 transition-colors"
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
                 >
                   ← Back to Home
                 </button>
@@ -610,15 +755,23 @@ export default function App() {
 
             {/* Action Buttons on Right */}
             <div className="flex items-center gap-1">
-              <button className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors">
+              <button
+                onClick={() => setIsSearchOpen(true)}
+                className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                title="Search Sessions & Artifacts"
+              >
                 <Search className="w-4 h-4" />
               </button>
-              <button className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors">
+              <button
+                onClick={() => setIsBellOpen(true)}
+                className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                title="System Notifications & Activity"
+              >
                 <Bell className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-                className={`p-2 rounded-lg transition-colors ${
+                className={`p-2 rounded-lg transition-colors cursor-pointer ${
                   isRightPanelOpen
                     ? 'text-neutral-700 hover:bg-neutral-100'
                     : 'text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100'
@@ -872,7 +1025,7 @@ export default function App() {
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder="Ask ODON anything..."
+                placeholder={getPlaceholder()}
                 disabled={isGenerating}
                 className="w-full text-xs text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent"
               />
@@ -881,33 +1034,48 @@ export default function App() {
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-neutral-100">
                 {/* Left Tools */}
                 <div className="flex items-center gap-1">
-                  <button className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer"
+                    title="Attach file to prompt"
+                  >
                     <Plus className="w-4 h-4" />
                   </button>
-                  <button className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer"
+                    title="Attach document or code snippet"
+                  >
                     <Paperclip className="w-4 h-4" />
                   </button>
                   
                   {/* Tools Dropdown */}
-                  <button className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors ml-1 border border-neutral-200/60">
-                    <Globe className="w-3.5 h-3.5 text-neutral-500" />
-                    <span>Tools</span>
-                    <ChevronDown className="w-3 h-3 text-neutral-400" />
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsToolsMenuOpen(!isToolsMenuOpen)}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors ml-1 border border-neutral-200/60 cursor-pointer"
+                    >
+                      <Globe className="w-3.5 h-3.5 text-neutral-500" />
+                      <span>Tools ({REGISTERED_TOOLS.length})</span>
+                      <ChevronDown className="w-3 h-3 text-neutral-400" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Right Tools */}
                 <div className="flex items-center gap-2">
                   {/* Model Selector Pill */}
-                  <button
-                    onClick={() => setSettingsOpen(true)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors border border-neutral-200/60"
-                    title="Change Model Provider"
-                  >
-                    <Sparkles className="w-3 h-3 text-blue-500" />
-                    <span className="truncate max-w-[130px] font-medium">{selectedModel}</span>
-                    <ChevronDown className="w-3 h-3 text-neutral-400" />
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
+                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors border border-neutral-200/60 cursor-pointer"
+                      title="Select Model"
+                    >
+                      <Sparkles className="w-3 h-3 text-blue-500" />
+                      <span className="truncate max-w-[130px] font-medium">{selectedModel}</span>
+                      <ChevronDown className="w-3 h-3 text-neutral-400" />
+                    </button>
+                  </div>
 
                   {/* Send Button */}
                   <button
@@ -1027,7 +1195,11 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  <CodeEditorView onRunPreview={() => setRightPanelView('browser')} />
+                  <CodeEditorView
+                    files={codeFiles}
+                    onRunPreview={() => setRightPanelView('browser')}
+                    onOpenTerminal={() => setRightPanelView('terminal')}
+                  />
                 </div>
               </div>
             )}
@@ -1273,7 +1445,11 @@ export default function App() {
 
                     <div className="space-y-2">
                       {/* Telegram */}
-                      <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer">
+                      <div
+                        onClick={() => setRelayModalOpen('telegram')}
+                        className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer group"
+                        title="Configure Telegram Bot Relay"
+                      >
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full bg-[#0088cc] text-white flex items-center justify-center">
                             <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
@@ -1291,12 +1467,16 @@ export default function App() {
                             />
                             <span>{systemStatus?.relays.telegram ? 'Connected' : 'Standby'}</span>
                           </div>
-                          <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
+                          <ChevronRight className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
                         </div>
                       </div>
 
                       {/* WhatsApp */}
-                      <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer">
+                      <div
+                        onClick={() => setRelayModalOpen('whatsapp')}
+                        className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer group"
+                        title="Configure WhatsApp Bridge Relay"
+                      >
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full bg-[#25d366] text-white flex items-center justify-center">
                             <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
@@ -1314,7 +1494,7 @@ export default function App() {
                             />
                             <span>{systemStatus?.relays.whatsapp ? 'Connected' : 'Standby'}</span>
                           </div>
-                          <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
+                          <ChevronRight className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
                         </div>
                       </div>
                     </div>
@@ -1358,6 +1538,302 @@ export default function App() {
         currentModel={selectedModel}
         onSelectModel={(modelId) => setSelectedModel(modelId)}
       />
+
+      {/* ─────────────────────────────────────────────────────────────
+          FLOATING MODEL SELECTOR POPOVER
+      ───────────────────────────────────────────────────────────── */}
+      {isModelMenuOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-2xs"
+          onClick={() => setIsModelMenuOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-80 bg-white rounded-2xl border border-neutral-200 shadow-xl p-3 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center justify-between px-2 pb-2 border-b border-neutral-100 mb-2">
+              <span className="font-bold text-xs text-neutral-900">Select AI Model</span>
+              <button
+                onClick={() => setIsModelMenuOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="space-y-1">
+              {AVAILABLE_MODELS.map((m) => {
+                const isSelected = selectedModel === m.name;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => {
+                      setSelectedModel(m.name);
+                      setIsModelMenuOpen(false);
+                    }}
+                    className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-start justify-between ${
+                      isSelected
+                        ? 'bg-blue-50/70 border border-blue-200/80 text-blue-900'
+                        : 'hover:bg-neutral-50 text-neutral-800'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 font-semibold text-xs">
+                        <span>{m.name}</span>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-normal">
+                          {m.badge}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-neutral-500 mt-0.5 leading-tight">{m.desc}</div>
+                    </div>
+                    {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          FLOATING TOOLS INVENTORY POPOVER
+      ───────────────────────────────────────────────────────────── */}
+      {isToolsMenuOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-2xs"
+          onClick={() => setIsToolsMenuOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[440px] max-w-[90vw] max-h-[80vh] flex flex-col bg-white rounded-2xl border border-neutral-200 shadow-xl p-4 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center justify-between pb-2.5 border-b border-neutral-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-blue-600" />
+                <span className="font-bold text-sm text-neutral-900">
+                  Registered Tools ({REGISTERED_TOOLS.length})
+                </span>
+              </div>
+              <button
+                onClick={() => setIsToolsMenuOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[11px] text-neutral-500 my-2 shrink-0">
+              Autonomous execution harness capabilities available to the agent runtime.
+            </p>
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+              {REGISTERED_TOOLS.map((t) => (
+                <div
+                  key={t.name}
+                  className="p-2 rounded-xl border border-neutral-100 bg-neutral-50/60 flex items-center justify-between text-xs"
+                >
+                  <div>
+                    <div className="flex items-center gap-2 font-mono font-semibold text-neutral-900">
+                      <span>{t.name}</span>
+                      <span className="text-[9px] font-sans px-1.5 py-0.2 rounded bg-neutral-200/80 text-neutral-600">
+                        {t.category}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-neutral-500 font-sans mt-0.5">{t.desc}</div>
+                  </div>
+                  <span
+                    className={`text-[9px] font-medium px-2 py-0.5 rounded-full ${
+                      t.tier === 'Tier 0'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : t.tier === 'Tier 1'
+                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                        : 'bg-red-50 text-red-700 border border-red-200'
+                    }`}
+                  >
+                    {t.tier}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          SEARCH SESSIONS & ARTIFACTS MODAL
+      ───────────────────────────────────────────────────────────── */}
+      {isSearchOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/25 backdrop-blur-2xs"
+          onClick={() => setIsSearchOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[480px] max-w-[90vw] bg-white rounded-2xl border border-neutral-200 shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center gap-2 pb-3 border-b border-neutral-100">
+              <Search className="w-4 h-4 text-neutral-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search conversations and artifacts..."
+                className="flex-1 text-xs outline-none bg-transparent text-neutral-900 placeholder-neutral-400 font-sans"
+                autoFocus
+              />
+              <button
+                onClick={() => setIsSearchOpen(false)}
+                className="text-neutral-400 hover:text-neutral-700 p-1 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="mt-3 max-h-60 overflow-y-auto space-y-1">
+              {sessions.filter((s) => s.title.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 ? (
+                sessions
+                  .filter((s) => s.title.toLowerCase().includes(searchQuery.toLowerCase()))
+                  .map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        loadSessionChat(s.id, s.title);
+                        setIsSearchOpen(false);
+                      }}
+                      className="w-full text-left p-2 rounded-xl hover:bg-neutral-50 transition-colors flex items-center justify-between text-xs cursor-pointer"
+                    >
+                      <span className="font-medium text-neutral-800 truncate">{s.title}</span>
+                      <span className="text-[10px] text-neutral-400">
+                        {new Date(s.updated_at).toLocaleDateString()}
+                      </span>
+                    </button>
+                  ))
+              ) : (
+                <div className="text-center py-6 text-neutral-400 text-xs">
+                  {searchQuery ? 'No matching sessions found.' : 'Type to search previous conversations...'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          SYSTEM ACTIVITY / NOTIFICATIONS MODAL
+      ───────────────────────────────────────────────────────────── */}
+      {isBellOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-2xs"
+          onClick={() => setIsBellOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[420px] max-w-[90vw] bg-white rounded-2xl border border-neutral-200 shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center justify-between pb-2.5 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-blue-600" />
+                <span className="font-bold text-sm text-neutral-900">System Status & Activity</span>
+              </div>
+              <button
+                onClick={() => setIsBellOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="mt-3 space-y-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
+                <span className="text-neutral-600">Runtime Daemon</span>
+                <span className={`font-semibold ${daemonOnline ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {daemonOnline ? 'Online (127.0.0.1:4096)' : 'Offline (Local Standby)'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
+                <span className="text-neutral-600">Registered Tools</span>
+                <span className="font-semibold text-neutral-900">18 active tools (All Ready)</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
+                <span className="text-neutral-600">Telegram Bot Relay</span>
+                <span className="font-semibold text-neutral-700">
+                  {systemStatus?.relays.telegram ? 'Connected' : 'Standby (Token not set)'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
+                <span className="text-neutral-600">Persistence Engine</span>
+                <span className="font-semibold text-neutral-900">SQLite State (`odon_state.db`)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          RELAY SETUP MODAL (TELEGRAM / WHATSAPP)
+      ───────────────────────────────────────────────────────────── */}
+      {relayModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-2xs"
+          onClick={() => setRelayModalOpen(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[450px] max-w-[90vw] bg-white rounded-2xl border border-neutral-200 shadow-2xl p-5 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <Radio className="w-4 h-4 text-blue-600" />
+                <span className="font-bold text-sm text-neutral-900">
+                  {relayModalOpen === 'telegram' ? 'Telegram Bot Relay' : 'WhatsApp Bridge Relay'}
+                </span>
+              </div>
+              <button
+                onClick={() => setRelayModalOpen(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="mt-3.5 space-y-3 text-xs text-neutral-600 leading-relaxed">
+              {relayModalOpen === 'telegram' ? (
+                <>
+                  <p>
+                    ODON can be fully controlled directly from your personal or team Telegram chats. Commands sent to your bot execute autonomous agent turns and return rich markdown answers.
+                  </p>
+                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 font-mono text-[11px] space-y-1">
+                    <div className="text-neutral-500 font-sans text-[10px]">Start daemon with your bot token:</div>
+                    <div className="text-neutral-800">$env:TELEGRAM_BOT_TOKEN="your_token"</div>
+                    <div className="text-blue-600">odond serve --telegram-token "your_token"</div>
+                  </div>
+                  <div className="text-[11px] text-neutral-500">
+                    Status:{' '}
+                    <span className="font-semibold text-emerald-600">
+                      {systemStatus?.relays.telegram ? 'Connected & Listening' : 'Waiting for Bot Token'}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p>
+                    WhatsApp relay connects ODON via a local WhatsApp bridge or cloud webhook. Messages sent to your WhatsApp number trigger background agent orchestration.
+                  </p>
+                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 font-mono text-[11px] space-y-1">
+                    <div className="text-neutral-500 font-sans text-[10px]">Webhook Listener Endpoint:</div>
+                    <div className="text-neutral-800">http://127.0.0.1:4096/api/relays/whatsapp</div>
+                  </div>
+                  <div className="text-[11px] text-neutral-500">
+                    Status: <span className="font-semibold text-amber-600">Standby (Ready for webhook pairing)</span>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-end">
+              <button
+                onClick={() => setRelayModalOpen(null)}
+                className="px-3.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
