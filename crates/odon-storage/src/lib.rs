@@ -1,3 +1,3 @@
 pub mod db;
 
-pub use db::StorageEngine;
+pub use db::{MemoryItem, StorageEngine};

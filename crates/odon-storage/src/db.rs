@@ -111,6 +111,14 @@ impl StorageEngine {
 
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id);
             CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts (session_id);
+
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                key TEXT NOT NULL UNIQUE,
+                value TEXT NOT NULL,
+                category TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             ",
         )?;
         Ok(())
@@ -362,4 +370,146 @@ impl StorageEngine {
         }
         Ok(artifacts)
     }
+
+    pub fn get_artifact(&self, id: &str) -> Result<Artifact> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, title, kind, summary, payload_json, created_at
+             FROM artifacts WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let session_id: String = row.get(1)?;
+            let title: String = row.get(2)?;
+            let kind_str: String = row.get(3)?;
+            let summary: String = row.get(4)?;
+            let payload_json: String = row.get(5)?;
+            let created_at_str: String = row.get(6)?;
+
+            let kind: ArtifactKind = serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
+            let payload = serde_json::from_str(&payload_json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+            })?;
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(Artifact {
+                id,
+                session_id,
+                title,
+                kind,
+                summary,
+                payload,
+                created_at,
+            })
+        } else {
+            Err(StorageError::NotFound(format!("Artifact {}", id)))
+        }
+    }
+
+    pub fn delete_session(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute("DELETE FROM messages WHERE session_id = ?1", params![id]);
+        let _ = conn.execute("DELETE FROM artifacts WHERE session_id = ?1", params![id]);
+        let count = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        Ok(count > 0)
+    }
+
+    // --- Memory Operations ---
+
+    pub fn set_memory(&self, key: &str, value: &str, category: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO memories (id, key, value, category, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                category = excluded.category,
+                updated_at = excluded.updated_at",
+            params![uuid::Uuid::new_v4().to_string(), key, value, category, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_memory(&self, key: &str) -> Result<Option<MemoryItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT key, value, category, updated_at FROM memories WHERE key = ?1")?;
+        let mut rows = stmt.query(params![key])?;
+        if let Some(row) = rows.next()? {
+            let updated_at_str: String = row.get(3)?;
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            Ok(Some(MemoryItem {
+                key: row.get(0)?,
+                value: row.get(1)?,
+                category: row.get(2)?,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_memories(&self, category: Option<&str>) -> Result<Vec<MemoryItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut memories = Vec::new();
+        if let Some(cat) = category {
+            let mut stmt = conn.prepare(
+                "SELECT key, value, category, updated_at FROM memories WHERE category = ?1 ORDER BY updated_at DESC"
+            )?;
+            let rows = stmt.query_map(params![cat], |row| {
+                let updated_at_str: String = row.get(3)?;
+                let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now());
+                Ok(MemoryItem {
+                    key: row.get(0)?,
+                    value: row.get(1)?,
+                    category: row.get(2)?,
+                    updated_at,
+                })
+            })?;
+            for r in rows {
+                memories.push(r?);
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT key, value, category, updated_at FROM memories ORDER BY updated_at DESC"
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let updated_at_str: String = row.get(3)?;
+                let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now());
+                Ok(MemoryItem {
+                    key: row.get(0)?,
+                    value: row.get(1)?,
+                    category: row.get(2)?,
+                    updated_at,
+                })
+            })?;
+            for r in rows {
+                memories.push(r?);
+            }
+        }
+        Ok(memories)
+    }
+
+    pub fn delete_memory(&self, key: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute("DELETE FROM memories WHERE key = ?1", params![key])?;
+        Ok(count > 0)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryItem {
+    pub key: String,
+    pub value: String,
+    pub category: String,
+    pub updated_at: DateTime<Utc>,
 }

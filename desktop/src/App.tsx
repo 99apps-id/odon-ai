@@ -30,14 +30,31 @@ import {
   ExternalLink,
   ShieldCheck,
   Terminal,
+  PanelRightClose,
+  PanelRightOpen,
+  Maximize2,
+  Minimize2,
+  X,
+  Eye,
+  Check,
 } from 'lucide-react';
+import { CodeEditorView } from './components/CodeEditorView';
+import { BrowserPreviewView } from './components/BrowserPreviewView';
 
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<'chat' | 'code' | 'create' | 'documents' | 'files' | 'agents' | 'automations'>('chat');
-  const [activeRightTab, setActiveRightTab] = useState<'artifacts' | 'relays' | 'agents' | 'automations'>('artifacts');
+  const [activeRightTab, setActiveRightTab] = useState<'artifacts' | 'editor' | 'browser' | 'relays'>('artifacts');
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+  const [isRightPanelWide, setIsRightPanelWide] = useState(false);
   const [selectedModel, setSelectedModel] = useState('ODON Auto');
   const [inputMessage, setInputMessage] = useState('');
   const [hasTurn, setHasTurn] = useState(true);
+
+  // Helper to open right panel to a specific view
+  const openRightView = (tab: 'artifacts' | 'editor' | 'browser' | 'relays') => {
+    setActiveRightTab(tab);
+    setIsRightPanelOpen(true);
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#fbfbfc] text-[#1c1d22] font-sans antialiased">
@@ -59,7 +76,7 @@ export default function App() {
                 <p className="text-[10px] text-[#8a8f9d] font-medium leading-none">Open Digital Orchestration</p>
               </div>
             </div>
-            <button className="p-1.5 text-[#8a8f9d] hover:text-[#111217] hover:bg-[#f3f4f6] rounded-md transition-colors">
+            <button className="p-1.5 text-[#8a8f9d] hover:text-[#111217] hover:bg-[#f3f4f6] rounded-md transition-colors" title="Settings">
               <SlidersHorizontal className="w-4 h-4" />
             </button>
           </div>
@@ -97,6 +114,7 @@ export default function App() {
                     onClick={() => {
                       setActiveWorkspace(item.id as any);
                       if (item.id === 'chat') setHasTurn(true);
+                      if (item.id === 'code') openRightView('editor');
                     }}
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
                       isActive
@@ -176,7 +194,7 @@ export default function App() {
       {/* ─────────────────────────────────────────────────────────────
           CENTER COLUMN: AI CONVERSATION & WORKSPACE
       ───────────────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col bg-[#ffffff] overflow-hidden">
+      <main className="flex-1 flex flex-col bg-[#ffffff] overflow-hidden min-w-0">
         {/* Header */}
         <header className="h-14 border-b border-[#eef0f3] px-6 flex items-center justify-between shrink-0 bg-[#ffffff]">
           <div className="flex items-center gap-3">
@@ -185,10 +203,10 @@ export default function App() {
               <h2 className="text-[14px] font-bold text-[#111217]">AI Chat</h2>
             </div>
             <span className="text-[#d0d5dd]">|</span>
-            <p className="text-[12px] text-[#6b7280]">Collaborate with ODON to code, create, write, and automate — all in one place.</p>
+            <p className="text-[12px] text-[#6b7280] hidden md:block truncate">Collaborate with ODON to code, create, write, and automate — all in one place.</p>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {/* Model Selector */}
             <div className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-[#ffffff] hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] cursor-pointer shadow-2xs">
               <Sparkles className="w-3.5 h-3.5 text-[#6366f1]" />
@@ -202,13 +220,37 @@ export default function App() {
             <button className="p-2 text-[#667085] hover:text-[#111217] hover:bg-[#f2f4f7] rounded-lg transition-colors">
               <Settings className="w-4 h-4" />
             </button>
+
+            {/* Toggle Right Panel Button */}
+            <div className="h-4 w-[1px] bg-[#e5e7eb] mx-1"></div>
+            <button
+              onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[12px] font-medium transition-all ${
+                isRightPanelOpen
+                  ? 'bg-[#f0f2f5] border-[#d1d5db] text-[#111217]'
+                  : 'bg-white border-[#e4e7ec] text-[#6366f1] hover:bg-[#eff2fe]'
+              }`}
+              title={isRightPanelOpen ? 'Hide Right Panel' : 'Show Right Panel'}
+            >
+              {isRightPanelOpen ? (
+                <>
+                  <PanelRightClose className="w-4 h-4 text-[#4b5563]" />
+                  <span className="hidden sm:inline">Hide Panel</span>
+                </>
+              ) : (
+                <>
+                  <PanelRightOpen className="w-4 h-4 text-[#6366f1]" />
+                  <span className="hidden sm:inline">Open Panel</span>
+                </>
+              )}
+            </button>
           </div>
         </header>
 
         {/* Chat Feed */}
         <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
           {!hasTurn ? (
-            /* Empty State / What can ODON do for you */
+            /* Empty State */
             <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto text-center space-y-8 my-auto">
               <div>
                 <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-[#6366f1] mx-auto mb-4">
@@ -244,7 +286,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            /* Active Conversational Turn (as in screenshot) */
+            /* Active Conversational Turn */
             <div className="max-w-3xl mx-auto space-y-6">
               {/* User Bubble */}
               <div className="flex items-start gap-3.5 justify-end">
@@ -278,13 +320,13 @@ export default function App() {
                   {/* Flowing conversational text */}
                   <div className="text-[13.5px] text-[#2c3240] leading-relaxed space-y-3">
                     <p>
-                      Got it! I'll help you build the "Personal Knowledge Hub" end-to-end — including the code (React 19), a product requirements document (PRD), and high-quality project images. Here's what I've done:
+                      Got it! I've orchestrated the "Personal Knowledge Hub" solution — including the React 19 source code, product requirements (PRD), and high-resolution visuals. Here's what's ready:
                     </p>
 
                     <div className="space-y-2 py-1">
                       <div className="flex items-start gap-2.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                        <div><strong className="text-[#111217]">Code</strong>: A minimal React 19 app (Vite + TypeScript) for managing notes, with a clean UI, search, tags, and local storage.</div>
+                        <div><strong className="text-[#111217]">Code</strong>: A minimal React 19 app (Vite + TypeScript) for managing notes, with search, tags, and local storage.</div>
                       </div>
                       <div className="flex items-start gap-2.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
@@ -292,40 +334,55 @@ export default function App() {
                       </div>
                       <div className="flex items-start gap-2.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                        <div><strong className="text-[#111217]">Images</strong>: Generated a hero illustration and a UI preview for the project.</div>
+                        <div><strong className="text-[#111217]">Images</strong>: Generated a hero illustration and UI preview cards for the project.</div>
                       </div>
                     </div>
 
                     <div className="pt-2">
-                      <div className="flex items-center gap-1.5 text-[12px] font-bold text-[#6b7280] uppercase tracking-wider mb-2">
-                        <Layers className="w-3.5 h-3.5 text-[#6366f1]" />
-                        Outputs
+                      <div className="flex items-center justify-between text-[12px] font-bold text-[#6b7280] uppercase tracking-wider mb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5 text-[#6366f1]" />
+                          Interactive Outputs
+                        </div>
+                        <span className="text-[11px] font-normal lowercase text-[#9ca3af]">Click any card to inspect in right panel</span>
                       </div>
 
                       {/* Interactive Output Cards */}
                       <div className="grid grid-cols-3 gap-2.5">
-                        <div className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-[#6366f1]/40 transition-all cursor-pointer">
+                        {/* Code Card -> Opens Editor */}
+                        <div
+                          onClick={() => openRightView('editor')}
+                          className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-[#6366f1] hover:bg-white hover:shadow-sm transition-all cursor-pointer group"
+                        >
                           <div className="flex items-center justify-between mb-1.5">
-                            <Code2 className="w-4 h-4 text-[#6366f1]" />
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <Code2 className="w-4 h-4 text-[#6366f1] group-hover:scale-110 transition-transform" />
+                            <span className="text-[10px] font-semibold text-[#6366f1] bg-indigo-50 px-1.5 py-0.2 rounded">Inspect Code</span>
                           </div>
                           <div className="text-[12.5px] font-bold text-[#111217] truncate">Code: personal-knowledge-hub</div>
                           <div className="text-[11px] text-[#6b7280] mt-0.5">React 19 • TypeScript • Vite</div>
                         </div>
 
-                        <div className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-[#6366f1]/40 transition-all cursor-pointer">
+                        {/* Document Card -> Opens Artifacts */}
+                        <div
+                          onClick={() => openRightView('artifacts')}
+                          className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-blue-500 hover:bg-white hover:shadow-sm transition-all cursor-pointer group"
+                        >
                           <div className="flex items-center justify-between mb-1.5">
-                            <FileText className="w-4 h-4 text-blue-500" />
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <FileText className="w-4 h-4 text-blue-500 group-hover:scale-110 transition-transform" />
+                            <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded">Read PRD</span>
                           </div>
                           <div className="text-[12.5px] font-bold text-[#111217] truncate">PRD: Personal Knowledge Hub</div>
                           <div className="text-[11px] text-[#6b7280] mt-0.5">Product Requirements Document</div>
                         </div>
 
-                        <div className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-[#6366f1]/40 transition-all cursor-pointer">
+                        {/* Images Card -> Opens Artifacts */}
+                        <div
+                          onClick={() => openRightView('artifacts')}
+                          className="p-3 rounded-xl border border-[#e4e7ec] bg-[#fafbfc] hover:border-purple-500 hover:bg-white hover:shadow-sm transition-all cursor-pointer group"
+                        >
                           <div className="flex items-center justify-between mb-1.5">
-                            <ImageIcon className="w-4 h-4 text-purple-500" />
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <ImageIcon className="w-4 h-4 text-purple-500 group-hover:scale-110 transition-transform" />
+                            <span className="text-[10px] font-semibold text-purple-600 bg-purple-50 px-1.5 py-0.2 rounded">View Images</span>
                           </div>
                           <div className="text-[12.5px] font-bold text-[#111217] truncate">Images (2)</div>
                           <div className="text-[11px] text-[#6b7280] mt-0.5">Hero • UI Preview</div>
@@ -334,26 +391,44 @@ export default function App() {
                     </div>
 
                     <p className="text-[13px] text-[#4b5563] pt-2">
-                      You can view, download, or continue iterating on any of these. Would you like me to:
+                      You can view, edit, or test the code and live preview. Would you like me to:
                     </p>
 
                     {/* Action Chips */}
                     <div className="flex flex-wrap gap-2 pt-1">
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors">
-                        <Play className="w-3.5 h-3.5 text-[#6366f1]" />
-                        Run the project and preview it
+                      {/* Run & Preview -> Opens Browser */}
+                      <button
+                        onClick={() => openRightView('browser')}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#6366f1]/30 bg-indigo-50/50 hover:bg-indigo-50 text-[12.5px] font-semibold text-[#4f46e5] shadow-2xs transition-colors"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current text-[#4f46e5]" />
+                        Run project & preview in browser
                       </button>
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors">
-                        <GitBranch className="w-3.5 h-3.5 text-[#111217]" />
-                        Create a Git repository
+
+                      {/* Code Editor */}
+                      <button
+                        onClick={() => openRightView('editor')}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors"
+                      >
+                        <Code2 className="w-3.5 h-3.5 text-[#111217]" />
+                        Open Code Editor
                       </button>
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors">
+
+                      {/* Git Commit */}
+                      <button
+                        onClick={() => openRightView('artifacts')}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors"
+                      >
+                        <GitBranch className="w-3.5 h-3.5 text-emerald-600" />
+                        Inspect Git patch & diff
+                      </button>
+
+                      <button
+                        onClick={() => openRightView('artifacts')}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors"
+                      >
                         <Zap className="w-3.5 h-3.5 text-amber-500" />
                         Turn this into an automation
-                      </button>
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e4e7ec] bg-white hover:bg-[#f9fafb] text-[12.5px] font-semibold text-[#344054] shadow-2xs transition-colors">
-                        <FileCode className="w-3.5 h-3.5 text-[#6366f1]" />
-                        Refine the PRD
                       </button>
                     </div>
                   </div>
@@ -407,7 +482,11 @@ export default function App() {
                 <button className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors" title="Search web">
                   <Globe className="w-4 h-4" />
                 </button>
-                <button className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors" title="Code snippet">
+                <button
+                  onClick={() => openRightView('editor')}
+                  className="p-1.5 hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors"
+                  title="Open code editor"
+                >
                   <Code2 className="w-4 h-4" />
                 </button>
               </div>
@@ -434,179 +513,262 @@ export default function App() {
       </main>
 
       {/* ─────────────────────────────────────────────────────────────
-          RIGHT DRAWER: ARTIFACTS, RELAYS & AGENTS
+          RIGHT DRAWER: ARTIFACTS, CODE EDITOR, BROWSER & RELAYS
       ───────────────────────────────────────────────────────────── */}
-      <aside className="w-[360px] shrink-0 border-l border-[#eef0f3] bg-[#fcfdfe] flex flex-col justify-between overflow-hidden">
-        {/* Top Tab Bar */}
-        <div className="p-3 border-b border-[#eef0f3] bg-[#ffffff]">
-          <div className="flex items-center justify-between p-1 bg-[#f2f4f7] rounded-lg">
-            {[
-              { id: 'artifacts', label: 'Artifacts', badge: 3 },
-              { id: 'relays', label: 'Relays' },
-              { id: 'agents', label: 'Agents' },
-              { id: 'automations', label: 'Automations' },
-            ].map((tab) => (
+      {isRightPanelOpen && (
+        <aside
+          className={`shrink-0 border-l border-[#eef0f3] bg-[#fcfdfe] flex flex-col justify-between overflow-hidden transition-all duration-200 ${
+            isRightPanelWide ? 'w-[560px]' : 'w-[420px]'
+          }`}
+        >
+          {/* Top Tab Bar & Panel Controls */}
+          <div className="p-2.5 border-b border-[#eef0f3] bg-[#ffffff] flex items-center justify-between gap-2 shrink-0">
+            {/* Tab switchers */}
+            <div className="flex-1 flex items-center p-0.5 bg-[#f2f4f7] rounded-lg">
+              {[
+                { id: 'artifacts', label: 'Artifacts', icon: Layers, badge: 3 },
+                { id: 'editor', label: 'Editor', icon: Code2 },
+                { id: 'browser', label: 'Browser', icon: Globe },
+                { id: 'relays', label: 'Relays', icon: Radio },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeRightTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveRightTab(tab.id as any)}
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[11.5px] font-semibold transition-all text-center flex items-center justify-center gap-1.5 ${
+                      isActive
+                        ? 'bg-white text-[#111217] shadow-xs'
+                        : 'text-[#667085] hover:text-[#111217]'
+                    }`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#6366f1]' : 'text-[#848a9b]'}`} />
+                    <span>{tab.label}</span>
+                    {tab.badge && (
+                      <span className="w-3.5 h-3.5 rounded-full bg-[#6366f1] text-white text-[9px] flex items-center justify-center font-bold">
+                        {tab.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Resize & Close Controls */}
+            <div className="flex items-center gap-1 shrink-0 pl-1">
               <button
-                key={tab.id}
-                onClick={() => setActiveRightTab(tab.id as any)}
-                className={`flex-1 py-1 px-2 rounded-md text-[11.5px] font-semibold transition-all text-center flex items-center justify-center gap-1 ${
-                  activeRightTab === tab.id
-                    ? 'bg-white text-[#111217] shadow-xs'
-                    : 'text-[#667085] hover:text-[#111217]'
-                }`}
+                onClick={() => setIsRightPanelWide(!isRightPanelWide)}
+                className="p-1.5 text-[#6b7280] hover:text-[#111217] hover:bg-[#f2f4f7] rounded-md transition-colors"
+                title={isRightPanelWide ? 'Standard width (420px)' : 'Wider width (560px)'}
               >
-                {tab.label}
-                {tab.badge && (
-                  <span className="w-4 h-4 rounded-full bg-[#6366f1] text-white text-[9.5px] flex items-center justify-center">
-                    {tab.badge}
-                  </span>
-                )}
+                {isRightPanelWide ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               </button>
-            ))}
+              <button
+                onClick={() => setIsRightPanelOpen(false)}
+                className="p-1.5 text-[#6b7280] hover:text-rose-600 hover:bg-[#fef2f2] rounded-md transition-colors"
+                title="Hide right panel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* Drawer Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {activeRightTab === 'artifacts' && (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-[12px] font-bold text-[#111217]">Artifacts (Outputs from turn)</span>
-                <button className="text-[11px] text-[#6366f1] font-semibold hover:underline">Download All</button>
+          {/* Drawer Content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {/* TAB 1: CODE EDITOR */}
+            {activeRightTab === 'editor' && (
+              <div className="h-full">
+                <CodeEditorView onRunPreview={() => setActiveRightTab('browser')} />
               </div>
+            )}
 
-              {/* Artifact 1: Image Card */}
-              <div className="rounded-xl border border-[#e4e7ec] bg-white overflow-hidden shadow-2xs group hover:border-[#6366f1]/40 transition-all">
-                <div className="h-32 bg-gradient-to-tr from-[#6366f1] via-[#8b5cf6] to-[#ec4899] relative flex items-center justify-center overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-400/30 via-transparent to-black/40"></div>
-                  <div className="text-white text-center z-10 px-4">
-                    <span className="text-2xl font-bold tracking-tight">Personal Hub</span>
-                    <p className="text-[11px] text-white/80">Hero Concept Illustration</p>
+            {/* TAB 2: IN-APP BROWSER PREVIEW */}
+            {activeRightTab === 'browser' && (
+              <div className="h-full">
+                <BrowserPreviewView />
+              </div>
+            )}
+
+            {/* TAB 3: ARTIFACTS OVERVIEW */}
+            {activeRightTab === 'artifacts' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-bold text-[#111217]">Turn Artifacts (3 items)</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveRightTab('browser')}
+                      className="text-[11px] text-[#6366f1] font-semibold hover:underline flex items-center gap-1"
+                    >
+                      <Play className="w-3 h-3 fill-current" />
+                      Preview
+                    </button>
+                    <span className="text-gray-300">|</span>
+                    <button className="text-[11px] text-[#6366f1] font-semibold hover:underline">Download All</button>
                   </div>
                 </div>
-                <div className="p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <ImageIcon className="w-4 h-4 text-purple-500" />
-                    <div>
-                      <div className="text-[12.5px] font-bold text-[#111217]">hero-illustration.png</div>
-                      <div className="text-[11px] text-[#8a8f9d]">1920 × 1080 • PNG • 1.8 MB</div>
+
+                {/* Artifact 1: Image Card */}
+                <div className="rounded-xl border border-[#e4e7ec] bg-white overflow-hidden shadow-2xs group hover:border-[#6366f1]/40 transition-all">
+                  <div className="h-32 bg-gradient-to-tr from-[#6366f1] via-[#8b5cf6] to-[#ec4899] relative flex items-center justify-center overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-400/30 via-transparent to-black/40"></div>
+                    <div className="text-white text-center z-10 px-4">
+                      <span className="text-2xl font-bold tracking-tight">Personal Hub</span>
+                      <p className="text-[11px] text-white/80">Hero Concept Illustration</p>
                     </div>
                   </div>
-                  <button className="p-1 text-[#8a8f9d] hover:text-[#111217]">
-                    <MoreVertical className="w-4 h-4" />
+                  <div className="p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <ImageIcon className="w-4 h-4 text-purple-500" />
+                      <div>
+                        <div className="text-[12.5px] font-bold text-[#111217]">hero-illustration.png</div>
+                        <div className="text-[11px] text-[#8a8f9d]">1920 × 1080 • PNG • 1.8 MB</div>
+                      </div>
+                    </div>
+                    <button className="p-1 text-[#8a8f9d] hover:text-[#111217]">
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Artifact 2: Document Card */}
+                <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white hover:border-[#6366f1]/40 transition-all shadow-2xs flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-[12.5px] font-bold text-[#111217]">Personal Knowledge Hub - PRD.md</div>
+                      <div className="text-[11px] text-[#8a8f9d]">Product Requirements Document • 12.4 KB</div>
+                    </div>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-[#9ca3af] hover:text-[#111217]" />
+                </div>
+
+                {/* Artifact 3: Git Patch / Code Card -> Click switches to editor */}
+                <div
+                  onClick={() => setActiveRightTab('editor')}
+                  className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white hover:border-[#6366f1] transition-all shadow-2xs space-y-2 cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="w-4 h-4 text-emerald-600" />
+                      <span className="text-[12.5px] font-bold text-[#111217] group-hover:text-[#4f46e5] transition-colors">
+                        feat: personal knowledge hub
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">
+                      +212 -8 lines
+                    </span>
+                  </div>
+                  <div className="bg-[#18191f] text-[#d4d4d8] font-mono text-[11px] p-2.5 rounded-lg space-y-0.5 overflow-x-auto">
+                    <div className="text-emerald-400">+ src/App.tsx</div>
+                    <div className="text-emerald-400">+ src/features/notes/NoteList.tsx</div>
+                    <div className="text-rose-400">- src/utils/mock.ts</div>
+                  </div>
+                  <div className="text-[11px] text-[#6366f1] font-semibold flex items-center gap-1 justify-end pt-0.5">
+                    Open in Editor &rarr;
+                  </div>
+                </div>
+
+                {/* Quick Relay Banner */}
+                <div className="p-3 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />
+                    <span className="text-[12px] font-bold text-[#111217]">Telegram & WhatsApp Relays</span>
+                  </div>
+                  <button
+                    onClick={() => setActiveRightTab('relays')}
+                    className="text-[11px] font-semibold text-[#6366f1] hover:underline"
+                  >
+                    View Status &rarr;
                   </button>
                 </div>
               </div>
+            )}
 
-              {/* Artifact 2: Document Card */}
-              <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white hover:border-[#6366f1]/40 transition-all shadow-2xs flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                    <FileText className="w-4 h-4" />
+            {/* TAB 4: RELAYS & AGENTS DETAILED VIEW */}
+            {activeRightTab === 'relays' && (
+              <div className="space-y-4">
+                {/* Relay Status Panel */}
+                <div className="p-4 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />
+                      <span className="text-[12px] font-bold text-[#111217]">Relay Status</span>
+                    </div>
+                    <span className="text-[10.5px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      All Online
+                    </span>
                   </div>
-                  <div>
-                    <div className="text-[12.5px] font-bold text-[#111217]">Personal Knowledge Hub - PRD.md</div>
-                    <div className="text-[11px] text-[#8a8f9d]">Product Requirements Document • 12.4 KB</div>
+
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between text-[12px]">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <span className="font-semibold text-[#111217]">Telegram</span>
+                        <span className="text-[11px] text-[#6b7280]">@odon_bot</span>
+                      </div>
+                      <span className="text-[11px] text-emerald-600 font-medium">Online</span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[12px]">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <span className="font-semibold text-[#111217]">WhatsApp</span>
+                        <span className="text-[11px] text-[#6b7280]">+1 415-xxx-7218</span>
+                      </div>
+                      <span className="text-[11px] text-emerald-600 font-medium">Online</span>
+                    </div>
+                  </div>
+
+                  {/* Live activity log */}
+                  <div className="pt-2 border-t border-[#f3f4f6] text-[10.5px] font-mono text-[#6b7280] space-y-1">
+                    <div>[10:21:08] Telegram relay: message sent (OK)</div>
+                    <div>[10:21:09] WhatsApp relay: message sent (OK)</div>
+                    <div>[10:24:12] Artifact created: hero-illustration.png</div>
                   </div>
                 </div>
-                <ExternalLink className="w-3.5 h-3.5 text-[#9ca3af] hover:text-[#111217]" />
-              </div>
 
-              {/* Artifact 3: Git Patch / Code Card */}
-              <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white hover:border-[#6366f1]/40 transition-all shadow-2xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-emerald-600" />
-                    <span className="text-[12.5px] font-bold text-[#111217]">feat: personal knowledge hub</span>
+                {/* Active Agents Mini-card */}
+                <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bot className="w-4 h-4 text-[#6366f1]" />
+                      <span className="text-[12px] font-bold text-[#111217]">Active Agents</span>
+                    </div>
+                    <span className="text-[10.5px] font-semibold text-[#6366f1]">2 Active</span>
                   </div>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">
-                    +212 -8 lines • 6 files
-                  </span>
+                  <div className="space-y-1.5 text-[12px]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#374151]">Research Agent</span>
+                      <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.2 rounded">Running</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#374151]">Content Agent</span>
+                      <span className="text-[10px] font-semibold text-[#6b7280] bg-gray-50 px-1.5 py-0.2 rounded">Idle</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="bg-[#18191f] text-[#d4d4d8] font-mono text-[11px] p-2.5 rounded-lg space-y-0.5 overflow-x-auto">
-                  <div className="text-emerald-400">+ src/App.tsx</div>
-                  <div className="text-emerald-400">+ src/features/notes/NoteList.tsx</div>
-                  <div className="text-rose-400">- src/utils/mock.ts</div>
+
+                {/* Automations Mini-card */}
+                <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-amber-500" />
+                      <span className="text-[12px] font-bold text-[#111217]">Daily Knowledge Sync</span>
+                    </div>
+                    <div className="w-7 h-4 bg-[#6366f1] rounded-full relative cursor-pointer">
+                      <div className="w-3 h-3 bg-white rounded-full absolute right-0.5 top-0.5"></div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-[#6b7280]">Next run: Today 20:00 (Cron)</p>
                 </div>
               </div>
-            </>
-          )}
-
-          {/* Relay Status Panel */}
-          <div className="p-4 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />
-                <span className="text-[12px] font-bold text-[#111217]">Relay Status</span>
-              </div>
-              <span className="text-[10.5px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                All Online
-              </span>
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <div className="flex items-center justify-between text-[12px]">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                  <span className="font-semibold text-[#111217]">Telegram</span>
-                  <span className="text-[11px] text-[#6b7280]">@odon_bot</span>
-                </div>
-                <span className="text-[11px] text-emerald-600 font-medium">Online</span>
-              </div>
-
-              <div className="flex items-center justify-between text-[12px]">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                  <span className="font-semibold text-[#111217]">WhatsApp</span>
-                  <span className="text-[11px] text-[#6b7280]">+1 415-xxx-7218</span>
-                </div>
-                <span className="text-[11px] text-emerald-600 font-medium">Online</span>
-              </div>
-            </div>
-
-            {/* Live activity log */}
-            <div className="pt-2 border-t border-[#f3f4f6] text-[10.5px] font-mono text-[#6b7280] space-y-1">
-              <div>[10:21:08] Telegram relay: message sent (OK)</div>
-              <div>[10:21:09] WhatsApp relay: message sent (OK)</div>
-            </div>
+            )}
           </div>
-
-          {/* Active Agents Mini-card */}
-          <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Bot className="w-4 h-4 text-[#6366f1]" />
-                <span className="text-[12px] font-bold text-[#111217]">Active Agents</span>
-              </div>
-              <span className="text-[10.5px] font-semibold text-[#6366f1]">2 Active</span>
-            </div>
-            <div className="space-y-1.5 text-[12px]">
-              <div className="flex items-center justify-between">
-                <span className="text-[#374151]">Research Agent</span>
-                <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.2 rounded">Running</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[#374151]">Content Agent</span>
-                <span className="text-[10px] font-semibold text-[#6b7280] bg-gray-50 px-1.5 py-0.2 rounded">Idle</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Automations Mini-card */}
-          <div className="p-3.5 rounded-xl border border-[#e4e7ec] bg-white shadow-2xs space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-500" />
-                <span className="text-[12px] font-bold text-[#111217]">Daily Knowledge Sync</span>
-              </div>
-              <div className="w-7 h-4 bg-[#6366f1] rounded-full relative cursor-pointer">
-                <div className="w-3 h-3 bg-white rounded-full absolute right-0.5 top-0.5"></div>
-              </div>
-            </div>
-            <p className="text-[11px] text-[#6b7280]">Next run: Today 20:00 (Cron)</p>
-          </div>
-        </div>
-      </aside>
+        </aside>
+      )}
     </div>
   );
 }
