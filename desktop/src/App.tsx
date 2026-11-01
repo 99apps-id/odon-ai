@@ -1699,10 +1699,10 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                   }`}
                 >
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] px-1.5 py-0.5 bg-neutral-200 rounded text-neutral-600 font-mono">Mock</span>
-                    <span>Offline Simulated Mode</span>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-neutral-200 rounded text-neutral-600 font-mono">Real</span>
+                    <span>Live AI Response</span>
                   </div>
-                  {selectedModel === 'odon-simulated' && <Check className="w-3.5 h-3.5 text-neutral-700" />}
+                  {selectedModel === activeModel && <Check className="w-3.5 h-3.5 text-neutral-700" />}
                 </button>
               </div>
             </div>
