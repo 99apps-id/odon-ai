@@ -284,3 +284,19 @@ impl ModelProvider for AntigravityProvider {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_antigravity_project_resolution() {
+        if let Some(token) = crate::host_creds::discover_antigravity().await {
+            let prov = AntigravityProvider::new(token.access_token, None, None);
+            let proj = prov.project_id(&prov.token().await).await;
+            println!("RESOLVED ANTIGRAVITY PROJECT: {:?}", proj);
+        } else {
+            println!("NO ANTIGRAVITY TOKEN DISCOVERED");
+        }
+    }
+}

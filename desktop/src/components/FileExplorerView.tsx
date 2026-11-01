@@ -163,7 +163,7 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
       return <FileJson className="w-4 h-4 text-amber-600" />;
     }
     if (['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext || '')) {
-      return <ImageIcon className="w-4 h-4 text-purple-600" />;
+      return <ImageIcon className="w-4 h-4 text-blue-600" />;
     }
     return <FileText className="w-4 h-4 text-neutral-500" />;
   };
@@ -307,7 +307,7 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
                 {onAskAiAboutFile && fileData.is_text && (
                   <button
                     onClick={() => onAskAiAboutFile(selectedFile, editedContent)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 cursor-pointer"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 cursor-pointer"
                     title="Ask AI about this file"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />

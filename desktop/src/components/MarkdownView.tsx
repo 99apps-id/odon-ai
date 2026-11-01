@@ -271,7 +271,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
     return elements;
   };
 
-  return <div className={`font-sans select-text ${className}`}>{renderFormatted(content)}</div>;
+  return <div className={`font-sans select-text break-words [overflow-wrap:anywhere] max-w-full min-w-0 overflow-x-hidden ${className}`}>{renderFormatted(content)}</div>;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -384,7 +384,7 @@ function CodeBlock({
           </button>
         </div>
       </div>
-      <pre className="p-4 text-[13px] font-mono leading-relaxed overflow-x-auto text-neutral-200 scrollbar-thin">
+      <pre className="p-4 text-[13px] font-mono leading-relaxed overflow-x-auto text-neutral-200 scrollbar-thin max-w-full break-words whitespace-pre-wrap">
         <code>{code}</code>
       </pre>
     </div>
@@ -411,7 +411,7 @@ function TableBlock({ lines, onOpenBrowser }: { lines: string[]; onOpenBrowser?:
   );
 
   return (
-    <div className="my-4 overflow-x-auto rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-2xs">
+    <div className="my-4 overflow-x-auto max-w-full min-w-0 rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-2xs">
       <table className="w-full text-xs text-left border-collapse font-sans">
         <thead className="bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-semibold border-b border-neutral-200 dark:border-neutral-700">
           <tr>

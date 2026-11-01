@@ -910,17 +910,6 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               </button>
 
               <button
-                onClick={() => { setActiveNav('explorer'); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'explorer'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
-                  }`}
-              >
-                <FolderTree className={`w-4 h-4 ${activeNav === 'explorer' ? 'text-blue-600' : 'text-neutral-600'}`} />
-                <span>Files</span>
-              </button>
-
-              <button
                 onClick={() => { setActiveNav('code'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'code'
                     ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
@@ -949,7 +938,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <Server className={`w-4 h-4 ${activeNav === 'ssh' ? 'text-purple-600' : 'text-neutral-600'}`} />
+                <Server className={`w-4 h-4 ${activeNav === 'ssh' ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>SSH Remote</span>
               </button>
 
@@ -1010,12 +999,12 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
               <button
                 onClick={() => setActiveNav('files')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'files'
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${(activeNav === 'files' || activeNav === 'explorer')
                     ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
-                <Folder className={`w-4 h-4 ${activeNav === 'files' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <Folder className={`w-4 h-4 ${(activeNav === 'files' || activeNav === 'explorer') ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Files</span>
               </button>
 
@@ -1094,11 +1083,11 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
         {/* ───────────────────────────────────────────────────────────
             CENTER MAIN CHAT / HERO CARD
         ─────────────────────────────────────────────────────────── */}
-        <main className="flex-1 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between overflow-hidden relative">
+        <main className="flex-1 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between overflow-hidden relative min-w-0">
 
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 px-4 flex items-center justify-between shrink-0">
-            {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'files' && activeNav !== 'agents' ? (
+            {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setActiveNav('chat')}
@@ -1114,7 +1103,8 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                   {activeNav === 'mcp' && <Cpu className="w-3.5 h-3.5 text-blue-600" />}
                   {activeNav === 'terminal' && <Terminal className="w-3.5 h-3.5 text-blue-600" />}
                   {activeNav === 'code' && <Code2 className="w-3.5 h-3.5 text-blue-600" />}
-                  <span>{activeNav} Workspace</span>
+                  {(activeNav === 'files' || activeNav === 'explorer') && <Folder className="w-3.5 h-3.5 text-blue-600" />}
+                  <span>{activeNav === 'files' || activeNav === 'explorer' ? 'File Explorer' : `${activeNav} Workspace`}</span>
                 </span>
               </div>
             ) : (
@@ -1212,8 +1202,8 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
             </div>
           )}
 
-          {activeNav === 'explorer' && (
-            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
+          {(activeNav === 'files' || activeNav === 'explorer') && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white min-w-0">
               <FileExplorerView
                 onAskAiAboutFile={(path, content) => {
                   setActiveNav('chat');
@@ -1254,13 +1244,13 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
           )}
 
           {/* Center Content Area for Chat / Documents / Creative Tasks */}
-          {activeNav !== 'github' && activeNav !== 'automations' && activeNav !== 'mcp' && activeNav !== 'terminal' && activeNav !== 'code' && activeNav !== 'explorer' && activeNav !== 'ssh' && (
+          {activeNav !== 'github' && activeNav !== 'automations' && activeNav !== 'mcp' && activeNav !== 'terminal' && activeNav !== 'code' && activeNav !== 'files' && activeNav !== 'explorer' && activeNav !== 'ssh' && (
             <>
-              <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-start select-text">
+              <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 flex flex-col justify-start select-text min-w-0 w-full">
 
             {/* VIEW A: WELCOME HERO (EXACT MATCH TO DESIGN) */}
             {!inChatMode && (
-              <div className="w-full max-w-2xl flex flex-col items-center my-auto mx-auto">
+              <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} flex flex-col items-center my-auto mx-auto min-w-0`}>
                 {/* Cute Cat Logo Illustration */}
                 <div className="mb-3 text-neutral-900 hover:scale-105 transition-transform">
                   <CatLogo className="w-20 h-20" strokeWidth={2} />
@@ -1367,7 +1357,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
             {/* VIEW B: CONVERSATION STREAM */}
             {inChatMode && (
-              <div className="w-full max-w-2xl flex flex-col space-y-6 mx-auto select-text">
+              <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} flex flex-col space-y-6 mx-auto select-text min-w-0 overflow-x-hidden`}>
                 {messages.map((msg) => (
                   <div key={msg.id} className="flex flex-col space-y-2 group">
                     <div className="flex items-center justify-between">
@@ -1415,7 +1405,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                             </div>
                             <span className="text-[10px] text-neutral-400 font-mono group-open:hidden">Click to expand</span>
                           </summary>
-                          <div className="p-4 border-t border-neutral-200/60 bg-white text-[13.5px] leading-relaxed text-neutral-700 select-text">
+                          <div className="p-4 border-t border-neutral-200/60 bg-white text-[13.5px] leading-relaxed text-neutral-700 select-text max-w-full min-w-0 overflow-x-hidden break-words">
                             <MarkdownView content={msg.thought} />
                           </div>
                         </details>
@@ -1653,7 +1643,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                             </div>
                             <span className="text-[10px] text-amber-700 font-mono animate-pulse">Live</span>
                           </div>
-                          <div className="p-4 text-[13.5px] leading-relaxed text-neutral-700 max-h-64 overflow-y-auto select-text bg-white/70">
+                          <div className="p-4 text-[13.5px] leading-relaxed text-neutral-700 max-h-64 overflow-y-auto select-text bg-white/70 max-w-full min-w-0 overflow-x-hidden break-words">
                             <MarkdownView content={streamingThought} />
                           </div>
                         </div>
@@ -1679,7 +1669,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
           {/* Bottom Prompt Input Box */}
           <div className="p-4 pt-0 shrink-0">
-            <div className="w-full max-w-2xl mx-auto rounded-3xl border border-neutral-200/90 bg-white shadow-2xs p-3 focus-within:border-neutral-300 focus-within:shadow-xs transition-all">
+            <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} mx-auto rounded-3xl border border-neutral-200/90 bg-white shadow-2xs p-3 focus-within:border-neutral-300 focus-within:shadow-xs transition-all min-w-0`}>
               {/* Attached Files Preview Chips */}
               {attachedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2 pb-2 border-b border-neutral-100">

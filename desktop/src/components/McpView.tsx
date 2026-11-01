@@ -134,7 +134,7 @@ export const McpView: React.FC = () => {
       {/* Top Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-950/40 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-purple-100 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 flex items-center justify-center shadow-xs">
+          <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-xs">
             <Layers className="w-5 h-5" />
           </div>
           <div>
@@ -142,7 +142,7 @@ export const McpView: React.FC = () => {
               <h2 className="text-base font-bold text-neutral-900 dark:text-neutral-100">
                 Model Context Protocol (MCP) Hub
               </h2>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-semibold font-mono">
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-semibold font-mono">
                 {servers.filter((s) => s.enabled).length} Connected
               </span>
             </div>
@@ -164,7 +164,7 @@ export const McpView: React.FC = () => {
           <button
             type="button"
             onClick={() => setIsAddOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-neutral-900 dark:bg-purple-600 hover:bg-neutral-800 dark:hover:bg-purple-500 transition-all shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-neutral-900 dark:bg-blue-600 hover:bg-neutral-800 dark:hover:bg-blue-500 transition-all shadow-2xs"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Server</span>
@@ -205,7 +205,7 @@ export const McpView: React.FC = () => {
                     className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all ${
                       isConfigured
                         ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400 cursor-default'
-                        : 'bg-purple-600 text-white hover:bg-purple-500 shadow-2xs'
+                        : 'bg-blue-600 text-white hover:bg-blue-500 shadow-2xs'
                     }`}
                   >
                     {isConfigured ? 'Installed' : '+ Add'}
@@ -241,7 +241,7 @@ export const McpView: React.FC = () => {
                       className="flex items-center gap-3 cursor-pointer flex-1"
                     >
                       {isExpanded ? <ChevronDown className="w-4 h-4 text-neutral-400" /> : <ChevronRight className="w-4 h-4 text-neutral-400" />}
-                      <div className="w-8 h-8 rounded-xl bg-purple-100 dark:bg-purple-950/80 text-purple-600 flex items-center justify-center shrink-0">
+                      <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/80 text-blue-600 flex items-center justify-center shrink-0">
                         <Server className="w-4 h-4" />
                       </div>
                       <div>
@@ -264,7 +264,7 @@ export const McpView: React.FC = () => {
                         className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
                       >
                         {server.enabled ? (
-                          <ToggleRight className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                          <ToggleRight className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                         ) : (
                           <ToggleLeft className="w-6 h-6 text-neutral-300 dark:text-neutral-600" />
                         )}
@@ -292,7 +292,7 @@ export const McpView: React.FC = () => {
                               key={tool.name}
                               className="p-2.5 rounded-xl border border-neutral-200/70 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950 font-mono text-xs space-y-1"
                             >
-                              <div className="font-bold text-purple-600 dark:text-purple-400">{tool.name}</div>
+                              <div className="font-bold text-blue-600 dark:text-blue-400">{tool.name}</div>
                               <p className="text-[11px] text-neutral-500 font-sans line-clamp-2">{tool.description}</p>
                             </div>
                           ))}
@@ -426,7 +426,7 @@ export const McpView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-bold text-white bg-neutral-900 dark:bg-purple-600 hover:bg-neutral-800 rounded-xl"
+                className="px-4 py-2 text-xs font-bold text-white bg-neutral-900 dark:bg-blue-600 hover:bg-neutral-800 rounded-xl"
               >
                 Register Server
               </button>
