@@ -29,7 +29,7 @@ fn register_prioritized_gap_tools(reg: &mut ToolRegistry) {
     // 9. Memory & Knowledge
     reg.register(Box::new(memory::MemoryStoreTool));
     reg.register(Box::new(memory::MemoryRecallTool));
-    reg.register(Box::new(ops_ext::MemorySearchTool));
+    reg.register(Box::new(memory::MemorySearchTool));
 
     // 10. Artifact Lifecycle
     reg.register(Box::new(artifact_gen::ArtifactUpdateTool));
@@ -37,7 +37,9 @@ fn register_prioritized_gap_tools(reg: &mut ToolRegistry) {
     reg.register(Box::new(ops_ext::ArtifactExportTool));
 
     // 11. Runtime Controls
-    reg.register(Box::new(shell_ext::ProcessKillTool));
+    reg.register(Box::new(shell_ext::ProcessListTool));
+    reg.register(Box::new(system::EnvListTool));
+    reg.register(Box::new(system::EnvGetTool));ocessKillTool));
     reg.register(Box::new(system::EnvListTool));
     reg.register(Box::new(system::EnvGetTool));
 }
