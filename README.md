@@ -86,12 +86,25 @@ pnpm dev
 
 ---
 
-## 🛡️ Security Policy & Risk Tiers
+## 🛡️ Security Policy & Tool Registry (18 Tools)
 
 Every tool invocation in ODON is evaluated by the central `ApprovalEngine` before execution:
-- **Tier 0 (Read-Only)**: `fs_read`, `fs_list`, `git_status`, `git_diff`, `github_get_repo`, `mcp_list_tools`. Auto-approved.
-- **Tier 1 (Workspace Mutating)**: `fs_write`, `fs_edit`, `git_commit`, `artifact_create_code`, `artifact_create_document`, `artifact_create_image`. Auto-approved in Autonomous mode; requires approval in Supervised mode.
-- **Tier 2 (System Mutating)**: `shell_exec`, arbitrary terminal commands, destructive operations. Strictly gated by mandatory user approval.
+- **Tier 0 (Read-Only)**: `fs_read`, `fs_list`, `fs_search`, `git_status`, `git_diff`, `git_log`, `github_get_repo`, `github_list_issues`, `mcp_list_tools`, `web_search`, `web_fetch`, `system_info`, `calc_eval`, `memory_recall`. Auto-approved.
+- **Tier 1 (Workspace Mutating)**: `fs_write`, `fs_edit`, `git_commit`, `git_branch`, `memory_store`, `artifact_create_code`, `artifact_create_document`, `artifact_create_image`. Auto-approved in Autonomous mode; requires approval in Supervised mode.
+- **Tier 2 (System Mutating)**: `shell_exec`, `fs_delete`, destructive terminal commands. Gated by mandatory interactive user approval (modal / inline chip).
+
+---
+
+## 🌐 Full Agentic Harness & Daemon API (`odond`)
+
+The `odond` daemon provides a high-performance REST + SSE server:
+- `GET /api/status`: System health, runtime state, active relays.
+- `GET /api/sessions`: List conversation histories from SQLite.
+- `POST /api/sessions`: Create new session.
+- `POST /api/sessions/{id}/messages`: Submit prompt and execute multi-step tool turns.
+- `GET /api/events`: Real-time SSE streaming (text deltas, thought deltas, tool executions, artifact notifications).
+- `GET /api/approvals` & `POST /api/approvals/{id}`: Interactive approval review for Tier 2 operations.
+- `desktop/dist` auto-serving: Access the desktop web interface directly at `http://localhost:4096`.
 
 ---
 

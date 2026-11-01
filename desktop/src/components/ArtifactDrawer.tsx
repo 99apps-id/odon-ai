@@ -1,0 +1,296 @@
+import React, { useState } from 'react';
+import {
+  Code2,
+  FileText,
+  Image as ImageIcon,
+  Check,
+  Copy,
+  FolderOpen,
+  Bot,
+  Zap,
+  Radio,
+  ExternalLink,
+  ChevronRight,
+  Database,
+} from 'lucide-react';
+import { Artifact } from '../types';
+import { MarkdownView } from './MarkdownView';
+
+interface ArtifactDrawerProps {
+  artifacts: Artifact[];
+  activeArtifactId: string | null;
+  onSelectArtifact: (id: string) => void;
+  onClose: () => void;
+}
+
+export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
+  artifacts,
+  activeArtifactId,
+  onSelectArtifact,
+  onClose,
+}) => {
+  const [activeTab, setActiveTab] = useState<'artifacts' | 'memory' | 'relays'>('artifacts');
+  const [selectedFileIdx, setSelectedFileIdx] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const selectedArtifact =
+    artifacts.find((a) => a.id === activeArtifactId) || artifacts[0];
+
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <aside className="w-[420px] shrink-0 border-l border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#181818] flex flex-col h-full overflow-hidden select-none">
+      {/* Top Header & Tabs */}
+      <div className="border-b border-neutral-200 dark:border-neutral-800 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 p-0.5 rounded-lg text-[12px] font-medium text-neutral-600 dark:text-neutral-400">
+          <button
+            onClick={() => setActiveTab('artifacts')}
+            className={`px-3 py-1 rounded-md transition-colors ${
+              activeTab === 'artifacts'
+                ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-semibold shadow-2xs'
+                : 'hover:text-neutral-900 dark:hover:text-neutral-200'
+            }`}
+          >
+            Artifacts ({artifacts.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('memory')}
+            className={`px-3 py-1 rounded-md transition-colors ${
+              activeTab === 'memory'
+                ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-semibold shadow-2xs'
+                : 'hover:text-neutral-900 dark:hover:text-neutral-200'
+            }`}
+          >
+            Memory
+          </button>
+          <button
+            onClick={() => setActiveTab('relays')}
+            className={`px-3 py-1 rounded-md transition-colors ${
+              activeTab === 'relays'
+                ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-semibold shadow-2xs'
+                : 'hover:text-neutral-900 dark:hover:text-neutral-200'
+            }`}
+          >
+            Relays
+          </button>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 p-1 rounded-md"
+          title="Close panel"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Content Body */}
+      <div className="flex-1 overflow-y-auto p-4">
+        {activeTab === 'artifacts' && (
+          <div className="space-y-4">
+            {/* Artifacts Pill List */}
+            {artifacts.length > 1 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                {artifacts.map((art) => {
+                  const isSelected = selectedArtifact?.id === art.id;
+                  const Icon =
+                    art.kind === 'code' ? Code2 : art.kind === 'document' ? FileText : ImageIcon;
+                  return (
+                    <button
+                      key={art.id}
+                      onClick={() => {
+                        onSelectArtifact(art.id);
+                        setSelectedFileIdx(0);
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium shrink-0 border transition-all ${
+                        isSelected
+                          ? 'border-neutral-900 dark:border-neutral-100 bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
+                          : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      <span className="truncate max-w-[120px]">{art.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Active Artifact Content */}
+            {selectedArtifact ? (
+              <div className="border border-neutral-200 dark:border-neutral-800 rounded-xl bg-neutral-50/50 dark:bg-neutral-900/50 p-4 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
+                      {selectedArtifact.kind} artifact
+                    </span>
+                    <span className="text-[11px] text-neutral-400">
+                      {new Date(selectedArtifact.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <h3 className="text-[15px] font-semibold text-neutral-900 dark:text-neutral-100 mt-1">
+                    {selectedArtifact.title}
+                  </h3>
+                  <p className="text-[12.5px] text-neutral-600 dark:text-neutral-400 mt-0.5">
+                    {selectedArtifact.summary}
+                  </p>
+                </div>
+
+                {/* Code Artifact Payload */}
+                {selectedArtifact.payload.type === 'code' && (() => {
+                  const codeData = selectedArtifact.payload.data;
+                  const currentFile = codeData.files[selectedFileIdx];
+                  return (
+                    <div className="space-y-3">
+                      {/* File Tabs */}
+                      {codeData.files.length > 0 && (
+                        <div className="flex items-center gap-1 border-b border-neutral-200 dark:border-neutral-800 pb-1.5 overflow-x-auto">
+                          {codeData.files.map((f, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setSelectedFileIdx(i)}
+                              className={`px-2.5 py-1 rounded text-[11.5px] font-mono transition-colors ${
+                                selectedFileIdx === i
+                                  ? 'bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-semibold'
+                                  : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-200'
+                              }`}
+                            >
+                              {f.path}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* File Code Viewer */}
+                      {currentFile && (
+                        <div className="rounded-lg overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-[#1e1e1e]">
+                          <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-neutral-800 text-[11px] font-mono text-neutral-400">
+                            <span>{currentFile.path}</span>
+                            <button
+                              onClick={() => handleCopy(currentFile.content)}
+                              className="flex items-center gap-1 hover:text-white"
+                            >
+                              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                              <span>{copied ? 'Copied' : 'Copy'}</span>
+                            </button>
+                          </div>
+                          <pre className="p-3 text-[12px] font-mono text-neutral-200 overflow-x-auto max-h-[360px]">
+                            <code>{currentFile.content}</code>
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Document Artifact Payload */}
+                {selectedArtifact.payload.type === 'document' && (
+                  <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 max-h-[420px] overflow-y-auto">
+                    <MarkdownView content={selectedArtifact.payload.data.markdown} />
+                  </div>
+                )}
+
+                {/* Image Artifact Payload */}
+                {selectedArtifact.payload.type === 'image' && (
+                  <div className="space-y-2">
+                    <div className="rounded-lg overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-neutral-950 aspect-video flex items-center justify-center">
+                      {selectedArtifact.payload.data.preview_url ? (
+                        <img
+                          src={selectedArtifact.payload.data.preview_url}
+                          alt={selectedArtifact.payload.data.prompt}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <ImageIcon className="w-8 h-8 text-neutral-600" />
+                      )}
+                    </div>
+                    <div className="text-[11.5px] text-neutral-500 flex items-center justify-between">
+                      <span>{selectedArtifact.payload.data.width} × {selectedArtifact.payload.data.height}</span>
+                      <span>Model: {selectedArtifact.payload.data.model}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-neutral-400 text-[13px]">
+                No artifacts created yet for this conversation.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Memory Tab */}
+        {activeTab === 'memory' && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-neutral-500" />
+              <h4 className="text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
+                Agent Long-Term Memory
+              </h4>
+            </div>
+            <p className="text-[12px] text-neutral-500 leading-relaxed">
+              ODON retains project architectural decisions, preferences, and facts across sessions in SQLite.
+            </p>
+            <div className="space-y-2 pt-2">
+              {[
+                { key: 'ui_style', val: 'Clean ChatGPT style, no AI slop, high-contrast typography', cat: 'design' },
+                { key: 'framework', val: 'React 19, TypeScript, Tailwind CSS, Vite', cat: 'tech-stack' },
+                { key: 'runtime', val: 'Native Rust agent loop with SQLite durability', cat: 'architecture' },
+                { key: 'relays', val: 'Telegram long-polling & local HTTP/SSE server active', cat: 'system' },
+              ].map((m, i) => (
+                <div key={i} className="p-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-[12px]">
+                  <div className="flex items-center justify-between font-mono text-[11px] text-neutral-500 mb-1">
+                    <span>{m.key}</span>
+                    <span className="px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
+                      {m.cat}
+                    </span>
+                  </div>
+                  <div className="text-neutral-800 dark:text-neutral-200">{m.val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Relays Tab */}
+        {activeTab === 'relays' && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Radio className="w-4 h-4 text-emerald-500" />
+              <h4 className="text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
+                Universal Relays & Connectors
+              </h4>
+            </div>
+            <div className="space-y-2 pt-2">
+              {[
+                { name: 'Desktop IPC & HTTP Server', port: '127.0.0.1:4096', active: true, desc: 'Active daemon serving REST and real-time SSE' },
+                { name: 'CLI Channel', port: 'odon chat', active: true, desc: 'Terminal interactive REPL and headless runs' },
+                { name: 'Telegram Bot Relay', port: 'Long-polling', active: false, desc: 'Forward prompts directly via Telegram bot token' },
+                { name: 'WhatsApp Gateway', port: 'Stub Ready', active: false, desc: 'Webhook gateway for WhatsApp multi-device relay' },
+              ].map((r, i) => (
+                <div key={i} className="p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12.5px] font-semibold text-neutral-900 dark:text-neutral-100">{r.name}</span>
+                    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${
+                      r.active
+                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
+                        : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${r.active ? 'bg-emerald-500' : 'bg-neutral-400'}`}></span>
+                      {r.active ? 'Active' : 'Standby'}
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] text-neutral-500">{r.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+};

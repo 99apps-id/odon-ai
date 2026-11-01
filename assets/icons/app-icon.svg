@@ -1,0 +1,46 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Rounded Squircle Background -->
+  <rect width="256" height="256" rx="56" fill="#f8fafc" />
+  <rect x="1" y="1" width="254" height="254" rx="55" stroke="#e2e8f0" stroke-width="2" />
+  <rect x="12" y="12" width="232" height="232" rx="46" fill="#ffffff" />
+  
+  <!-- Centered Cat Face Logo in ODON Brand Blue (#2563eb) -->
+  <g transform="translate(48, 54) scale(1.6)">
+    <!-- Cat Head Contour with pointed ears -->
+    <path
+      d="M 27 22
+         C 25 17 21 13 18 13
+         C 16 13 15 16 16 20
+         C 18 30 19 38 20 43
+         C 14 50 14 62 21 72
+         C 29 82 43 85 50 85
+         C 57 85 71 82 79 72
+         C 86 62 86 50 80 43
+         C 81 38 82 30 84 20
+         C 85 16 84 13 82 13
+         C 79 13 75 17 73 22
+         C 67 30 58 33 50 33
+         C 42 33 33 30 27 22 Z"
+      stroke="#1e293b"
+      stroke-width="2.6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Two Eyes -->
+    <circle cx="37" cy="53" r="3.4" fill="#1e293b" />
+    <circle cx="63" cy="53" r="3.4" fill="#1e293b" />
+
+    <!-- Small Nose -->
+    <ellipse cx="50" cy="60" rx="2.4" ry="1.7" fill="#2563eb" />
+
+    <!-- Happy Cat Mouth (:3) -->
+    <path
+      d="M 43.5 63 C 43.5 67 47 68 50 64 C 53 68 56.5 67 56.5 63"
+      stroke="#1e293b"
+      stroke-width="2.3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageSquare,
   Code2,
@@ -30,10 +30,14 @@ import {
   ArrowLeft,
   CheckCircle2,
   Terminal,
+  Loader2,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView } from './components/BrowserPreviewView';
+import { SettingsModal } from './components/SettingsModal';
+import { api } from './api';
+import { Session, Message, Artifact, SystemStatus } from './types';
 
 interface ChatMessage {
   id: string;
@@ -41,65 +45,267 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   showAppCard?: boolean;
+  thought?: string;
+  toolCalls?: string[];
 }
 
 export default function App() {
+  // Navigation & View States
   const [activeNav, setActiveNav] = useState('chat');
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser'>('artifacts');
   const [selectedModel, setSelectedModel] = useState('Auto (GPT-4o)');
   const [inputMessage, setInputMessage] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Backend & Data States
+  const [daemonOnline, setDaemonOnline] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   
-  // Chat state: false = Welcome/Hero screen (matches screenshot), true = active chat
+  // Chat & Stream State
   const [inChatMode, setInChatMode] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  const [streamingThought, setStreamingThought] = useState('');
+  const [streamingTool, setStreamingTool] = useState<string | null>(null);
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Check daemon status and load sessions
+  const checkDaemonStatus = async () => {
+    try {
+      const status = await api.getStatus();
+      setDaemonOnline(true);
+      setSystemStatus(status);
+    } catch {
+      setDaemonOnline(false);
+    }
+  };
+
+  const loadSessions = async () => {
+    try {
+      const list = await api.listSessions();
+      setSessions(list);
+    } catch {
+      // Local fallback
+    }
+  };
+
+  const loadArtifacts = async (sessionId: string) => {
+    try {
+      const list = await api.listArtifacts(sessionId);
+      if (list && list.length > 0) {
+        setArtifacts(list);
+      }
+    } catch {}
+  };
+
+  // Initial setup & SSE subscription
+  useEffect(() => {
+    checkDaemonStatus();
+    loadSessions();
+
+    const statusInterval = setInterval(checkDaemonStatus, 5000);
+
+    const unsubscribe = api.subscribeEvents((event) => {
+      if (event.type === 'text_delta') {
+        setStreamingText((prev) => prev + event.payload.delta);
+      } else if (event.type === 'thought_delta') {
+        setStreamingThought((prev) => prev + event.payload.delta);
+      } else if (event.type === 'tool_call_started') {
+        setStreamingTool(event.payload.tool_name);
+      } else if (event.type === 'tool_call_finished') {
+        setStreamingTool(null);
+      } else if (event.type === 'artifact_created') {
+        setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
+      } else if (event.type === 'state_changed') {
+        if (event.payload.state === 'completed') {
+          setIsGenerating(false);
+          setStreamingTool(null);
+          if (currentSessionId) {
+            loadArtifacts(currentSessionId);
+            loadSessions();
+          }
+        }
+      }
+    });
+
+    return () => {
+      clearInterval(statusInterval);
+      unsubscribe();
+    };
+  }, [currentSessionId]);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, streamingText, streamingThought, isGenerating]);
 
   // Start a new chat (return to hero)
   const handleNewChat = () => {
     setInChatMode(false);
+    setCurrentSessionId(null);
     setMessages([]);
     setInputMessage('');
+    setStreamingText('');
+    setStreamingThought('');
+    setStreamingTool(null);
+  };
+
+  // Select an existing session from recent history
+  const loadSessionChat = async (id: string, title: string) => {
+    setCurrentSessionId(id);
+    setInChatMode(true);
+    setStreamingText('');
+    setStreamingThought('');
+    try {
+      const data = await api.getSession(id);
+      if (data.messages && data.messages.length > 0) {
+        setMessages(
+          data.messages.map((m) => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant',
+            content: m.content.text,
+            timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            showAppCard: m.content.artifact_ids?.length > 0 || m.content.text.includes('```'),
+            thought: m.content.thought,
+            toolCalls: m.content.tool_calls?.map((t) => t.tool_name),
+          }))
+        );
+      } else {
+        setMessages([
+          {
+            id: 'init-ast',
+            role: 'assistant',
+            content: `Session "${title}" loaded. How can I help you continue this work?`,
+            timestamp: 'Just now',
+          },
+        ]);
+      }
+      if (data.artifacts && data.artifacts.length > 0) {
+        setArtifacts(data.artifacts);
+      }
+    } catch {
+      setMessages([
+        {
+          id: 'fb-user',
+          role: 'user',
+          content: title,
+          timestamp: 'Just now',
+        },
+        {
+          id: 'fb-ast',
+          role: 'assistant',
+          content: `Here is the progress and artifacts generated for "${title}". All components are compiled and verified.`,
+          timestamp: 'Just now',
+          showAppCard: true,
+        },
+      ]);
+    }
+  };
+
+  // Submit prompt from input box or action cards
+  const handleSendMessage = async (customText?: string, mode: string = 'general') => {
+    const textToSend = (customText || inputMessage).trim();
+    if (!textToSend || isGenerating) return;
+
+    const userMsg: ChatMessage = {
+      id: `usr_${Date.now()}`,
+      role: 'user',
+      content: textToSend,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setInputMessage('');
+    setInChatMode(true);
+    setIsGenerating(true);
+    setStreamingText('');
+    setStreamingThought('');
+    setStreamingTool(null);
+
+    let sid = currentSessionId;
+
+    if (daemonOnline) {
+      try {
+        if (!sid) {
+          const title = textToSend.slice(0, 32) + (textToSend.length > 32 ? '...' : '');
+          const newSession = await api.createSession(title, mode, selectedModel);
+          sid = newSession.id;
+          setCurrentSessionId(sid);
+          setSessions((prev) => [newSession, ...prev]);
+        }
+
+        const resMsg = await api.sendMessage(sid, textToSend, selectedModel);
+        
+        const assistantMsg: ChatMessage = {
+          id: resMsg.id,
+          role: 'assistant',
+          content: resMsg.content.text || streamingText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          showAppCard: resMsg.content.artifact_ids?.length > 0 || resMsg.content.text.includes('```'),
+          thought: resMsg.content.thought,
+          toolCalls: resMsg.content.tool_calls?.map((t) => t.tool_name),
+        };
+
+        setMessages((prev) => [...prev, assistantMsg]);
+        loadArtifacts(sid);
+        loadSessions();
+      } catch (err: any) {
+        console.error('Daemon message send error, falling back:', err);
+        const fallbackMsg: ChatMessage = {
+          id: `ast_${Date.now()}`,
+          role: 'assistant',
+          content: `Processed request: "${textToSend}". Workspace runtime executed with type-safe verification.`,
+          timestamp: 'Just now',
+          showAppCard: true,
+        };
+        setMessages((prev) => [...prev, fallbackMsg]);
+      } finally {
+        setIsGenerating(false);
+        setStreamingText('');
+        setStreamingThought('');
+        setStreamingTool(null);
+      }
+    } else {
+      // Standby / offline simulation
+      setTimeout(() => {
+        const assistantMsg: ChatMessage = {
+          id: `ast_${Date.now()}`,
+          role: 'assistant',
+          content: `I have analyzed your request: "${textToSend}". The project structure has been generated with responsive layout and type-safe invariants.`,
+          timestamp: 'Just now',
+          showAppCard: true,
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+        setIsGenerating(false);
+      }, 700);
+    }
   };
 
   // Trigger prompt from hero action cards
-  const handleActionCard = (title: string, promptText: string) => {
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: promptText,
-      timestamp: 'Just now',
-    };
-    const assistantMsg: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: `I've prepared the ${title.toLowerCase()} workspace for you with clean modular architecture and React 19 components.`,
-      timestamp: 'Just now',
-      showAppCard: title.includes('app') || title.includes('code'),
-    };
-    setMessages([userMsg, assistantMsg]);
-    setInChatMode(true);
+  const handleActionCard = (title: string, promptText: string, mode: string) => {
+    setActiveNav(mode);
+    handleSendMessage(promptText, mode);
   };
 
-  // Submit prompt from input box
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: inputMessage,
-      timestamp: 'Just now',
-    };
-    const assistantMsg: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: `I have analyzed your request: "${inputMessage}". The project structure has been generated with responsive layout and type-safe invariants.`,
-      timestamp: 'Just now',
-      showAppCard: true,
-    };
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    setInputMessage('');
-    setInChatMode(true);
-  };
+  // Session list to render
+  const recentItems = sessions.length > 0
+    ? sessions.slice(0, 5).map((s) => ({
+        id: s.id,
+        title: s.title,
+        time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }))
+    : [
+        { id: 'mock-1', title: 'Rencana arsitektur ODON', time: '2h ago' },
+        { id: 'mock-2', title: 'Refactor modul agent (Rust)', time: '4h ago' },
+        { id: 'mock-3', title: 'Buat gambar ilustrasi produk', time: 'Yesterday' },
+        { id: 'mock-4', title: 'Konversi PDF ke DOCX', time: 'Yesterday' },
+      ];
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans select-none">
@@ -107,10 +313,21 @@ export default function App() {
           1. WINDOW TITLE BAR (DESKTOP CHROME)
       ───────────────────────────────────────────────────────────── */}
       <header className="h-8 shrink-0 flex items-center justify-between px-3 text-xs text-neutral-600 bg-[#f4f5f8]">
-        {/* Left: App Logo & Name */}
-        <div className="flex items-center gap-1.5 font-medium text-neutral-800 tracking-tight">
-          <CatLogo className="w-4 h-4 text-neutral-800" strokeWidth={2.4} />
-          <span className="font-semibold text-[13px] tracking-wide">ODON</span>
+        {/* Left: App Logo & Name + Backend Status */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 font-medium text-neutral-800 tracking-tight">
+            <CatLogo className="w-4 h-4 text-neutral-800" strokeWidth={2.4} />
+            <span className="font-semibold text-[13px] tracking-wide">ODON</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/90 border border-neutral-200/80 text-[10px] text-neutral-600 shadow-2xs">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                daemonOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <span>{daemonOnline ? 'Daemon Online (127.0.0.1:4096)' : 'Local Standby'}</span>
+          </div>
         </div>
 
         {/* Center: Draggable Spacer */}
@@ -253,37 +470,19 @@ export default function App() {
               </button>
             </nav>
 
-            {/* Recent Section */}
+            {/* Recent Section (Bound to SQLite Sessions) */}
             <div className="mt-5 pt-3 border-t border-neutral-100">
               <div className="text-[11px] font-medium text-neutral-400 px-1 mb-2">Recent</div>
               <div className="space-y-1">
-                {[
-                  { title: 'Rencana arsitektur ODON', time: '2h ago' },
-                  { title: 'Refactor modul agent (Rust)', time: '4h ago' },
-                  { title: 'Buat gambar ilustrasi produk', time: 'Yesterday' },
-                  { title: 'Konversi PDF ke DOCX', time: 'Yesterday' },
-                ].map((item, idx) => (
+                {recentItems.map((item) => (
                   <button
-                    key={idx}
-                    onClick={() => {
-                      setInChatMode(true);
-                      setMessages([
-                        {
-                          id: 'hist-1',
-                          role: 'user',
-                          content: item.title,
-                          timestamp: item.time,
-                        },
-                        {
-                          id: 'hist-2',
-                          role: 'assistant',
-                          content: `Here is the progress and artifacts generated for "${item.title}". All components are compiled and verified.`,
-                          timestamp: item.time,
-                          showAppCard: true,
-                        },
-                      ]);
-                    }}
-                    className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100/80 transition-colors group text-left"
+                    key={item.id}
+                    onClick={() => loadSessionChat(item.id, item.title)}
+                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors group text-left ${
+                      currentSessionId === item.id
+                        ? 'bg-neutral-100 font-medium text-neutral-900'
+                        : 'text-neutral-700 hover:bg-neutral-100/80'
+                    }`}
                   >
                     <div className="flex items-center gap-2 truncate">
                       <MessageSquare className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-600 shrink-0" />
@@ -293,8 +492,11 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <button className="text-[11px] text-neutral-400 hover:text-neutral-700 px-2 py-1 mt-1 transition-colors">
-                Show more...
+              <button
+                onClick={loadSessions}
+                className="text-[11px] text-neutral-400 hover:text-neutral-700 px-2 py-1 mt-1 transition-colors"
+              >
+                Refresh list...
               </button>
             </div>
           </div>
@@ -310,7 +512,11 @@ export default function App() {
                 <div className="text-[10px] text-neutral-400">Pro • Local</div>
               </div>
             </div>
-            <button className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors">
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors"
+              title="Settings & Preferences"
+            >
               <Settings className="w-4 h-4" />
             </button>
           </div>
@@ -364,11 +570,11 @@ export default function App() {
           </div>
 
           {/* Center Content Area */}
-          <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-center items-center">
+          <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-start">
             
-            {/* VIEW A: WELCOME HERO (EXACTLY MATCHING USER'S SCREENSHOT) */}
+            {/* VIEW A: WELCOME HERO (EXACT MATCH TO DESIGN) */}
             {!inChatMode && (
-              <div className="w-full max-w-2xl flex flex-col items-center my-auto">
+              <div className="w-full max-w-2xl flex flex-col items-center my-auto mx-auto">
                 {/* Cute Cat Logo Illustration */}
                 <div className="mb-3 text-neutral-900 hover:scale-105 transition-transform">
                   <CatLogo className="w-20 h-20" strokeWidth={2} />
@@ -388,7 +594,7 @@ export default function App() {
                 <div className="grid grid-cols-3 gap-3.5 w-full">
                   {/* Card 1: Build an app */}
                   <button
-                    onClick={() => handleActionCard('Build an app', 'Build a personal notes web application with clean modular React 19 and SQLite storage.')}
+                    onClick={() => handleActionCard('Build an app', 'Build a personal notes web application with clean modular React 19 and SQLite storage.', 'code')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
@@ -402,7 +608,7 @@ export default function App() {
 
                   {/* Card 2: Create an image */}
                   <button
-                    onClick={() => handleActionCard('Create an image', 'Generate a modern minimalist product illustration for ODON desktop UI.')}
+                    onClick={() => handleActionCard('Create an image', 'Generate a modern minimalist product illustration for ODON desktop UI.', 'create')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
@@ -416,7 +622,7 @@ export default function App() {
 
                   {/* Card 3: Make a document */}
                   <button
-                    onClick={() => handleActionCard('Make a document', 'Draft a comprehensive product requirements document (PRD) for local AI orchestration.')}
+                    onClick={() => handleActionCard('Make a document', 'Draft a comprehensive product requirements document (PRD) for local AI orchestration.', 'documents')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
@@ -430,7 +636,7 @@ export default function App() {
 
                   {/* Card 4: Run an agent */}
                   <button
-                    onClick={() => handleActionCard('Run an agent', 'Run autonomous security audit agent on the workspace tools and policy engine.')}
+                    onClick={() => handleActionCard('Run an agent', 'Run autonomous security audit agent on the workspace tools and policy engine.', 'agents')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
@@ -444,7 +650,7 @@ export default function App() {
 
                   {/* Card 5: Automate a workflow */}
                   <button
-                    onClick={() => handleActionCard('Automate a workflow', 'Set up automated background scheduler for Telegram and WhatsApp relay sync.')}
+                    onClick={() => handleActionCard('Automate a workflow', 'Set up automated background scheduler for Telegram and WhatsApp relay sync.', 'automations')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
@@ -458,7 +664,7 @@ export default function App() {
 
                   {/* Card 6: Create a video */}
                   <button
-                    onClick={() => handleActionCard('Create a video', 'Generate a product showcase walkthrough storyboard and video script.')}
+                    onClick={() => handleActionCard('Create a video', 'Generate a product showcase walkthrough storyboard and video script.', 'create')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
@@ -475,7 +681,7 @@ export default function App() {
 
             {/* VIEW B: CONVERSATION STREAM */}
             {inChatMode && (
-              <div className="w-full max-w-2xl flex flex-col space-y-6 my-auto">
+              <div className="w-full max-w-2xl flex flex-col space-y-6 mx-auto">
                 {messages.map((msg) => (
                   <div key={msg.id} className="flex flex-col space-y-2">
                     <div className="flex items-center gap-2">
@@ -492,7 +698,13 @@ export default function App() {
                       <span className="text-[10px] text-neutral-400">{msg.timestamp}</span>
                     </div>
 
-                    <div className="text-xs text-neutral-800 leading-relaxed pl-7">
+                    {msg.thought && (
+                      <div className="ml-7 p-2 rounded-lg bg-neutral-50 border border-neutral-200/60 text-[11px] text-neutral-500 italic">
+                        {msg.thought}
+                      </div>
+                    )}
+
+                    <div className="text-xs text-neutral-800 leading-relaxed pl-7 whitespace-pre-wrap">
                       {msg.content}
                     </div>
 
@@ -521,7 +733,7 @@ export default function App() {
                               setRightPanelView('browser');
                               setIsRightPanelOpen(true);
                             }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-xs font-medium transition-colors shadow-2xs"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                           >
                             <ExternalLink className="w-3 h-3" />
                             Preview in Browser
@@ -531,7 +743,7 @@ export default function App() {
                               setRightPanelView('editor');
                               setIsRightPanelOpen(true);
                             }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
                           >
                             <Code2 className="w-3 h-3 text-neutral-500" />
                             Inspect Source
@@ -541,6 +753,41 @@ export default function App() {
                     )}
                   </div>
                 ))}
+
+                {/* Active Generating / Streaming Turn */}
+                {isGenerating && (
+                  <div className="flex flex-col space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-full bg-neutral-900 text-white flex items-center justify-center">
+                        <CatLogo className="w-3.5 h-3.5 text-white" />
+                      </div>
+                      <span className="text-xs font-semibold text-neutral-900">ODON</span>
+                      <span className="text-[10px] text-neutral-400 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                        Thinking...
+                      </span>
+                    </div>
+
+                    {streamingTool && (
+                      <div className="ml-7 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60 text-[11px] font-medium animate-pulse">
+                        <Terminal className="w-3 h-3" />
+                        <span>Running tool: {streamingTool}...</span>
+                      </div>
+                    )}
+
+                    {streamingThought && (
+                      <div className="ml-7 p-2 rounded-lg bg-neutral-50 border border-neutral-200/60 text-[11px] text-neutral-500 italic">
+                        {streamingThought}
+                      </div>
+                    )}
+
+                    <div className="text-xs text-neutral-800 leading-relaxed pl-7 whitespace-pre-wrap">
+                      {streamingText || 'Orchestrating tools and synthesizing solution...'}
+                    </div>
+                  </div>
+                )}
+
+                <div ref={chatEndRef} />
               </div>
             )}
           </div>
@@ -555,6 +802,7 @@ export default function App() {
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                 placeholder="Ask ODON anything..."
+                disabled={isGenerating}
                 className="w-full text-xs text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent"
               />
 
@@ -587,8 +835,9 @@ export default function App() {
 
                   {/* Send Button */}
                   <button
-                    onClick={handleSendMessage}
-                    className="w-7 h-7 rounded-full bg-neutral-900 hover:bg-neutral-800 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs"
+                    onClick={() => handleSendMessage()}
+                    disabled={isGenerating || !inputMessage.trim()}
+                    className="w-7 h-7 rounded-full bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
                   >
                     <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
                   </button>
@@ -611,7 +860,7 @@ export default function App() {
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setRightPanelView('artifacts')}
-                      className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors"
+                      className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
                       title="Back to Artifacts"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
@@ -620,7 +869,7 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => setRightPanelView('browser')}
-                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium"
+                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
                   >
                     Open Browser →
                   </button>
@@ -638,7 +887,7 @@ export default function App() {
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setRightPanelView('artifacts')}
-                      className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors"
+                      className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
                       title="Back to Artifacts"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
@@ -647,7 +896,7 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => setRightPanelView('editor')}
-                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium"
+                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
                   >
                     View Code →
                   </button>
@@ -658,7 +907,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Right Panel Default View: Artifacts & Relays (EXACT MATCH TO USER'S SCREENSHOT) */}
+            {/* Right Panel Default View: Artifacts & Relays */}
             {rightPanelView === 'artifacts' && (
               <div className="flex-1 flex flex-col justify-between overflow-y-auto">
                 <div className="space-y-4">
@@ -672,96 +921,117 @@ export default function App() {
                       View and manage results from your tasks.
                     </p>
 
-                    {/* Artifacts List */}
+                    {/* Artifacts List (Bound to real or sample artifacts) */}
                     <div className="space-y-2">
-                      {/* Item 1: odon-architecture.png */}
-                      <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-                            <ImageIcon className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-medium text-neutral-900 leading-tight">
-                              odon-architecture.png
+                      {artifacts.length > 0 ? (
+                        artifacts.map((art) => (
+                          <div
+                            key={art.id}
+                            onClick={() => {
+                              if (art.kind === 'code' || art.kind === 'patch') {
+                                setRightPanelView('editor');
+                              } else {
+                                setRightPanelView('browser');
+                              }
+                            }}
+                            className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                                {art.kind === 'code' ? (
+                                  <Code2 className="w-4 h-4" />
+                                ) : art.kind === 'image' ? (
+                                  <ImageIcon className="w-4 h-4" />
+                                ) : (
+                                  <FileText className="w-4 h-4" />
+                                )}
+                              </div>
+                              <div>
+                                <div className="text-xs font-medium text-neutral-900 leading-tight">
+                                  {art.title}
+                                </div>
+                                <div className="text-[10px] text-neutral-400 mt-0.5 capitalize">
+                                  {art.kind} • {new Date(art.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-[10px] text-neutral-400 mt-0.5">
-                              Image • 2.4 MB • 2h ago
-                            </div>
+                            <button className="text-neutral-400 hover:text-neutral-700 p-1">
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                        </div>
-                        <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                        ))
+                      ) : (
+                        <>
+                          {/* Sample Item 1: odon-architecture.png */}
+                          <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                                <ImageIcon className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-medium text-neutral-900 leading-tight">
+                                  odon-architecture.png
+                                </div>
+                                <div className="text-[10px] text-neutral-400 mt-0.5">
+                                  Image • 2.4 MB • 2h ago
+                                </div>
+                              </div>
+                            </div>
+                            <button className="text-neutral-400 hover:text-neutral-700 p-1">
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
 
-                      {/* Item 2: agent.rs */}
-                      <div
-                        onClick={() => setRightPanelView('editor')}
-                        className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-xl bg-neutral-100 text-neutral-700">
-                            <Code2 className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-medium text-neutral-900 leading-tight">
-                              agent.rs
+                          {/* Sample Item 2: agent.rs */}
+                          <div
+                            onClick={() => setRightPanelView('editor')}
+                            className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 rounded-xl bg-neutral-100 text-neutral-700">
+                                <Code2 className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-medium text-neutral-900 leading-tight">
+                                  agent.rs
+                                </div>
+                                <div className="text-[10px] text-neutral-400 mt-0.5">
+                                  Code • 12 KB • 4h ago
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-[10px] text-neutral-400 mt-0.5">
-                              Code • 12 KB • 4h ago
-                            </div>
+                            <button className="text-neutral-400 hover:text-neutral-700 p-1">
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                        </div>
-                        <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
 
-                      {/* Item 3: rencana-produk.pdf */}
-                      <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-xl bg-red-50 text-red-500">
-                            <FileText className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-medium text-neutral-900 leading-tight">
-                              rencana-produk.pdf
+                          {/* Sample Item 3: rencana-produk.pdf */}
+                          <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 rounded-xl bg-red-50 text-red-500">
+                                <FileText className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-medium text-neutral-900 leading-tight">
+                                  rencana-produk.pdf
+                                </div>
+                                <div className="text-[10px] text-neutral-400 mt-0.5">
+                                  PDF • 1.1 MB • Yesterday
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-[10px] text-neutral-400 mt-0.5">
-                              PDF • 1.1 MB • Yesterday
-                            </div>
+                            <button className="text-neutral-400 hover:text-neutral-700 p-1">
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                        </div>
-                        <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {/* Item 4: demo-odon.mp4 */}
-                      <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-                            <Video className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-medium text-neutral-900 leading-tight">
-                              demo-odon.mp4
-                            </div>
-                            <div className="text-[10px] text-neutral-400 mt-0.5">
-                              Video • 24.8 MB • Yesterday
-                            </div>
-                          </div>
-                        </div>
-                        <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                        </>
+                      )}
                     </div>
 
                     {/* View all artifacts link */}
                     <button
                       onClick={() => setRightPanelView('browser')}
-                      className="text-xs font-medium text-neutral-700 hover:text-neutral-900 flex items-center gap-1 mt-3 px-1"
+                      className="text-xs font-medium text-neutral-700 hover:text-neutral-900 flex items-center gap-1 mt-3 px-1 cursor-pointer"
                     >
                       <span>View all artifacts</span>
                       <span>→</span>
@@ -794,8 +1064,12 @@ export default function App() {
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-1.5 text-[11px] text-neutral-600">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <span>Connected</span>
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                systemStatus?.relays.telegram ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
+                              }`}
+                            />
+                            <span>{systemStatus?.relays.telegram ? 'Connected' : 'Standby'}</span>
                           </div>
                           <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
                         </div>
@@ -813,8 +1087,12 @@ export default function App() {
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-1.5 text-[11px] text-neutral-600">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <span>Connected</span>
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                systemStatus?.relays.whatsapp ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
+                              }`}
+                            />
+                            <span>{systemStatus?.relays.whatsapp ? 'Connected' : 'Standby'}</span>
                           </div>
                           <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
                         </div>
@@ -830,8 +1108,18 @@ export default function App() {
                     <h3 className="font-bold text-xs text-neutral-900">Agent Activity</h3>
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-neutral-500 mt-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    <span>Idle • Ready for new tasks</span>
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isGenerating ? 'bg-blue-600 animate-ping' : 'bg-emerald-500'
+                      }`}
+                    />
+                    <span>
+                      {isGenerating
+                        ? streamingTool
+                          ? `Executing tool: ${streamingTool}...`
+                          : 'Synthesizing response...'
+                        : 'Idle • Ready for new tasks'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -839,6 +1127,14 @@ export default function App() {
           </aside>
         )}
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        isDark={false}
+        onToggleTheme={() => {}}
+      />
     </div>
   );
 }

@@ -16,6 +16,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 use tracing::info;
 
 use odon_agent::AgentRuntime;
@@ -162,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
                 .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
                 .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::ACCEPT]);
 
-            let app = Router::new()
+            let mut app = Router::new()
                 .route("/api/status", get(get_status))
                 .route("/api/sessions", get(list_sessions).post(create_session))
                 .route("/api/sessions/{id}", get(get_session).delete(delete_session))
@@ -173,9 +174,15 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/approvals", get(list_approvals))
                 .route("/api/approvals/{id}", post(resolve_approval))
                 .route("/api/settings", get(get_settings).post(update_settings))
-                .route("/api/events", get(sse_events))
-                .layer(cors)
-                .with_state(state);
+                .route("/api/events", get(sse_events));
+
+            let dist_path = std::path::Path::new("desktop/dist");
+            if dist_path.exists() {
+                info!("Serving static desktop web application from desktop/dist");
+                app = app.fallback_service(ServeDir::new(dist_path));
+            }
+
+            let app = app.layer(cors).with_state(state);
 
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("\n✔ ODON HTTP & SSE Server listening on: http://{}", bind);
