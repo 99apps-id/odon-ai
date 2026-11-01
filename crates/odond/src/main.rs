@@ -74,8 +74,34 @@ struct AppState {
     oauth_accounts: Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
 }
 
+/// Loads `.env` then `.env.local` from the working directory into the process
+/// environment. Values already set in the real environment always win, and values
+/// are never logged.
+fn load_dotenv_files() {
+    for name in [".env.local", ".env"] {
+        let Ok(text) = std::fs::read_to_string(name) else { continue };
+        // Tolerate a UTF-8 BOM (Windows editors/PowerShell add one), which would
+        // otherwise corrupt the first key.
+        let text = text.trim_start_matches('\u{feff}');
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else { continue };
+            let key = key.trim();
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if key.is_empty() || value.is_empty() || std::env::var_os(key).is_some() {
+                continue;
+            }
+            std::env::set_var(key, value);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    load_dotenv_files();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -625,6 +651,7 @@ fn oauth_catalog_id(provider: odon_provider::OAuthProvider) -> &'static str {
     match provider {
         OpenAiCodex => "chatgpt",
         ClaudeOauth => "claude-oauth",
+        Antigravity => "antigravity",
         XaiOauth => "xai-oauth",
         GithubCopilot => "github-copilot",
         Muse => "muse",
@@ -641,6 +668,10 @@ async fn register_oauth_provider(state: &AppState, catalog_id: &'static str, tok
             None,
         ))),
         "muse" => Some(Arc::new(MuseProvider::new(token.access_token.clone(), None))),
+        "antigravity" => Some(Arc::new(odon_provider::AntigravityProvider::new(
+            token.access_token.clone(),
+            None,
+        ))),
         "github-copilot" => Some(Arc::new(OpenAiCompatibleProvider::new(
             "https://api.githubcopilot.com".to_string(),
             token.access_token.clone(),

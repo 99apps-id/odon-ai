@@ -37,6 +37,41 @@ const CLAUDE_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 const CLAUDE_SCOPE: &str = "org:create_api_key user:profile user:inference";
 
 const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+
+const ANTIGRAVITY_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const ANTIGRAVITY_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const ANTIGRAVITY_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs";
+
+fn env_value(name: &str) -> String {
+    std::env::var(name).map(|v| v.trim().to_string()).unwrap_or_default()
+}
+
+/// Antigravity's registered client (same one Termigo uses). Read from the
+/// environment / .env.local at runtime, never compiled into the repository.
+fn antigravity_credentials() -> (String, String) {
+    let pick = |primary: &str, legacy: &str| {
+        let v = env_value(primary);
+        if v.is_empty() { env_value(legacy) } else { v }
+    };
+    (
+        pick("TERMIGO_ANTIGRAVITY_CLIENT_ID", "TERMIXGO_ANTIGRAVITY_CLIENT_ID"),
+        pick("TERMIGO_ANTIGRAVITY_CLIENT_SECRET", "TERMIXGO_ANTIGRAVITY_CLIENT_SECRET"),
+    )
+}
+
+fn antigravity_user_agent() -> String {
+    let platform = match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "windows",
+        _ => "linux",
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => other,
+    };
+    format!("antigravity/ide/2.11.0 {platform}/{arch}")
+}
 const XAI_DEVICE_URL: &str = "https://auth.x.ai/oauth2/device/code";
 const XAI_TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
 const XAI_SCOPE: &str = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
@@ -61,6 +96,7 @@ fn auth_error(message: impl Into<String>) -> OdonError {
 pub enum OAuthProvider {
     OpenAiCodex,
     ClaudeOauth,
+    Antigravity,
     XaiOauth,
     GithubCopilot,
     Muse,
@@ -71,6 +107,7 @@ impl OAuthProvider {
         match self {
             Self::OpenAiCodex => "openai-codex",
             Self::ClaudeOauth => "claude-oauth",
+            Self::Antigravity => "antigravity",
             Self::XaiOauth => "xai-oauth",
             Self::GithubCopilot => "github-copilot",
             Self::Muse => "muse",
@@ -91,6 +128,7 @@ impl FromStr for OAuthProvider {
         match value {
             "openai-codex" | "chatgpt" => Ok(Self::OpenAiCodex),
             "claude-oauth" | "claude" => Ok(Self::ClaudeOauth),
+            "antigravity" => Ok(Self::Antigravity),
             "xai-oauth" | "xai" => Ok(Self::XaiOauth),
             "github-copilot" | "copilot" => Ok(Self::GithubCopilot),
             "muse" => Ok(Self::Muse),
@@ -188,7 +226,9 @@ impl OAuthService {
 
     pub async fn begin_login(&self, provider: OAuthProvider) -> Result<PendingLogin> {
         match provider {
-            OAuthProvider::OpenAiCodex | OAuthProvider::ClaudeOauth => {
+            OAuthProvider::OpenAiCodex
+            | OAuthProvider::ClaudeOauth
+            | OAuthProvider::Antigravity => {
                 self.begin_browser_login(provider).await.map(PendingLogin::Browser)
             }
             OAuthProvider::XaiOauth
@@ -208,8 +248,19 @@ impl OAuthService {
         let (verifier, challenge) = OAuthHandler::generate_pkce()?;
         let state = secure_random_b64(32)?;
         let config = browser_config(provider)?;
-        let listener = bind_loopback(config.port).await?;
-        let redirect_uri = format!("http://localhost:{}{}", config.port, config.callback_path);
+        let (listener, port) = bind_loopback_port(config.port).await?;
+        let redirect_uri = format!("http://localhost:{}{}", port, config.callback_path);
+        let (client_id, client_secret) = if provider == OAuthProvider::Antigravity {
+            let (id, secret) = antigravity_credentials();
+            if id.is_empty() {
+                return Err(auth_error(
+                    "Antigravity needs its client id: set TERMIGO_ANTIGRAVITY_CLIENT_ID (and TERMIGO_ANTIGRAVITY_CLIENT_SECRET) in the environment or .env.local",
+                ));
+            }
+            (id, secret)
+        } else {
+            (config.client_id.to_string(), String::new())
+        };
 
         let mut url = Url::parse(config.authorize_url)
             .map_err(|e| auth_error(format!("invalid authorization endpoint: {e}")))?;
@@ -217,7 +268,7 @@ impl OAuthService {
             let mut query = url.query_pairs_mut();
             query
                 .append_pair("response_type", "code")
-                .append_pair("client_id", config.client_id)
+                .append_pair("client_id", &client_id)
                 .append_pair("redirect_uri", &redirect_uri)
                 .append_pair("scope", config.scope)
                 .append_pair("code_challenge", &challenge)
@@ -232,6 +283,11 @@ impl OAuthService {
                 }
                 OAuthProvider::ClaudeOauth => {
                     query.append_pair("code", "true");
+                }
+                OAuthProvider::Antigravity => {
+                    query
+                        .append_pair("access_type", "offline")
+                        .append_pair("prompt", "consent");
                 }
                 _ => unreachable!("device providers do not use browser PKCE"),
             }
@@ -249,6 +305,8 @@ impl OAuthService {
             verifier,
             state,
             redirect_uri,
+            client_id,
+            client_secret,
             timeout: self.login_timeout,
             response,
         })
@@ -386,6 +444,34 @@ impl OAuthService {
             OAuthProvider::GithubCopilot => {
                 mint_copilot_token(&self.client, refresh_token).await
             }
+            OAuthProvider::Antigravity => {
+                let (client_id, client_secret) = antigravity_credentials();
+                if client_id.is_empty() {
+                    return Err(auth_error("Antigravity client id is not configured"));
+                }
+                let response = self
+                    .client
+                    .post(ANTIGRAVITY_TOKEN_URL)
+                    .header("user-agent", antigravity_user_agent())
+                    .form(&[
+                        ("grant_type", "refresh_token"),
+                        ("refresh_token", refresh_token),
+                        ("client_id", client_id.as_str()),
+                        ("client_secret", client_secret.as_str()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|e| auth_error(format!("Google refresh failed: {e}")))?;
+                let mut token = parse_oauth_token_response(
+                    response,
+                    provider,
+                    Some(refresh_token),
+                    Duration::from_secs(3600),
+                )
+                .await?;
+                token.plan = Some("Antigravity".to_string());
+                Ok(token)
+            }
             OAuthProvider::Muse => mint_muse_key(&self.client, refresh_token).await,
         }
     }
@@ -423,6 +509,8 @@ pub struct PendingBrowserLogin {
     verifier: String,
     state: String,
     redirect_uri: String,
+    client_id: String,
+    client_secret: String,
     timeout: Duration,
     response: LoginResponse,
 }
@@ -474,6 +562,22 @@ impl PendingBrowserLogin {
                     .await
                     .map_err(|e| auth_error(format!("Claude token exchange failed: {e}")))?
             }
+            OAuthProvider::Antigravity => {
+                self.client
+                    .post(self.config.token_url)
+                    .header("user-agent", antigravity_user_agent())
+                    .form(&[
+                        ("grant_type", "authorization_code"),
+                        ("code", code.as_str()),
+                        ("redirect_uri", self.redirect_uri.as_str()),
+                        ("client_id", self.client_id.as_str()),
+                        ("client_secret", self.client_secret.as_str()),
+                        ("code_verifier", self.verifier.as_str()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|e| auth_error(format!("Google token exchange failed: {e}")))?
+            }
             _ => unreachable!("only PKCE providers create browser logins"),
         };
 
@@ -494,6 +598,9 @@ impl PendingBrowserLogin {
                 return Err(auth_error("Claude OAuth did not return a refresh token"));
             }
             token.plan = Some("Claude OAuth".to_string());
+        }
+        if self.config.provider == OAuthProvider::Antigravity {
+            token.plan = Some("Antigravity".to_string());
         }
         Ok(token)
     }
@@ -645,6 +752,15 @@ fn browser_config(provider: OAuthProvider) -> Result<BrowserConfig> {
             port: 54545,
             callback_path: "/callback",
         }),
+        OAuthProvider::Antigravity => Ok(BrowserConfig {
+            provider,
+            client_id: "",
+            authorize_url: ANTIGRAVITY_AUTHORIZE_URL,
+            token_url: ANTIGRAVITY_TOKEN_URL,
+            scope: ANTIGRAVITY_SCOPE,
+            port: 0,
+            callback_path: "/auth/callback",
+        }),
         _ => Err(auth_error(format!("{provider} does not use browser PKCE"))),
     }
 }
@@ -713,12 +829,19 @@ struct RawTokenResponse {
     expires_in: Option<i64>,
 }
 
-async fn bind_loopback(port: u16) -> Result<TcpListener> {
-    TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| {
+/// Binds the loopback listener and returns the port actually bound. Port 0 asks
+/// the OS for an ephemeral port (Google's installed-app flow ignores the port).
+async fn bind_loopback_port(port: u16) -> Result<(TcpListener, u16)> {
+    let listener = TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| {
         auth_error(format!(
             "could not listen on 127.0.0.1:{port} ({e}); close the process using that port and retry"
         ))
-    })
+    })?;
+    let bound = listener
+        .local_addr()
+        .map_err(|e| auth_error(format!("could not read the bound port: {e}")))?
+        .port();
+    Ok((listener, bound))
 }
 
 async fn accept_callback(listener: &TcpListener, expected_path: &str) -> Result<String> {
@@ -1139,5 +1262,26 @@ mod tests {
             "http://accounts.x.ai/device"
         )
         .is_err());
+    }
+
+    #[test]
+    fn antigravity_is_a_known_provider_with_ephemeral_port_config() {
+        assert_eq!("antigravity".parse::<OAuthProvider>().unwrap(), OAuthProvider::Antigravity);
+        let config = browser_config(OAuthProvider::Antigravity).unwrap();
+        assert_eq!(config.port, 0, "Google's loopback flow must use an ephemeral port");
+        assert_eq!(config.callback_path, "/auth/callback");
+        assert!(config.scope.contains("cloud-platform"));
+    }
+
+    #[test]
+    fn antigravity_user_agent_names_the_ide_client() {
+        let ua = antigravity_user_agent();
+        assert!(ua.starts_with("antigravity/ide/"), "{ua}");
+    }
+
+    #[tokio::test]
+    async fn ephemeral_loopback_bind_reports_the_real_port() {
+        let (_listener, port) = bind_loopback_port(0).await.unwrap();
+        assert_ne!(port, 0);
     }
 }
