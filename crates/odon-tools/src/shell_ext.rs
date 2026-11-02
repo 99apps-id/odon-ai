@@ -15,10 +15,10 @@ use tokio::process::Command;
 use crate::registry::{Tool, ToolContext};
 use crate::shell::ShellExecTool;
 
-const MAX_BACKGROUND_BUFFER: usize = 1_000_000;
-const RUNNING_EXIT_CODE: i32 = i32::MIN;
+pub const MAX_BACKGROUND_BUFFER: usize = 1_000_000;
+pub const RUNNING_EXIT_CODE: i32 = i32::MIN;
 
-struct BackgroundTask {
+pub struct BackgroundTask {
     child: tokio::sync::Mutex<Option<tokio::process::Child>>,
     stdout: Mutex<String>,
     stderr: Mutex<String>,

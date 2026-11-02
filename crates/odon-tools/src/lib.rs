@@ -1,5 +1,6 @@
 pub mod artifact_gen;
 pub mod coding;
+pub mod dev_server;
 pub mod fs;
 pub mod fs_ext;
 pub mod git;
@@ -165,6 +166,9 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(shell_ext::ProcessWaitTool));
     reg.register(Box::new(runtime::DevServerStatusTool));
     reg.register(Box::new(runtime::BrowserStatusTool));
+    reg.register(Box::new(dev_server::DevServerStartTool));
+    reg.register(Box::new(dev_server::DevServerStopTool));
+    reg.register(Box::new(dev_server::DevServerLogsTool));
 
     // 6. MCP Integration
     reg.register(Box::new(mcp::McpListToolsTool));
