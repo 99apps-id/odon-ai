@@ -261,13 +261,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSaveEndpoint = async () => {
     if (!endpointName.trim() || !endpointBaseUrl.trim()) {
-      setEndpointError('Nama provider dan Base URL wajib diisi.');
+      setEndpointError('Provider name and Base URL are required.');
       return;
     }
-    const models = endpointModels
-      .split(/[\n,]/)
-      .map((m) => m.trim())
-      .filter(Boolean);
+    const models = Array.from(
+      new Set(
+        [...endpointModelList, endpointModelDraft.trim()]
+          .map((m) => m.trim())
+          .filter(Boolean),
+      ),
+    );
     const providerId = editingEndpointId || nextEndpointId(endpointName);
     setEndpointBusy(true);
     setEndpointError(null);
@@ -283,7 +286,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       await refreshProviders();
       resetEndpointForm();
     } catch (e: any) {
-      setEndpointError(e.message || 'Gagal menyimpan endpoint.');
+      setEndpointError(e.message || 'Failed to save endpoint.');
     } finally {
       setEndpointBusy(false);
     }
@@ -300,13 +303,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleDeleteEndpoint = async (providerId: string) => {
-    if (!window.confirm(`Hapus endpoint ${providerId}?`)) return;
+    if (!window.confirm(`Delete endpoint ${providerId}?`)) return;
     try {
       await api.deleteProviderConfig(providerId);
       await refreshProviders();
       if (editingEndpointId === providerId) resetEndpointForm();
     } catch (e: any) {
-      setEndpointError(e.message || 'Gagal menghapus endpoint.');
+      setEndpointError(e.message || 'Failed to delete endpoint.');
     }
   };
 
@@ -738,9 +741,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   OpenAI-Compatible Endpoints
                 </h3>
                 <p className="text-[12.5px] text-neutral-500 dark:text-neutral-400 mt-1 max-w-2xl">
-                  Tambahkan beberapa provider OpenAI-compatible sekaligus. Setiap endpoint punya
-                  API key, Base URL, model list, dan provider id sendiri, sehingga bisa dipilih
-                  terpisah dari halaman utama.
+                  Add multiple OpenAI-compatible providers. Each endpoint has its own API key,
+                  Base URL, model list, and provider id, and can be selected independently from
+                  the main page.
                 </p>
               </div>
               <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 shrink-0">
@@ -752,14 +755,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
                   <Plus className="w-3.5 h-3.5" />
-                  {editingEndpointId ? 'Edit Endpoint' : 'Tambah Endpoint Baru'}
+                  {editingEndpointId ? 'Edit Endpoint' : 'Add New Endpoint'}
                 </h4>
                 {editingEndpointId && (
                   <button
                     onClick={resetEndpointForm}
                     className="text-[11px] font-medium text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
                   >
-                    Batal edit
+                    Cancel edit
                   </button>
                 )}
               </div>
@@ -875,10 +878,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold shadow-xs"
                 >
                   {endpointBusy
-                    ? 'Menyimpan...'
+                    ? 'Saving...'
                     : editingEndpointId
-                    ? 'Simpan Perubahan'
-                    : 'Tambah Endpoint'}
+                    ? 'Save Changes'
+                    : 'Add Endpoint'}
                 </button>
               </div>
             </div>
@@ -888,8 +891,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="p-8 rounded-2xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center">
                   <Server className="w-6 h-6 text-neutral-300 dark:text-neutral-600 mx-auto mb-2" />
                   <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    Belum ada endpoint tambahan. Tambahkan satu di atas; endpoint akan muncul
-                    sebagai provider terpisah di daftar model.
+                    No additional endpoints yet. Add one above; it will appear as a separate
+                    provider in the model list.
                   </p>
                 </div>
               ) : (
@@ -909,12 +912,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </code>
                       </div>
                       <div className="text-[11.5px] font-mono text-neutral-500 dark:text-neutral-400 truncate">
-                        {c.base_url || 'Base URL belum diisi'}
+                        {c.base_url || 'Base URL not set'}
                       </div>
                       <div className="flex flex-wrap gap-1">
                         {(c.models || []).length === 0 ? (
                           <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                            Belum ada model — edit untuk menambahkan.
+                            No models yet — edit to add some.
                           </span>
                         ) : (
                           (c.models || []).map((m) => (
@@ -936,7 +939,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         onClick={() => handleUseEndpoint(c)}
                         className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold"
                       >
-                        Gunakan
+                        Use
                       </button>
                       <button
                         onClick={() => handleEditEndpoint(c)}
@@ -947,7 +950,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <button
                         onClick={() => handleDeleteEndpoint(c.provider_id)}
                         className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                        title="Hapus endpoint"
+                        title="Delete endpoint"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1339,7 +1342,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-850 space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 dark:text-neutral-200">
-                          Tambah Model Kustom (OpenAI-Compatible)
+                          Add Custom Model (OpenAI-Compatible)
                         </span>
                         <span className="text-[11px] text-neutral-400">vLLM, Ollama, LM Studio, LiteLLM</span>
                       </div>
@@ -1351,17 +1354,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             type="text"
                             value={newModelId}
                             onChange={(e) => setNewModelId(e.target.value)}
-                            placeholder="misal: deepseek-r1:32b"
+                            placeholder="e.g. deepseek-r1:32b"
                             className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono outline-none focus:border-blue-500"
                           />
                         </div>
                         <div className="sm:col-span-1">
-                          <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Nama Tampilan</label>
+                          <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Display Name</label>
                           <input
                             type="text"
                             value={newModelName}
                             onChange={(e) => setNewModelName(e.target.value)}
-                            placeholder="misal: Local DeepSeek R1"
+                            placeholder="e.g. Local DeepSeek R1"
                             className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs outline-none focus:border-blue-500"
                           />
                         </div>
@@ -1384,7 +1387,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-colors cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Tambah Baris Model</span>
+                        <span>Add Model Row</span>
                       </button>
                     </div>
 
@@ -1392,14 +1395,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-                          Daftar Model Terkonfigurasi ({customOpenAiModels.length})
+                          Configured Models ({customOpenAiModels.length})
                         </span>
-                        <span className="text-[11px] text-neutral-400">Klik model untuk menjadikannya model aktif</span>
+                        <span className="text-[11px] text-neutral-400">Click a model to make it active</span>
                       </div>
 
                       {customOpenAiModels.length === 0 ? (
                         <div className="p-4 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-400">
-                          Belum ada model kustom. Masukkan Model ID di atas lalu klik Tambah Baris Model.
+                          No custom models yet. Enter a Model ID above and click Add Model Row.
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 gap-2">
@@ -1454,7 +1457,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     type="button"
                                     onClick={() => handleDeleteCustomModel(m.id)}
                                     className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-                                    title="Hapus model baris ini"
+                                    title="Delete this model row"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
@@ -1646,11 +1649,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }
                 }}
                 rows={4}
-                placeholder="Misal: Saya adalah Iwan, tuan kamu dan agen cybersecurity, fullstack developer, jago desain..."
+                placeholder="e.g. I am a fullstack developer and cybersecurity specialist with a focus on clean design..."
                 className="w-full p-3 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/80 text-xs text-neutral-800 dark:text-neutral-200 outline-none focus:border-blue-500 font-mono"
               />
               <p className="text-[11.5px] text-neutral-500">
-                Instruksi ini akan disisipkan ke dalam context setiap kali agent berinteraksi.
+                These instructions are injected into context on every agent interaction.
               </p>
             </div>
 
@@ -1753,7 +1756,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* Skills List */}
             {skillsList.length === 0 ? (
               <div className="p-8 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-400">
-                Belum ada skill kustom di `.odon/skills`. Klik New Skill di atas untuk membuat resep prosedur otomatisasi.
+                No custom skills in `.odon/skills` yet. Click New Skill above to create an automation playbook.
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-2.5">

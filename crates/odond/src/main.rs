@@ -360,7 +360,7 @@ impl Drop for BridgeChild {
 #[derive(Clone)]
 struct WhatsAppBridge {
     client: reqwest::Client,
-    base_url: String,
+    base_url: Arc<std::sync::Mutex<String>>,
     token: String,
     child: Arc<BridgeChild>,
     script: Option<PathBuf>,
@@ -388,13 +388,37 @@ impl WhatsAppBridge {
             .unwrap_or_else(|| PathBuf::from("."));
         let state_dir = base.join(".odon");
         let script = Self::resolve_script();
+        let token_path = state_dir.join("whatsapp-bridge.token");
         let token = std::env::var("WA_BRIDGE_TOKEN")
             .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                std::fs::read_to_string(&token_path)
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
+            .unwrap_or_else(|| {
+                let generated = uuid::Uuid::new_v4().to_string();
+                if let Some(parent) = token_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&token_path, &generated).is_ok() {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(
+                            &token_path,
+                            std::fs::Permissions::from_mode(0o600),
+                        );
+                    }
+                }
+                generated
+            });
         Self {
             client: reqwest::Client::new(),
-            base_url: format!("http://127.0.0.1:{port}"),
+            base_url: Arc::new(std::sync::Mutex::new(format!("http://127.0.0.1:{port}"))),
             token,
             child: Arc::new(BridgeChild::new()),
             script,
@@ -445,14 +469,128 @@ impl WhatsAppBridge {
         *self.spawned.lock().unwrap() = None;
     }
 
+    fn base_url(&self) -> String {
+        self.base_url
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_else(|_| "http://127.0.0.1:4097".to_string())
+    }
+
+    fn port(&self) -> u16 {
+        self.base_url()
+            .rsplit(':')
+            .next()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(4097)
+    }
+
     async fn healthy(&self) -> bool {
         self.client
-            .get(format!("{}/health", self.base_url))
+            .get(format!("{}/health", self.base_url()))
             .timeout(std::time::Duration::from_millis(800))
             .send()
             .await
             .map(|response| response.status().is_success())
             .unwrap_or(false)
+    }
+
+    /// `/health` is deliberately unauthenticated, so it cannot tell a bridge
+    /// started by this daemon from a stale one using an old token.
+    async fn authorized(&self) -> bool {
+        self.client
+            .get(format!("{}/status", self.base_url()))
+            .header("x-bridge-token", &self.token)
+            .timeout(std::time::Duration::from_millis(800))
+            .send()
+            .await
+            .map(|response| response.status().is_success())
+            .unwrap_or(false)
+    }
+
+    fn free_bridge_port(start: u16) -> Option<u16> {
+        (start..start.saturating_add(50))
+            .find(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok())
+    }
+
+    /// Stop an orphaned bridge from an older daemon process. The PID is only
+    /// killed after its command line is confirmed to be this repository's
+    /// Node bridge, never an unrelated service that happens to own the port.
+    fn stop_external_bridge(&self) -> bool {
+        let port = self.port();
+        #[cfg(target_os = "windows")]
+        {
+            let Ok(output) = std::process::Command::new("netstat")
+                .args(["-ano", "-p", "tcp"])
+                .output()
+            else {
+                return false;
+            };
+            let text = String::from_utf8_lossy(&output.stdout);
+            let Some(pid) = text.lines().find_map(|line| {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5
+                    && parts[1].ends_with(&format!(":{port}"))
+                    && parts[3].eq_ignore_ascii_case("LISTENING")
+                {
+                    parts[4].parse::<u32>().ok()
+                } else {
+                    None
+                }
+            }) else {
+                return false;
+            };
+            let query = format!(
+                "(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+            );
+            let Ok(process) = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &query])
+                .output()
+            else {
+                return false;
+            };
+            let cmdline = String::from_utf8_lossy(&process.stdout).to_lowercase();
+            if !cmdline.contains("whatsapp-bridge") || !cmdline.contains("node") {
+                return false;
+            }
+            return std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+        }
+        #[cfg(unix)]
+        {
+            let Ok(output) = std::process::Command::new("lsof")
+                .args(["-ti", &format!("tcp:{port}")])
+                .output()
+            else {
+                return false;
+            };
+            let Some(pid) = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                return false;
+            };
+            let Ok(process) = std::process::Command::new("ps")
+                .args(["-p", pid, "-o", "command="])
+                .output()
+            else {
+                return false;
+            };
+            if !String::from_utf8_lossy(&process.stdout).contains("whatsapp-bridge") {
+                return false;
+            }
+            return std::process::Command::new("kill")
+                .args(["-TERM", pid])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+        }
+        #[allow(unreachable_code)]
+        false
     }
 
     async fn ensure_started(
@@ -477,9 +615,35 @@ impl WhatsAppBridge {
             // Allowlist changed: restart so the bridge sees the new env.
             self.stop();
         }
-        // An externally managed bridge that is already healthy can be reused.
+        // Reuse an externally managed bridge only when it accepts our token.
+        // A stale bridge from a previous daemon run keeps the old token; stop
+        // it first, then fall back to a free port if it cannot be stopped.
         if self.healthy().await && self.spawned.lock().unwrap().is_none() {
-            return Ok(());
+            if self.authorized().await {
+                return Ok(());
+            }
+            // A bridge launched by an older daemon keeps the old token. Stop
+            // it (after verifying the process) so only one Baileys instance
+            // uses the auth directory.
+            if self.stop_external_bridge() {
+                for _ in 0..20 {
+                    if !self.healthy().await {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+            if self.healthy().await {
+                let Some(next_port) = Self::free_bridge_port(self.port().saturating_add(1)) else {
+                    return Err(
+                        "A WhatsApp bridge is already running with a different auth token, and no free local port is available. Stop the existing bridge process and retry."
+                            .to_string(),
+                    );
+                };
+                if let Ok(mut base) = self.base_url.lock() {
+                    *base = format!("http://127.0.0.1:{next_port}");
+                }
+            }
         }
         self.stop();
 
@@ -509,7 +673,7 @@ impl WhatsAppBridge {
         command
             .arg(&script)
             .current_dir(script.parent().unwrap_or(std::path::Path::new(".")))
-            .env("WA_BRIDGE_PORT", self.base_url.rsplit(':').next().unwrap_or("4097"))
+            .env("WA_BRIDGE_PORT", self.port().to_string())
             .env("WA_AUTH_DIR", &self.auth_dir)
             .env("WA_BRIDGE_TOKEN", &self.token)
             .env("ODON_DAEMON_URL", &self.daemon_url)
@@ -560,7 +724,7 @@ impl WhatsAppBridge {
     ) -> Result<Value, String> {
         let mut request = self
             .client
-            .request(method, format!("{}{}", self.base_url, path))
+            .request(method, format!("{}{}", self.base_url(), path))
             .header("x-bridge-token", &self.token)
             .timeout(std::time::Duration::from_secs(15));
         if let Some(body) = body {

@@ -64,7 +64,7 @@ export const RelaysPanel: React.FC = () => {
   const saveTelegram = async () => {
     const token = telegramToken.trim();
     if (!token) {
-      setTelegramError('Masukkan bot token dari @BotFather terlebih dahulu.');
+      setTelegramError('Enter a bot token from @BotFather first.');
       return;
     }
     const allowedUsers = telegramAllowed
@@ -81,7 +81,7 @@ export const RelaysPanel: React.FC = () => {
       setTelegramSaved(true);
       setTimeout(() => setTelegramSaved(false), 2500);
     } catch (error: any) {
-      setTelegramError(error?.message || 'Gagal menghubungkan Telegram.');
+      setTelegramError(error?.message || 'Failed to connect Telegram.');
     } finally {
       setTelegramBusy(false);
     }
@@ -94,7 +94,7 @@ export const RelaysPanel: React.FC = () => {
       await api.disconnectTelegramRelay();
       await loadTelegram();
     } catch (error: any) {
-      setTelegramError(error?.message || 'Gagal memutus Telegram.');
+      setTelegramError(error?.message || 'Failed to disconnect Telegram.');
     } finally {
       setTelegramBusy(false);
     }
@@ -117,7 +117,12 @@ export const RelaysPanel: React.FC = () => {
       setWhatsApp(status);
       if (status?.error) setWaError(status.error);
     } catch (error: any) {
-      setWaError(error?.message || 'Gagal memulai WhatsApp bridge.');
+      const message = error?.message || 'Failed to start WhatsApp bridge.';
+      setWaError(
+        message.toLowerCase().includes('unauthorized')
+          ? 'The WhatsApp bridge rejected the daemon token. Restart the existing bridge process, then click Connect again.'
+          : message,
+      );
     } finally {
       setWaBusy(false);
     }
@@ -130,7 +135,7 @@ export const RelaysPanel: React.FC = () => {
       await api.logoutWhatsAppBridge();
       await loadWhatsApp();
     } catch (error: any) {
-      setWaError(error?.message || 'Gagal logout WhatsApp.');
+      setWaError(error?.message || 'Failed to log out WhatsApp.');
     } finally {
       setWaBusy(false);
     }
@@ -210,12 +215,12 @@ export const RelaysPanel: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500"
               />
               <p className="text-[10px] text-neutral-400">
-                Buat bot lewat @BotFather lalu tempel token di sini.
+                Create a bot with @BotFather and paste the token here.
               </p>
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-semibold text-neutral-700 dark:text-neutral-300">
-                Allowed Users (ID atau @username)
+                Allowed Users (ID or @username)
               </label>
               <input
                 type="text"
@@ -225,7 +230,7 @@ export const RelaysPanel: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500"
               />
               <p className="text-[10px] text-neutral-400">
-                Pisahkan dengan koma. Kosong = semua pesan ditolak.
+                Separate with commas. Empty = all messages rejected.
               </p>
             </div>
           </div>
@@ -297,7 +302,7 @@ export const RelaysPanel: React.FC = () => {
             <div className="space-y-2">
               <div className="space-y-1.5">
                 <label className="text-[11px] font-semibold text-neutral-700 dark:text-neutral-300">
-                  Pairing Phone (opsional)
+                  Pairing Phone (optional)
                 </label>
                 <input
                   type="text"
@@ -307,7 +312,7 @@ export const RelaysPanel: React.FC = () => {
                   className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-emerald-500"
                 />
                 <p className="text-[10px] text-neutral-400">
-                  Isi nomor untuk memakai pairing code (tanpa scan QR). Format digit, contoh
+                  Enter a number to use a pairing code (no QR scan). Digits only, e.g.
                   62812...
                 </p>
               </div>
@@ -330,10 +335,10 @@ export const RelaysPanel: React.FC = () => {
                   onChange={(event) => setWaAllowAnyone(event.target.checked)}
                   className="rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500"
                 />
-                Allow anyone (tidak disarankan)
+                Allow anyone (not recommended)
               </label>
               <p className="text-[10px] text-neutral-400">
-                Kosong + allow-anyone mati = semua pesan masuk ditolak.
+                Empty + allow-anyone off = all inbound messages rejected.
               </p>
             </div>
 
@@ -361,8 +366,8 @@ export const RelaysPanel: React.FC = () => {
                     {whatsapp.pairing_code}
                   </div>
                   <p className="text-[10px] text-neutral-500 text-center mt-3 max-w-[220px]">
-                    Buka WhatsApp → Linked devices → Link with phone number, lalu masukkan kode
-                    ini.
+                    Open WhatsApp → Linked devices → Link with phone number, then enter this
+                    code.
                   </p>
                 </>
               ) : waConnected ? (
@@ -379,8 +384,8 @@ export const RelaysPanel: React.FC = () => {
                 <>
                   <QrCode className="w-8 h-8 text-neutral-300 mb-2" />
                   <div className="text-[11px] text-neutral-500 text-center">
-                    Klik <b>Generate QR / Connect</b> untuk memulai bridge WhatsApp Web. QR atau
-                    pairing code akan muncul di sini.
+                    Click <b>Generate QR / Connect</b> to start the WhatsApp Web bridge. The QR
+                    or pairing code will appear here.
                   </div>
                 </>
               )}
@@ -417,9 +422,9 @@ export const RelaysPanel: React.FC = () => {
           </div>
 
           <p className="text-[10px] text-neutral-400 leading-snug">
-            WhatsApp Web memakai bridge lokal (Baileys) di port 4097. Jika bridge gagal start,
-            jalankan sekali: <code>cd scripts/whatsapp-bridge &amp;&amp; npm install</code>. Pesan
-            masuk dijalankan oleh agent yang sama dan dibalas ke chat asal.
+            WhatsApp Web uses a local bridge (Baileys) on port 4097. If the bridge fails to
+            start, run once: <code>cd scripts/whatsapp-bridge &amp;&amp; npm install</code>. Inbound
+            messages are handled by the same agent and replies go back to the source chat.
           </p>
         </div>
       </div>

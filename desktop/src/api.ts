@@ -275,7 +275,7 @@ export const api = {
     if (!res.ok) {
       if (res.status === 404 || res.status === 405) {
         throw new Error(
-          `Daemon odond belum mendukung Workspace API (HTTP ${res.status}). Rebuild lalu restart odond, kemudian coba lagi.`,
+          `The odond daemon does not support the Workspace API yet (HTTP ${res.status}). Rebuild and restart odond, then try again.`,
         );
       }
       throw new Error(data.error || `Failed to add workspace: ${res.status}`);
@@ -302,7 +302,7 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       const error =
         res.status === 404 || res.status === 405
-          ? `Daemon odond belum mendukung Workspace API (HTTP ${res.status}). Rebuild lalu restart odond.`
+          ? `The odond daemon does not support the Workspace API yet (HTTP ${res.status}). Rebuild and restart odond.`
           : err.error || `Failed to browse folders: ${res.status}`;
       return { current: path || '', parent: null, roots: [], entries: [], error };
     }

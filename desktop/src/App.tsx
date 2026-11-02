@@ -718,7 +718,7 @@ export default function App() {
         {
           id: 'load-error',
           role: 'assistant',
-          content: `⚠️ **Gagal memuat percakapan**: ${err?.message || 'Daemon tidak merespons.'}\n\nPastikan daemon ODON aktif di \`http://127.0.0.1:4096\`.`,
+          content: `⚠️ **Failed to load conversation**: ${err?.message || 'Daemon did not respond.'}\n\nMake sure the ODON daemon is running at \`http://127.0.0.1:4096\`.`,
           timestamp: 'Just now',
         },
       ]);
@@ -740,7 +740,7 @@ export default function App() {
       if (result.current) setWorkspaceInput(result.current);
       if (result.error) setWorkspaceError(result.error);
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Gagal membuka folder');
+      setWorkspaceError(err?.message || 'Failed to open folder');
     } finally {
       setWorkspaceBusy(false);
     }
@@ -773,7 +773,7 @@ export default function App() {
       setWorkspaceModalOpen(false);
       loadSessions();
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Gagal memilih workspace');
+      setWorkspaceError(err?.message || 'Failed to select workspace');
     } finally {
       setWorkspaceBusy(false);
     }
@@ -795,7 +795,7 @@ export default function App() {
       setWorkspaceModalOpen(false);
       loadSessions();
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Gagal menambahkan folder');
+      setWorkspaceError(err?.message || 'Failed to add folder');
     } finally {
       setWorkspaceBusy(false);
     }
@@ -812,7 +812,7 @@ export default function App() {
         if (currentSessionId) await api.setSessionWorkspace(currentSessionId, null);
       }
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Gagal menghapus workspace');
+      setWorkspaceError(err?.message || 'Failed to remove workspace');
     } finally {
       setWorkspaceBusy(false);
     }
@@ -846,7 +846,7 @@ export default function App() {
         {
           id: `steer_err_${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ **Steer gagal dikirim**: ${err?.message || 'Daemon tidak merespons.'}`,
+          content: `⚠️ **Steer failed to send**: ${err?.message || 'Daemon did not respond.'}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -884,7 +884,7 @@ export default function App() {
         {
           id: `steer_err_${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ **Gagal memprioritaskan steer**: ${err?.message || 'Daemon tidak merespons.'}`,
+          content: `⚠️ **Failed to prioritize steer**: ${err?.message || 'Daemon did not respond.'}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -924,7 +924,7 @@ export default function App() {
         {
           id: `cfg_err_${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ **Belum ada model yang dipilih.**\n\nBuka **Settings → Providers → OpenAI Compatible**, tambahkan Model ID yang tersedia di gateway Anda, lalu pilih model tersebut sebelum mengirim pesan.`,
+          content: `⚠️ **No model selected.**\n\nOpen **Settings → Endpoints**, add the Model IDs available on your gateway, then select one before sending a message.`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -1032,18 +1032,18 @@ export default function App() {
         loadSessions();
       } catch (err: any) {
         console.error('Daemon message send error:', err);
-        const detail = err.message || 'Terjadi kesalahan saat memproses jawaban.';
+        const detail = err.message || 'An error occurred while processing the response.';
         const hint = /502|503|504/.test(detail)
-          ? 'Gateway/model upstream sedang tidak tersedia. Periksa Model ID, Base URL, dan status gateway di **Settings → Providers**, lalu gunakan tombol **Test Connection**.'
+          ? 'The upstream gateway/model is currently unavailable. Check the Model ID, Base URL, and gateway status in **Settings → Providers**, then use **Test Connection**.'
           : /401|403/.test(detail)
-            ? 'API key ditolak. Periksa kembali kredensial provider di **Settings → Providers**.'
+            ? 'The API key was rejected. Verify the provider credentials in **Settings → Providers**.'
             : /404/.test(detail)
-              ? 'Model atau endpoint tidak ditemukan. Periksa Model ID dan Base URL di **Settings → Providers**.'
-              : 'Periksa konfigurasi API key, Base URL, dan koneksi akun provider pada menu **Settings**.';
+              ? 'The model or endpoint was not found. Check the Model ID and Base URL in **Settings → Providers**.'
+              : 'Check the API key, Base URL, and provider account connection in **Settings**.';
         const errorMsg: ChatMessage = {
           id: `ast_err_${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ **Gagal menghubungi model AI**: ${detail}\n\n${hint}`,
+          content: `⚠️ **Failed to contact the AI model**: ${detail}\n\n${hint}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
         setMessages((prev) => [...prev, errorMsg]);
@@ -1057,9 +1057,9 @@ export default function App() {
       const offlineMsg: ChatMessage = {
         id: `ast_off_${Date.now()}`,
         role: 'assistant',
-        content: `⚠️ **Daemon ODON (odond) sedang offline**.
+        content: `⚠️ **ODON daemon (odond) is offline**.
 
-Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jawaban langsung dari AI model.`,
+Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI model responses.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, offlineMsg]);
@@ -1435,7 +1435,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               <div className="text-[11px] font-medium text-neutral-400 px-1 mb-2">Recent</div>
               <div className="space-y-1">
                 {recentItems.length === 0 && (
-                  <div className="px-2 py-1.5 text-[11px] text-neutral-400">Belum ada percakapan.</div>
+                  <div className="px-2 py-1.5 text-[11px] text-neutral-400">No conversations yet.</div>
                 )}
                 {recentItems.map((item) => (
                   <button
@@ -2742,14 +2742,14 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     }}
                     className="text-blue-600 hover:underline font-normal capitalize"
                   >
-                    Kelola di Settings
+                    Manage in Settings
                   </button>
                 )}
               </div>
 
               {isOpenAiCompatible && activeModels.length === 0 && (
                 <div className="p-3 rounded-xl bg-neutral-50 border border-dashed border-neutral-300 text-center text-xs text-neutral-500 my-2">
-                  Belum ada model custom gateway. Isi Model ID manual di bawah atau buka Pengaturan.
+                  No custom gateway models yet. Enter a Model ID below or open Settings.
                 </div>
               )}
 
@@ -2790,7 +2790,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                             handleDeleteQuickCustomModel(m.id);
                           }}
                           className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-red-600 rounded transition-all cursor-pointer"
-                          title="Hapus model ini"
+                          title="Delete this model"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -2803,7 +2803,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               {isOpenAiCompatible && (
                 <div className="pt-2.5 mt-2 border-t border-neutral-200">
                   <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1.5 px-0.5">
-                    Input Model ID Manual
+                    Manual Model ID Input
                   </div>
                   <div className="flex items-center gap-1.5">
                     <input
@@ -2813,14 +2813,14 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') handleAddQuickCustomModel();
                       }}
-                      placeholder="Ketik Model ID (misal: llama-3.3-70b)..."
+                      placeholder="Type a Model ID (e.g. llama-3.3-70b)..."
                       className="flex-1 px-3 py-1.5 text-xs font-mono rounded-xl border border-neutral-300 bg-white focus:border-blue-500 outline-none"
                     />
                     <button
                       onClick={handleAddQuickCustomModel}
                       className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-medium transition-colors cursor-pointer shrink-0 shadow-2xs"
                     >
-                      + Tambah
+                      + Add
                     </button>
                   </div>
                 </div>

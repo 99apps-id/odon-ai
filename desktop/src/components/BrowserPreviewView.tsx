@@ -172,7 +172,7 @@ export function BrowserPreviewView({
   };
 
   const handleSendToAgent = () => {
-    const payload = `Saya sedang membuka web browser di panel dengan URL: ${url}\n\nKonten halaman / ringkasan:\n\`\`\`text\n${extractedText || 'Web page loaded at ' + url}\n\`\`\`\nMohon analisa halaman ini dan jelaskan fungsinya.`;
+    const payload = `I'm viewing this web page in the browser panel: ${url}\n\nPage content / summary:\n\`\`\`text\n${extractedText || 'Web page loaded at ' + url}\n\`\`\`\nPlease analyze this page and explain what it does.`;
     
     if (onSendToAgent) {
       onSendToAgent(payload);

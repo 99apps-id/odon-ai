@@ -65,7 +65,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
-              Tindakan ini memerlukan izin eksekusi eksplisit
+              This action requires explicit execution approval
             </p>
           </div>
         </div>
@@ -115,7 +115,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
         {isDangerous && (
           <div className="flex items-center gap-2 text-[11px] text-rose-800 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg px-3 py-2">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
-            <span>Peringatan: Tool ini dapat mengubah sistem, menghapus file, atau menjalankan subshell.</span>
+            <span>Warning: This tool can modify the system, delete files, or run a subshell.</span>
           </div>
         )}
       </div>

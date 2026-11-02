@@ -121,11 +121,11 @@ export const SshTerminalView: React.FC = () => {
       if (res.success && res.saved_path) {
         setNewKeyPath(res.saved_path);
         setImportedCertName(filename);
-        setPasteSuccessMessage(`Key berhasil disimpan ke ${filename}`);
+        setPasteSuccessMessage(`Key saved to ${filename}`);
       }
     } catch (err) {
       console.error('Failed to save pasted key:', err);
-      setPasteSuccessMessage('Gagal menyimpan key ke backend.');
+      setPasteSuccessMessage('Failed to save key to backend.');
     } finally {
       setIsPastingKey(false);
     }
@@ -349,8 +349,8 @@ export const SshTerminalView: React.FC = () => {
                 </h3>
                 <p className="text-xs text-neutral-400 leading-relaxed">
                   {selectedProfile
-                    ? `Klik tombol "Connect Host" di pojok kanan atas untuk membuka terminal interaktif asli dengan akses full command ke ${selectedProfile.host}.`
-                    : 'Pilih salah satu host di sidebar kiri atau tambahkan host baru dengan tombol Add Host.'}
+                    ? `Click "Connect Host" in the top-right corner to open a real interactive terminal with full command access to ${selectedProfile.host}.`
+                    : 'Select a host in the left sidebar or add a new one with the Add Host button.'}
                 </p>
               </div>
 
@@ -438,7 +438,7 @@ export const SshTerminalView: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 font-semibold text-neutral-800">
                     <FileKey className="w-4 h-4 text-blue-600" />
-                    <span>SSH Key & Sertifikat</span>
+                    <span>SSH Key & Certificate</span>
                   </div>
                   <span className="text-[10px] text-blue-700 bg-blue-100/70 font-mono px-2 py-0.5 rounded-md">
                     .pem • .key • id_rsa • raw
@@ -486,7 +486,7 @@ export const SshTerminalView: React.FC = () => {
                 {keyInputTab === 'file' && (
                   <div className="space-y-2">
                     <p className="text-[11px] text-neutral-600 leading-snug">
-                      Pilih file sertifikat (<code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">.pem</code>, <code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">.key</code>, <code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">id_rsa</code>) dari komputer Anda:
+                      Select a certificate file (<code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">.pem</code>, <code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">.key</code>, <code className="font-mono text-blue-700 bg-blue-100/60 px-1 py-0.5 rounded">id_rsa</code>) from your computer:
                     </p>
 
                     <input
@@ -509,7 +509,7 @@ export const SshTerminalView: React.FC = () => {
                         ) : (
                           <UploadCloud className="w-3.5 h-3.5 text-blue-600" />
                         )}
-                        <span>{isImportingCert ? 'Mengimpor file...' : 'Pilih File Sertifikat / Key'}</span>
+                        <span>{isImportingCert ? 'Importing file...' : 'Select Certificate / Key File'}</span>
                       </button>
                     </div>
 
@@ -526,7 +526,7 @@ export const SshTerminalView: React.FC = () => {
                             setNewKeyPath('');
                           }}
                           className="text-neutral-400 hover:text-rose-600 p-0.5 cursor-pointer"
-                          title="Hapus file"
+                          title="Delete file"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -539,7 +539,7 @@ export const SshTerminalView: React.FC = () => {
                 {keyInputTab === 'paste' && (
                   <div className="space-y-2">
                     <p className="text-[11px] text-neutral-600 leading-snug">
-                      Tempel (paste) private key RSA/Ed25519 atau public key Anda di sini:
+                      Paste your RSA/Ed25519 private key or public key here:
                     </p>
 
                     <textarea
@@ -555,7 +555,7 @@ export const SshTerminalView: React.FC = () => {
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] text-neutral-500 font-mono">
-                        {pastedKey.length > 0 ? `${pastedKey.length} karakter • ${pastedKey.split('\n').length} baris` : 'Belum ada key ditempel'}
+                        {pastedKey.length > 0 ? `${pastedKey.length} characters • ${pastedKey.split('\n').length} lines` : 'No key pasted yet'}
                       </span>
 
                       <button
@@ -565,7 +565,7 @@ export const SshTerminalView: React.FC = () => {
                         className="flex items-center gap-1 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-[11px] font-semibold cursor-pointer shadow-2xs transition-colors"
                       >
                         {isPastingKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                        <span>Gunakan Key Ini</span>
+                        <span>Use This Key</span>
                       </button>
                     </div>
 
@@ -582,13 +582,13 @@ export const SshTerminalView: React.FC = () => {
                 {keyInputTab === 'path' && (
                   <div className="space-y-1.5">
                     <p className="text-[11px] text-neutral-600 leading-snug">
-                      Masukkan path absolut key yang sudah ada di komputer Anda:
+                      Enter the absolute path to an existing key on your computer:
                     </p>
                     <input
                       type="text"
                       value={newKeyPath}
                       onChange={(e) => setNewKeyPath(e.target.value)}
-                      placeholder="~/.ssh/id_rsa atau C:\Users\...\id_ed25519"
+                      placeholder="~/.ssh/id_rsa or C:\Users\...\id_ed25519"
                       className="w-full px-2.5 py-1.5 text-[11.5px] rounded-lg border border-neutral-300 bg-white font-mono outline-none focus:border-blue-500"
                     />
                   </div>
