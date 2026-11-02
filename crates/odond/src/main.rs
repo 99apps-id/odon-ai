@@ -2448,7 +2448,7 @@ async fn execute_terminal(
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            command_str.as_str(),
+            command_str,
         ]);
         c
     };
@@ -2456,7 +2456,7 @@ async fn execute_terminal(
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
         let mut c = tokio::process::Command::new("sh");
-        c.args(["-c", command_str.as_str()]);
+        c.args(["-c", command_str]);
         c
     };
 
@@ -2464,34 +2464,100 @@ async fn execute_terminal(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    match cmd.output().await {
-        Ok(output) => {
-            let full_stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
-
-            (
-                StatusCode::OK,
+    let execution = match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+        Ok(result) => result,
+        Err(_) => {
+            return (
+                StatusCode::GATEWAY_TIMEOUT,
                 Json(json!({
-                    "exit_code": exit_code,
-                    "stdout": full_stdout,
-                    "stderr": stderr,
-                    "cwd": final_dir.clone(),
-                    "success": exit_code == 0,
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": "Process execution timed out after 120 seconds",
+                    "success": false
                 })),
-            )
+            );
         }
-        Err(e) => (
+    };
+    let output = match execution {
+        Ok(output) => output,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": format!("Process execution failed: {}", e),
+                    "success": false
+                })),
+            );
+        }
+    };
+    let full_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    const MAX_OUTPUT_BYTES: usize = 1_048_576;
+    if full_stdout.len() > MAX_OUTPUT_BYTES || stderr.len() > MAX_OUTPUT_BYTES {
+        let mut truncated = false;
+        let mut capped_stdout = full_stdout;
+        let mut capped_stderr = stderr;
+        if capped_stdout.len() > MAX_OUTPUT_BYTES {
+            capped_stdout.truncate(MAX_OUTPUT_BYTES);
+            truncated = true;
+        }
+        if capped_stderr.len() > MAX_OUTPUT_BYTES {
+            capped_stderr.truncate(MAX_OUTPUT_BYTES);
+            truncated = true;
+        }
+        if truncated {
+            capped_stderr.push_str("\n[ODON] output capped at 1 MB");
+        }
+                let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+
+        return (
+
             StatusCode::OK,
+
             Json(json!({
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": format!("Process execution failed: {}", e),
-                "cwd": final_dir,
-                "success": false,
+
+                "exit_code": exit_code,
+
+                "stdout": capped_stdout,
+
+                "stderr": capped_stderr,
+
+                "success": output.status.success()
+
             })),
-        ),
+
+        );
+
     }
+    let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+
+    let mut updated_cwd = final_dir;
+    let mut cleaned_stdout = full_stdout;
+    if let Some(pos) = cleaned_stdout.rfind("__ODON_CWD__:") {
+        let cwd_part = cleaned_stdout[pos + 13..].trim();
+        if cwd_part.starts_with("C:\\") || cwd_part.starts_with("/") {
+            let cwd_part = cwd_part.trim_end_matches("__ODON_CWD__");
+            cleaned_stdout.truncate(pos);
+            if cleaned_stdout.ends_with("\r\n") {
+                cleaned_stdout.truncate(cleaned_stdout.len() - 2);
+            } else if cleaned_stdout.ends_with('\n') {
+                cleaned_stdout.truncate(cleaned_stdout.len() - 1);
+            }
+        }
+    }
+
+    return (
+        StatusCode::OK,
+        Json(json!({
+            "exit_code": exit_code,
+            "stdout": cleaned_stdout,
+            "stderr": stderr,
+            "cwd": updated_cwd,
+            "success": exit_code == 0,
+        })),
+    );
 }
 
 #[derive(Deserialize)]
@@ -4559,27 +4625,54 @@ async fn exec_ssh_command(
         }
     }
 
-    cmd.arg(format!("{user}@{host}"));
+        cmd.arg(format!("{user}@{host}"));
     cmd.arg(&req.command);
 
-    match cmd.output().await {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Json(json!({
-                "exit_code": output.status.code().unwrap_or(-1),
-                "stdout": stdout,
-                "stderr": stderr,
-                "success": output.status.success()
-            }))
+    let execution = match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+        Ok(result) => result,
+        Err(_) => {
+            return Json(json!( {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "SSH command timed out after 120 seconds",
+                "success": false
+            }));
         }
-        Err(e) => Json(json!({
-            "exit_code": 1,
-            "stdout": "",
-            "stderr": format!("Failed to execute ssh: {}", e),
-            "success": false
-        })),
+    };
+    let output = match execution {
+        Ok(output) => output,
+        Err(e) => {
+            return Json(json!( {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": format!("Failed to execute ssh: {}", e),
+                "success": false
+            }));
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    const MAX_OUTPUT_BYTES: usize = 1_048_576;
+    let mut capped_stdout = stdout;
+    let mut capped_stderr = stderr;
+    let mut truncated = false;
+    if capped_stdout.len() > MAX_OUTPUT_BYTES {
+        capped_stdout.truncate(MAX_OUTPUT_BYTES);
+        truncated = true;
     }
+    if capped_stderr.len() > MAX_OUTPUT_BYTES {
+        capped_stderr.truncate(MAX_OUTPUT_BYTES);
+        truncated = true;
+    }
+    if truncated {
+        capped_stderr.push_str("\n[ODON] output capped at 1 MB");
+    }
+    Json(json!( {
+        "exit_code": output.status.code().unwrap_or(-1),
+        "stdout": capped_stdout,
+        "stderr": capped_stderr,
+        "success": output.status.success()
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -4723,6 +4816,52 @@ mod tests {
         assert!(!workspace_allowed(&config, "C:\\Windows"));
         #[cfg(not(windows))]
         assert!(!workspace_allowed(&config, "/etc"));
+    }
+
+    #[test]
+    fn ssh_target_validation_accepts_dns_ipv4_ipv6_and_punycode() {
+        assert!(validate_ssh_target("example.com", "root").is_ok());
+        assert!(validate_ssh_target("sub.example.co.uk", "deploy_user").is_ok());
+        assert!(validate_ssh_target("xn--bcher-kva.example", "root").is_ok());
+        assert!(validate_ssh_target("192.168.1.10", "root").is_ok());
+        assert!(validate_ssh_target("2001:db8::1", "root").is_ok());
+        assert!(validate_ssh_target("[2001:db8::1]", "root").is_ok());
+        assert!(validate_ssh_target("my_host.local", "root").is_ok());
+    }
+
+    #[test]
+    fn ssh_target_validation_rejects_injection_and_bad_hosts() {
+        for host in [
+            "",
+            "-oProxyCommand=calc.exe",
+            "host;rm -rf /",
+            "bad host",
+            "example..com",
+            ".example.com",
+            "example.com.",
+            "münchen.de",
+            "a:b",
+        ] {
+            assert!(
+                validate_ssh_target(host, "root").is_err(),
+                "host should be rejected: {host}"
+            );
+        }
+        for user in ["", "-oProxyCommand=x", "root;rm", "root user", "üser"] {
+            assert!(
+                validate_ssh_target("example.com", user).is_err(),
+                "user should be rejected: {user}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_key_filename_strips_paths() {
+        assert_eq!(safe_key_filename("../../id_rsa"), "id_rsa");
+        assert_eq!(safe_key_filename("id_ed25519"), "id_ed25519");
+        let generated = safe_key_filename("");
+        assert!(generated.starts_with("key-"));
+        assert!(generated.ends_with(".pem"));
     }
 
     #[test]
