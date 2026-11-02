@@ -229,19 +229,65 @@ pub fn build_full_tool_registry() -> ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::ToolAvailability;
     use std::collections::HashSet;
 
     #[test]
-    fn full_registry_has_over_fifty_tools_with_unique_names() {
+    fn full_registry_contract_is_explicit_and_valid() {
         let reg = build_full_tool_registry();
         let schemas = reg.schemas();
-        println!("Registered tools count: {}", schemas.len());
-        assert!(schemas.len() >= 50, "Expected >= 50 tools, got {}", schemas.len());
+        assert_eq!(
+            schemas.len(),
+            164,
+            "Tool surface changed; review the addition or removal and update this contract intentionally"
+        );
 
         let mut names = HashSet::new();
-        for s in &schemas {
-            assert!(names.insert(&s.name), "Duplicate tool registered: {}", s.name);
-            assert!(!s.description.is_empty(), "Tool {} missing description", s.name);
+        let mut unavailable = HashSet::new();
+        for schema in &schemas {
+            assert!(
+                names.insert(&schema.name),
+                "Duplicate tool registered: {}",
+                schema.name
+            );
+            assert!(
+                !schema.description.trim().is_empty(),
+                "Tool {} missing description",
+                schema.name
+            );
+            assert!(
+                schema.risk_tier <= 3,
+                "Tool {} has invalid risk tier {}",
+                schema.name,
+                schema.risk_tier
+            );
+            assert_eq!(
+                schema
+                    .parameters
+                    .get("type")
+                    .and_then(serde_json::Value::as_str),
+                Some("object"),
+                "Tool {} must use an object parameter schema",
+                schema.name
+            );
+            if let ToolAvailability::Unavailable { reason } = &schema.availability {
+                assert!(
+                    !reason.trim().is_empty(),
+                    "Tool {} has no unavailability reason",
+                    schema.name
+                );
+                unavailable.insert(schema.name.as_str());
+            }
         }
+
+        assert_eq!(
+            unavailable,
+            HashSet::from(["browser_click", "session_switch"]),
+            "Unavailable capabilities must be reviewed explicitly"
+        );
+
+        let diagnostics = reg.diagnostics();
+        assert_eq!(diagnostics.len(), schemas.len());
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 162);
     }
 }

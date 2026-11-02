@@ -80,6 +80,14 @@ export interface ToolSchema {
   description: string;
   parameters: any;
   risk_tier: number;
+  availability:
+    | { status: 'stable' }
+    | { status: 'experimental' }
+    | { status: 'unavailable'; reason: string };
+  requirements: {
+    binaries?: string[];
+    environment?: string[];
+  };
 }
 
 export interface ApprovalRequest {

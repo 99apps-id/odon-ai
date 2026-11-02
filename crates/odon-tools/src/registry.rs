@@ -4,7 +4,34 @@ use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, RiskTier};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ToolAvailability {
+    Stable,
+    Experimental,
+    Unavailable { reason: String },
+}
+
+impl ToolAvailability {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Experimental => "experimental",
+            Self::Unavailable { .. } => "unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolRequirements {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binaries: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
@@ -12,6 +39,16 @@ pub struct ToolSchema {
     pub description: String,
     pub parameters: Value,
     pub risk_tier: u8,
+    pub availability: ToolAvailability,
+    pub requirements: ToolRequirements,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDiagnostic {
+    pub name: String,
+    pub availability: ToolAvailability,
+    pub ready: bool,
+    pub issues: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -29,6 +66,12 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> Value;
     fn risk_tier(&self) -> RiskTier;
+    fn availability(&self) -> ToolAvailability {
+        ToolAvailability::Stable
+    }
+    fn requirements(&self) -> ToolRequirements {
+        ToolRequirements::default()
+    }
 
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value>;
 }
@@ -43,6 +86,37 @@ impl Default for ToolRegistry {
     }
 }
 
+fn binary_on_path(binary: &str) -> bool {
+    let candidate = Path::new(binary);
+    if candidate.components().count() > 1 {
+        return candidate.is_file();
+    }
+
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let extensions = if cfg!(windows) {
+        std::env::var_os("PATHEXT")
+            .map(|value| {
+                value
+                    .to_string_lossy()
+                    .split(';')
+                    .filter(|item| !item.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![".COM".into(), ".EXE".into(), ".BAT".into(), ".CMD".into()])
+    } else {
+        vec![String::new()]
+    };
+
+    std::env::split_paths(&path).any(|directory| {
+        extensions
+            .iter()
+            .any(|extension| directory.join(format!("{binary}{extension}")).is_file())
+    })
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
@@ -51,7 +125,12 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: Box<dyn Tool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+        let name = tool.name().to_string();
+        assert!(
+            !self.tools.contains_key(&name),
+            "duplicate tool registration: {name}"
+        );
+        self.tools.insert(name, tool);
     }
 
     pub fn normalize_name(name: &str) -> String {
@@ -107,8 +186,54 @@ impl ToolRegistry {
                 description: t.description().to_string(),
                 parameters: t.parameters_schema(),
                 risk_tier: t.risk_tier() as u8,
+                availability: t.availability(),
+                requirements: t.requirements(),
             })
             .collect()
+    }
+
+    pub fn diagnostics(&self) -> Vec<ToolDiagnostic> {
+        let mut diagnostics = self
+            .tools
+            .values()
+            .map(|tool| {
+                let availability = tool.availability();
+                let requirements = tool.requirements();
+                let mut issues = Vec::new();
+
+                if let ToolAvailability::Unavailable { reason } = &availability {
+                    issues.push(reason.clone());
+                }
+                for binary in &requirements.binaries {
+                    if !binary_on_path(binary) {
+                        issues.push(format!("required binary '{binary}' was not found on PATH"));
+                    }
+                }
+                for variable in &requirements.environment {
+                    if std::env::var(variable)
+                        .map(|value| value.trim().is_empty())
+                        .unwrap_or(true)
+                    {
+                        issues.push(format!(
+                            "required environment variable '{variable}' is not set"
+                        ));
+                    }
+                }
+
+                if tool.parameters_schema().get("type").and_then(Value::as_str) != Some("object") {
+                    issues.push("parameter schema root must have type 'object'".to_string());
+                }
+
+                ToolDiagnostic {
+                    name: tool.name().to_string(),
+                    availability,
+                    ready: issues.is_empty(),
+                    issues,
+                }
+            })
+            .collect::<Vec<_>>();
+        diagnostics.sort_by(|a, b| a.name.cmp(&b.name));
+        diagnostics
     }
 
     pub async fn execute_tool(
@@ -121,6 +246,13 @@ impl ToolRegistry {
             tool: name.to_string(),
             message: format!("Tool '{}' not found in registry", name),
         })?;
+
+        if let ToolAvailability::Unavailable { reason } = tool.availability() {
+            return Err(OdonError::Tool {
+                tool: name.to_string(),
+                message: format!("Tool is unavailable in this build: {reason}"),
+            });
+        }
 
         let desc = format!("Executing tool: {}", name);
         let start = std::time::Instant::now();

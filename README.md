@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-19-blue?style=flat-square&logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-5.8-blue?style=flat-square&logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat-square&logo=tailwind-css" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Tools_Registry-149_Real_Tools-emerald?style=flat-square" alt="149 Real Tools" />
+  <img src="https://img.shields.io/badge/Tools_Registry-164_Registered-emerald?style=flat-square" alt="164 registered tools" />
   <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=flat-square" alt="License" />
 </p>
 
@@ -61,11 +61,11 @@ Unlike traditional rigid terminal loops, ODON delivers seamless multi-turn thoug
   - **Always Allow**: Persists the tool + path scope to `.odon/approval-policies.json`.
   - **Deny**: Rejects execution and passes feedback back to the agent.
 
-### 4. 🧠 149 Real Executable Tools
-ODON provides 149 real, concrete tools with complete parameter schemas and validation:
+### 4. 🧠 Explicit, Self-Diagnosing Tool Registry
+ODON exposes 164 registered tools with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution.
 - **Filesystem (17 tools)**: `read_file`, `write_file`, `edit`, `multi_edit`, `list_directory`, `create_directory`, `delete_file`, `move_file`, `copy_file`, `grep`, `glob`, etc.
 - **Git (14 tools)**: `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_add`, `git_checkout`, `git_show`, `git_stash`, `git_pull`, `git_push`, `git_reset`, etc.
-- **Browser Control (4 tools)**: `browser_open`, `browser_navigate`, `browser_screenshot`, `browser_click`.
+- **Browser Control**: `browser_open`, `browser_navigate`, and `browser_screenshot`. Interactive `browser_click` remains registered as unavailable until the persistent browser runtime is implemented.
 - **Shell & Terminal (3 tools)**: `shell_exec`, `bash_run`, `terminal_exec`.
 - **Cybersecurity & Network (7 tools)**: `web_search`, `web_fetch`, `probe_url`, `http_get`, `http_post`, `dns_lookup`, `port_scan`.
 - **Autonomous Skills (3 tools)**: `skill_list`, `skill_create`, `skill_run`.
@@ -141,6 +141,21 @@ odon-ai/
 ```
 
 ---
+
+### Tool readiness
+
+```powershell
+# Human-readable readiness report
+odon tools doctor
+
+# Machine-readable report for automation
+odon tools doctor --json
+
+# Fail CI if a selected tool is not ready
+odon tools doctor --filter browser --strict
+```
+
+`stable` tools are ready for normal use, `experimental` tools are operational but may change, and `unavailable` tools are visible for discovery but rejected before approval or execution with a concrete reason.
 
 ## 🏁 Getting Started
 

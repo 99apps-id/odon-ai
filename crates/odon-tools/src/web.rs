@@ -827,6 +827,11 @@ impl Tool for BrowserClickTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
     }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Interactive browser clicking requires a persistent browser runtime, which is not implemented yet".to_string(),
+        }
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let selector = args.get("selector").and_then(|s| s.as_str()).unwrap_or("");
         Err(OdonError::Tool {

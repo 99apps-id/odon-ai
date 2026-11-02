@@ -198,6 +198,11 @@ impl Tool for SessionSwitchTool {
         })
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Session switching must be performed by the agent runtime; a tool call cannot mutate its immutable execution context".to_string(),
+        }
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let s_id = args.get("session_id").and_then(|s| s.as_str()).unwrap_or("");
         if s_id.is_empty() {

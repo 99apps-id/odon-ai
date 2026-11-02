@@ -148,7 +148,6 @@ const REGISTERED_TOOLS = [
   { name: 'browser_open', category: 'Browser', tier: 'Tier 1', desc: 'Open URL in system browser or preview' },
   { name: 'browser_navigate', category: 'Browser', tier: 'Tier 0', desc: 'Navigate to URL and extract page content' },
   { name: 'browser_screenshot', category: 'Browser', tier: 'Tier 1', desc: 'Capture screenshot of target web page' },
-  { name: 'browser_click', category: 'Browser', tier: 'Tier 1', desc: 'Click web element or link' },
 
   // Skills System (.odon/skills)
   { name: 'skill_list', category: 'Skills', tier: 'Tier 0', desc: 'List reusable autonomous skills' },

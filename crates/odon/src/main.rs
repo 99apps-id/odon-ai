@@ -154,6 +154,18 @@ enum ToolCommands {
     },
     /// Print a tool's JSON schema
     Schema { name: String },
+    /// Check tool schemas, availability, and runtime requirements
+    Doctor {
+        #[arg(long)]
+        json: bool,
+
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Exit non-zero when any selected tool is not ready
+        #[arg(long)]
+        strict: bool,
+    },
     /// Execute a tool locally (mutating tools require --yes)
     Run {
         name: String,
@@ -352,8 +364,11 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     for schema in schemas {
                         println!(
-                            "{:<28} tier{}  {}",
-                            schema.name, schema.risk_tier, schema.description
+                            "{:<28} tier{}  {:<12} {}",
+                            schema.name,
+                            schema.risk_tier,
+                            schema.availability.label(),
+                            schema.description
                         );
                     }
                 }
@@ -365,6 +380,37 @@ async fn main() -> anyhow::Result<()> {
                     .find(|schema| schema.name.eq_ignore_ascii_case(&name))
                     .ok_or_else(|| anyhow::anyhow!("Tool '{name}' not found"))?;
                 println!("{}", serde_json::to_string_pretty(&schema)?);
+            }
+            ToolCommands::Doctor { json, filter, strict } => {
+                let mut diagnostics = tools.diagnostics();
+                if let Some(filter) = filter {
+                    let needle = filter.to_lowercase();
+                    diagnostics.retain(|item| item.name.to_lowercase().contains(&needle));
+                    if diagnostics.is_empty() {
+                        anyhow::bail!("No tools matched filter '{filter}'");
+                    }
+                }
+                let failures = diagnostics.iter().filter(|item| !item.ready).count();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&diagnostics)?);
+                } else {
+                    for item in &diagnostics {
+                        let status = if item.ready { "ready" } else { "not ready" };
+                        println!("{:<28} {:<12} {status}", item.name, item.availability.label());
+                        for issue in &item.issues {
+                            println!("  - {issue}");
+                        }
+                    }
+                    println!(
+                        "{} tool(s) checked: {} ready, {} not ready",
+                        diagnostics.len(),
+                        diagnostics.len() - failures,
+                        failures
+                    );
+                }
+                if strict && failures > 0 {
+                    anyhow::bail!("{failures} tool(s) are not ready");
+                }
             }
             ToolCommands::Run {
                 name,
