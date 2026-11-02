@@ -186,6 +186,9 @@ impl ToolRegistry {
             "fs_chown" => "fs_owner_check".to_string(),
             "processlist" | "ps" => "process_list".to_string(),
             "memorysearch" => "memory_search".to_string(),
+            "termigopastebuffer_history" | "termigopastebufferhistory" => {
+                "termigo_paste_buffer_history".to_string()
+            }
             _ => lower,
         }
     }
@@ -307,6 +310,9 @@ impl ToolRegistry {
             tool: name.to_string(),
             message: format!("Tool '{}' not found in registry", name),
         })?;
+        // Use the canonical registered name so compatibility aliases receive
+        // the same risk policy and audit trail as the primary implementation.
+        let canonical_name = tool.name();
 
         if let ToolAvailability::Unavailable { reason } = tool.availability() {
             return Err(OdonError::Tool {
@@ -315,7 +321,7 @@ impl ToolRegistry {
             });
         }
 
-        let desc = format!("Executing tool: {}", name);
+        let desc = format!("Executing tool: {}", canonical_name);
         let start = std::time::Instant::now();
 
         // Plan mode: only read-only tools may run until the plan is accepted.
@@ -340,7 +346,7 @@ impl ToolRegistry {
                         .audit_logger
                         .record(
                             &ctx.session_id,
-                            name,
+                            canonical_name,
                             tool.risk_tier(),
                             &format!("Blocked by command policy: {reason}"),
                             false,
@@ -358,7 +364,7 @@ impl ToolRegistry {
         // Security approval check
         let decision = ctx
             .approval_engine
-            .evaluate_and_request(&ctx.session_id, name, &args, &desc)
+            .evaluate_and_request(&ctx.session_id, canonical_name, &args, &desc)
             .await
             .map_err(|e| OdonError::Security(e))?;
 
@@ -371,7 +377,7 @@ impl ToolRegistry {
                 ctx.audit_logger
                     .record(
                         &ctx.session_id,
-                        name,
+                        canonical_name,
                         tool.risk_tier(),
                         &desc,
                         true,
@@ -386,7 +392,7 @@ impl ToolRegistry {
                 ctx.audit_logger
                     .record(
                         &ctx.session_id,
-                        name,
+                        canonical_name,
                         tool.risk_tier(),
                         &format!("Rejected: {}", reason),
                         false,
@@ -404,7 +410,7 @@ impl ToolRegistry {
                 ctx.audit_logger
                     .record(
                         &ctx.session_id,
-                        name,
+                        canonical_name,
                         tool.risk_tier(),
                         "Approval request timed out",
                         false,

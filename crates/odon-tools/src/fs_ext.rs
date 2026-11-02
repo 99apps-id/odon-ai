@@ -1023,7 +1023,7 @@ impl Tool for TermigoCopySelectionTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
@@ -1041,8 +1041,14 @@ impl Tool for TermigoCopySelectionTool {
         let lines: Vec<&str> = content.lines().collect();
 
         let s_idx = start.saturating_sub(1).min(lines.len());
-        let e_idx = end.min(lines.len());
+        let e_idx = end.min(lines.len()).max(s_idx);
         let selected = lines[s_idx..e_idx].join("\n");
+        crate::shell_ext::write_clipboard_text(selected.clone(), self.name())
+            .await
+            .map_err(|message| OdonError::Tool {
+                tool: self.name().to_string(),
+                message,
+            })?;
 
         Ok(json!({
             "path": rel,
@@ -1062,21 +1068,37 @@ impl Tool for TermigoPasteBufferHistoryTool {
         "Get recent clipboard and paste buffer history"
     }
     fn parameters_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 20,
+                    "description": "Maximum number of recent clipboard entries to return"
+                }
+            }
+        })
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
-    fn availability(&self) -> crate::registry::ToolAvailability {
-        crate::registry::ToolAvailability::Unavailable {
-            reason: "Paste buffer history capture is not implemented yet".to_string(),
-        }
-    }
-    async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        Err(OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Paste buffer history capture is not implemented yet".to_string(),
-        })
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(20)
+            .clamp(1, 50) as usize;
+        let current_error = crate::shell_ext::read_clipboard_text(self.name())
+            .await
+            .err();
+        let entries = crate::shell_ext::clipboard_history_snapshot(limit);
+        Ok(json!({
+            "count": entries.len(),
+            "entries": entries,
+            "current_error": current_error,
+        }))
     }
 }
 

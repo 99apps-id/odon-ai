@@ -252,6 +252,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     // Project operations
     reg.register(Box::new(project_ops::ProjectDetectTool));
     reg.register(Box::new(project_ops::ProjectScriptsTool));
+    reg.register(Box::new(project_ops::DependencyAuditTool));
 
     // Autonomous Skills (.odon/skills)
     reg.register(Box::new(skills::SkillListTool));
@@ -316,6 +317,7 @@ mod tests {
     #[test]
     fn full_registry_contract_is_explicit_and_valid() {
         let reg = build_full_tool_registry();
+        assert!(reg.contains("termigopastebuffer_history"));
         let schemas = reg.schemas();
         let all_schemas = reg.all_schemas();
         let compatibility = all_schemas
@@ -325,7 +327,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            213,
+            214,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
@@ -395,11 +397,8 @@ mod tests {
             HashSet::from([
                 "session_switch",
                 "mcp_call_stream",
-                "clipboard_read",
-                "clipboard_write",
                 "editor_open",
                 "editor_reveal",
-                "termigo_paste_buffer_history",
                 "security_audit_cert",
             ]),
             "Unavailable capabilities must be reviewed explicitly"
@@ -407,7 +406,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 213);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 217);
     }
 
     #[test]

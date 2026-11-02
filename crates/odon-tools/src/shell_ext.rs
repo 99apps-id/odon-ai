@@ -4,7 +4,7 @@ use odon_security::RiskTier;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -74,6 +74,33 @@ fn background_summary(task_id: &str, task: &BackgroundTask) -> Value {
         "stdout_bytes": read_buffer(&task.stdout).len(),
         "stderr_bytes": read_buffer(&task.stderr).len(),
     })
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires an interactive desktop clipboard"]
+    async fn native_clipboard_round_trip_and_history() {
+        let original = read_clipboard_text("clipboard_test_backup")
+            .await
+            .expect("clipboard must contain text before this test runs");
+        let sentinel = format!("odon-clipboard-test-{}", std::process::id());
+
+        write_clipboard_text(sentinel.clone(), "clipboard_test_write")
+            .await
+            .expect("native clipboard write should succeed");
+        let observed = read_clipboard_text("clipboard_test_read").await;
+        write_clipboard_text(original, "clipboard_test_restore")
+            .await
+            .expect("original clipboard text should be restored");
+
+        assert_eq!(observed.expect("native clipboard read should succeed"), sentinel);
+        assert!(clipboard_history_snapshot(CLIPBOARD_HISTORY_LIMIT)
+            .iter()
+            .any(|entry| entry.get("text").and_then(Value::as_str) == Some(sentinel.as_str())));
+    }
 }
 
 pub struct ProcessListTool;
@@ -994,6 +1021,90 @@ impl Tool for FileChecksumTool {
     }
 }
 
+const CLIPBOARD_HISTORY_LIMIT: usize = 50;
+const CLIPBOARD_HISTORY_TEXT_LIMIT: usize = 64 * 1024;
+
+fn clipboard_history_store() -> &'static Mutex<VecDeque<Value>> {
+    static HISTORY: OnceLock<Mutex<VecDeque<Value>>> = OnceLock::new();
+    HISTORY.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn truncate_clipboard_history_text(text: &str) -> (&str, bool) {
+    if text.len() <= CLIPBOARD_HISTORY_TEXT_LIMIT {
+        return (text, false);
+    }
+    let mut end = CLIPBOARD_HISTORY_TEXT_LIMIT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&text[..end], true)
+}
+
+fn record_clipboard_history(text: &str, operation: &str) {
+    let (stored_text, truncated) = truncate_clipboard_history_text(text);
+    let content_hash = format!("{:x}", Sha256::digest(text.as_bytes()));
+    let entry = json!({
+        "text": stored_text,
+        "characters": text.chars().count(),
+        "truncated": truncated,
+        "content_hash": content_hash,
+        "operation": operation,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Ok(mut history) = clipboard_history_store().lock() {
+        history.retain(|item| {
+            item.get("content_hash").and_then(Value::as_str) != Some(content_hash.as_str())
+        });
+        history.push_front(entry);
+        history.truncate(CLIPBOARD_HISTORY_LIMIT);
+    }
+}
+
+pub(crate) fn clipboard_history_snapshot(limit: usize) -> Vec<Value> {
+    clipboard_history_store()
+        .lock()
+        .map(|history| {
+            history
+                .iter()
+                .take(limit.min(CLIPBOARD_HISTORY_LIMIT))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) async fn read_clipboard_text(operation: &str) -> std::result::Result<String, String> {
+    let text = tokio::task::spawn_blocking(|| {
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|error| format!("Could not access the system clipboard: {error}"))?;
+        clipboard
+            .get_text()
+            .map_err(|error| format!("Could not read text from the system clipboard: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Clipboard read task failed: {error}"))??;
+    record_clipboard_history(&text, operation);
+    Ok(text)
+}
+
+pub(crate) async fn write_clipboard_text(
+    text: String,
+    operation: &str,
+) -> std::result::Result<(), String> {
+    let clipboard_text = text.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|error| format!("Could not access the system clipboard: {error}"))?;
+        clipboard
+            .set_text(clipboard_text)
+            .map_err(|error| format!("Could not write text to the system clipboard: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Clipboard write task failed: {error}"))??;
+    record_clipboard_history(&text, operation);
+    Ok(())
+}
+
 pub struct ClipboardReadTool;
 #[async_trait]
 impl Tool for ClipboardReadTool {
@@ -1009,16 +1120,17 @@ impl Tool for ClipboardReadTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
-    fn availability(&self) -> crate::registry::ToolAvailability {
-        crate::registry::ToolAvailability::Unavailable {
-            reason: "Native clipboard access is not implemented yet".to_string(),
-        }
-    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        Err(OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Native clipboard access is not implemented yet".to_string(),
-        })
+        let text = read_clipboard_text(self.name())
+            .await
+            .map_err(|message| OdonError::Tool {
+                tool: self.name().to_string(),
+                message,
+            })?;
+        Ok(json!({
+            "characters": text.chars().count(),
+            "text": text,
+        }))
     }
 }
 
@@ -1043,20 +1155,24 @@ impl Tool for ClipboardWriteTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
     }
-    fn availability(&self) -> crate::registry::ToolAvailability {
-        crate::registry::ToolAvailability::Unavailable {
-            reason: "Native clipboard write is not implemented yet".to_string(),
-        }
-    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let text = args.get("text").and_then(|t| t.as_str()).unwrap_or("");
-        Err(OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!(
-                "Native clipboard write is not implemented yet ({} chars requested)",
-                text.len()
-            ),
-        })
+        let text = args
+            .get("text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "text is required".to_string(),
+            })?;
+        write_clipboard_text(text.to_string(), self.name())
+            .await
+            .map_err(|message| OdonError::Tool {
+                tool: self.name().to_string(),
+                message,
+            })?;
+        Ok(json!({
+            "characters": text.chars().count(),
+            "written": true,
+        }))
     }
 }
 

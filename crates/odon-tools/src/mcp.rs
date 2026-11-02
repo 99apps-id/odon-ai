@@ -9,9 +9,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::timeout;
 
 use crate::net_guard;
@@ -470,43 +472,108 @@ fn find_server(server: &str) -> Result<McpServerConfig> {
         })
 }
 
+enum McpClient {
+    Stdio(StdioMcpClient),
+    Sse(SseMcpClient),
+}
+
+impl McpClient {
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
+        match self {
+            Self::Stdio(client) => client.request(method, params).await,
+            Self::Sse(client) => client.request(method, params).await,
+        }
+    }
+
+    async fn close(self) {
+        match self {
+            Self::Stdio(client) => client.close().await,
+            Self::Sse(client) => client.close().await,
+        }
+    }
+}
+
+type McpClientPool = RwLock<HashMap<String, Arc<Mutex<McpClient>>>>;
+
+fn client_pool() -> &'static McpClientPool {
+    static POOL: std::sync::OnceLock<McpClientPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn config_key(config: &McpServerConfig) -> String {
+    format!(
+        "{}|{}|{}|{}|{}",
+        config.id,
+        config.transport,
+        config.command.as_deref().unwrap_or(""),
+        config.args.as_deref().unwrap_or_default().join("\u{1f}"),
+        config.url.as_deref().unwrap_or("")
+    )
+}
+
+async fn reconnect(config: &McpServerConfig) -> Result<Arc<Mutex<McpClient>>> {
+    let client = timeout(MCP_REQUEST_TIMEOUT, async {
+        match config.transport.to_ascii_lowercase().as_str() {
+            "stdio" => StdioMcpClient::connect(config)
+                .await
+                .map(McpClient::Stdio),
+            "sse" | "http+sse" | "http_sse" => SseMcpClient::connect(config)
+                .await
+                .map(McpClient::Sse),
+            other => Err(OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!(
+                    "Unsupported MCP transport '{other}' on server '{}'; use stdio or sse",
+                    config.name
+                ),
+            }),
+        }
+    })
+    .await
+    .map_err(|_| OdonError::Tool {
+        tool: "mcp".to_string(),
+        message: format!(
+            "MCP server '{}' did not initialize within 30 seconds",
+            config.name
+        ),
+    })??;
+    Ok(Arc::new(Mutex::new(client)))
+}
+
+/// Reuse initialized MCP connections across calls. A failed request evicts the
+/// client so the next call reconnects instead of retrying a dead stream.
 async fn call_server(config: &McpServerConfig, method: &str, params: Value) -> Result<Value> {
-    match config.transport.to_ascii_lowercase().as_str() {
-        "stdio" => {
-            let mut client = timeout(MCP_REQUEST_TIMEOUT, StdioMcpClient::connect(config))
-                .await
-                .map_err(|_| OdonError::Tool {
-                    tool: "mcp".to_string(),
-                    message: format!(
-                        "MCP server '{}' did not initialize within 30 seconds",
-                        config.name
-                    ),
-                })??;
-            let result = client.request(method, params).await;
-            client.close().await;
-            result
+    let key = config_key(config);
+    let client = {
+        let existing = client_pool().read().await.get(&key).cloned();
+        match existing {
+            Some(client) => client,
+            None => {
+                let candidate = reconnect(config).await?;
+                let mut pool = client_pool().write().await;
+                pool.entry(key.clone())
+                    .or_insert_with(|| candidate)
+                    .clone()
+            }
         }
-        "sse" | "http+sse" | "http_sse" => {
-            let mut client = timeout(MCP_REQUEST_TIMEOUT, SseMcpClient::connect(config))
-                .await
-                .map_err(|_| OdonError::Tool {
-                    tool: "mcp".to_string(),
-                    message: format!(
-                        "MCP SSE server '{}' did not initialize within 30 seconds",
-                        config.name
-                    ),
-                })??;
-            let result = client.request(method, params).await;
-            client.close().await;
-            result
+    };
+
+    let mut guard = client.lock().await;
+    match guard.request(method, params).await {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            let mut pool = client_pool().write().await;
+            if pool
+                .get(&key)
+                .map(|current| Arc::ptr_eq(current, &client))
+                .unwrap_or(false)
+            {
+                pool.remove(&key);
+            }
+            drop(guard);
+            client.lock().await.close().await;
+            Err(error)
         }
-        other => Err(OdonError::Tool {
-            tool: "mcp".to_string(),
-            message: format!(
-                "Unsupported MCP transport '{other}' on server '{}'; use stdio or sse",
-                config.name
-            ),
-        }),
     }
 }
 

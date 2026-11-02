@@ -243,10 +243,27 @@ impl ApprovalEngine {
             | "mcp_list_tools"
             | "mcp_list_servers"
             | "approval_list"
+            | "approval_history"
+            | "audit_search"
             | "session_list"
+            | "session_get"
+            | "session_messages"
             | "session_export"
             | "relay_status"
             | "automation_list"
+            | "automation_logs"
+            | "provider_list"
+            | "daemon_status"
+            | "daemon_metrics"
+            | "tool_diagnostics"
+            | "doctor"
+            | "workspace_list"
+            | "project_detect"
+            | "project_scripts"
+            | "dependency_audit"
+            | "browser_session_text"
+            | "browser_session_wait"
+            | "ssh_profile_test"
             | "settings_get" => RiskTier::Tier0ReadOnly,
             "fs_write"
             | "fs_edit"
@@ -301,11 +318,20 @@ impl ApprovalEngine {
             | "memory_forget"
             | "mcp_call"
             | "mcp_add_server"
+            | "mcp_toggle_server"
             | "approval_decide"
-            | "cron_add"
-            | "cron_remove"
-            | "automation_trigger" => RiskTier::Tier1WorkspaceMutating,
-            _ => RiskTier::Tier2SystemMutating, // shell_exec, bash_run, terminal_exec, fs_delete, git_push, git_pull, git_reset, git_reset_hard, git_clean, github_merge_pr, github_workflow_run, process_kill, exec_background, http_delete
+            | "approval_policy_revoke"
+            | "automation_trigger"
+            | "automation_update"
+            | "automation_delete"
+            | "provider_test"
+            | "provider_set_default"
+            | "workspace_add"
+            | "workspace_remove"
+            | "browser_session_type"
+            | "browser_session_select"
+            | "browser_session_screenshot" => RiskTier::Tier1WorkspaceMutating,
+            _ => RiskTier::Tier2SystemMutating, // shell_exec, bash_run, terminal_exec, fs_delete, git_push, git_pull, git_reset, git_reset_hard, git_clean, github_merge_pr, github_workflow_run, process_kill, exec_background, http_delete, ssh_exec
         }
     }
 
