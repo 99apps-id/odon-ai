@@ -1,4 +1,5 @@
 pub mod artifact_gen;
+pub mod browser_session;
 pub mod coding;
 pub mod dev_server;
 pub mod fs;
@@ -205,6 +206,12 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(web::BrowserScreenshotTool));
     reg.register(Box::new(web::BrowserClickTool));
     reg.register(Box::new(web::BrowserDownloadTool));
+    reg.register(Box::new(browser_session::BrowserSessionCreateTool));
+    reg.register(Box::new(browser_session::BrowserSessionListTool));
+    reg.register(Box::new(browser_session::BrowserSessionResumeTool));
+    reg.register(Box::new(browser_session::BrowserSessionCloseTool));
+    reg.register(Box::new(browser_session::BrowserSessionNavigateTool));
+    reg.register(Box::new(browser_session::BrowserSessionClickTool));
 
     // Autonomous Skills (.odon/skills)
     reg.register(Box::new(skills::SkillListTool));
@@ -262,7 +269,7 @@ mod tests {
         let schemas = reg.schemas();
         assert_eq!(
             schemas.len(),
-            181,
+            187,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
 
@@ -312,7 +319,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 180);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 186);
     }
 
     #[test]
