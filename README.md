@@ -68,6 +68,7 @@ ODON exposes 177 registered tools with complete parameter schemas, risk tiers, a
 - **Browser Control**: `browser_open`, `browser_navigate`, and `browser_screenshot`. Interactive `browser_click` remains registered as unavailable until the persistent browser runtime is implemented.
 - **Code Intelligence**: `code_index`, `code_search`, `format_code`, `run_checks`, `test_file`. The persistent code index uses workspace-scoped chunking with BM25 lexical ranking, enabling fast semantic-style discovery without requiring an external language server.
 - **Review & Change Analysis (5 tools)**: `review_diff`, `review_file`, `review_security`, `review_session_changes`, `change_summary`. These tools surface structured findings by severity and category, making pre-commit and post-change review actionable for both correctness and security.
+- **Runtime & Process (3 tools)**: `process_wait`, `dev_server_status`, `browser_status`. These tools inspect and monitor running processes, dev server ports, and browser automation availability without requiring shell-level introspection.
 - **Shell & Terminal (3 tools)**: `shell_exec`, `bash_run`, `terminal_exec`.
 - **Cybersecurity & Network (7 tools)**: `web_search`, `web_fetch`, `probe_url`, `http_get`, `http_post`, `dns_lookup`, `port_scan`.
 - **Autonomous Skills (3 tools)**: `skill_list`, `skill_create`, `skill_run`.
