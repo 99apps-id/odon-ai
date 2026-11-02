@@ -16,6 +16,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   Browsers,
+  downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 
 const PORT = Number(process.env.WA_BRIDGE_PORT || 4097);
@@ -68,10 +69,64 @@ function extractText(message) {
     message.imageMessage?.caption ||
     message.videoMessage?.caption ||
     message.documentMessage?.caption ||
+    message.audioMessage?.caption ||
     message.buttonsResponseMessage?.selectedDisplayText ||
     message.listResponseMessage?.title ||
     ''
   );
+}
+
+function findMedia(message) {
+  if (!message) return null;
+  if (message.imageMessage) {
+    return { kind: 'image', content: message.imageMessage };
+  }
+  if (message.documentMessage) {
+    return { kind: 'document', content: message.documentMessage };
+  }
+  if (message.videoMessage) {
+    return { kind: 'video', content: message.videoMessage };
+  }
+  if (message.audioMessage) {
+    return { kind: 'audio', content: message.audioMessage };
+  }
+  return null;
+}
+
+function fallbackFileName(kind, mime) {
+  const extension = String(mime || '').split('/').pop()?.split(';')[0] || 'bin';
+  return `whatsapp-${kind}-${Date.now()}.${extension}`;
+}
+
+async function extractAttachments(message) {
+  const media = findMedia(message);
+  if (!media) {
+    return { attachments: [], notes: [] };
+  }
+  const notes = [];
+  try {
+    const buffer = await downloadMediaMessage(message, {
+      reuploadRequest: sock.updateMediaMessage,
+    });
+    if (!buffer?.length) {
+      notes.push(`[Attached ${media.kind} could not be downloaded from WhatsApp Web.]`);
+      return { attachments: [], notes };
+    }
+    if (buffer.length > 20 * 1024 * 1024) {
+      notes.push(`[Attached ${media.kind} is larger than 20 MB and was not forwarded.]`);
+      return { attachments: [], notes };
+    }
+    const mime = String(media.content.mimetype || 'application/octet-stream');
+    const attachments = [{
+      name: String(media.content.fileName || fallbackFileName(media.kind, mime)),
+      mime_type: mime,
+      data_base64: buffer.toString('base64'),
+    }];
+    return { attachments, notes };
+  } catch (error) {
+    notes.push(`[Attached ${media.kind} download failed: ${error.message}]`);
+    return { attachments: [], notes };
+  }
 }
 
 function normalizeJid(to) {
@@ -201,11 +256,20 @@ async function startSocket(phone = null) {
             // Secure default: no allowlist and no explicit opt-in = reject.
             continue;
           }
-          const text = extractText(message.message).trim();
-          if (!text) continue;
+          const { attachments, notes } = await extractAttachments(message);
+          let text = extractText(message.message).trim();
+          if (notes.length) {
+            text = `${text}\n\n${notes.join('\n')}`.trim();
+          }
+          if (!text && attachments.length > 0) {
+            const label = attachments.length === 1 ? 'media attachment' : `${attachments.length} media attachments`;
+            text = `[WhatsApp message with ${label}]`;
+          }
+          if (!text && attachments.length === 0) continue;
           await notifyDaemon({
             from,
             text,
+            attachments,
             id: message.key.id,
             push_name: message.pushName || null,
           });
@@ -311,7 +375,7 @@ function readJson(req) {
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > 26_000_000) {
+      if (body.length > 34_000_000) {
         reject(new Error('payload too large'));
         req.destroy();
       }

@@ -13,6 +13,8 @@ import {
   Bell,
   PanelRightClose,
   PanelRightOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   ChevronDown,
   Paperclip,
   Globe,
@@ -48,6 +50,7 @@ import {
   Home,
   ChevronUp,
   CornerDownRight,
+  History,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
@@ -63,6 +66,7 @@ import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
 import { PromptStartersGrid } from './components/PromptStartersGrid';
+import { ArtifactVersionsModal } from './components/ArtifactVersionsModal';
 import { api, WorkspaceInfo, WorkspaceBrowseResult } from './api';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
@@ -249,6 +253,7 @@ export default function App() {
   const [dynamicTools, setDynamicTools] = useState<any[]>([]);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   // Composer Execution Mode (unified UX: one composer, multiple modes)
   const [executionMode, setExecutionMode] = useState<'chat' | 'auto' | 'agent' | 'plan'>(() => {
     if (typeof window !== 'undefined') {
@@ -473,6 +478,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [artifactHistoryTarget, setArtifactHistoryTarget] = useState<Artifact | null>(null);
 
   // Chat & Stream State
   const [inChatMode, setInChatMode] = useState(false);
@@ -1191,6 +1197,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       } else if (mod && !event.shiftKey && event.key.toLowerCase() === 'n') {
         event.preventDefault();
         handleNewChat();
+      } else if (mod && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        setLeftSidebarOpen(prev => !prev);
       } else if (event.key === 'Escape') {
         setIsCommandPaletteOpen(false);
         setIsSearchOpen(false);
@@ -1333,7 +1342,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
         {/* ───────────────────────────────────────────────────────────
             LEFT SIDEBAR CARD
         ─────────────────────────────────────────────────────────── */}
-        <aside className="w-[250px] shrink-0 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between p-3.5 overflow-hidden">
+        <aside className={`${leftSidebarOpen ? '' : 'hidden'} w-[250px] shrink-0 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between p-3.5 overflow-hidden`}>
           {/* Top Section */}
           <div className="flex flex-col overflow-y-auto">
             {/* Header: Cat Logo + ODON + Subtitle */}
@@ -1345,6 +1354,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   Open Digital Orchestration Network
                 </div>
               </div>
+              <button
+                onClick={() => setLeftSidebarOpen(false)}
+                className="ml-auto p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                title="Hide Sidebar (Ctrl+B)"
+                aria-label="Hide sidebar"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
             </div>
 
             {/* + New Chat Button */}
@@ -1552,6 +1569,16 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             CENTER MAIN CHAT / HERO CARD
         ─────────────────────────────────────────────────────────── */}
         <main className="flex-1 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between overflow-hidden relative min-w-0">
+          {!leftSidebarOpen && (
+            <button
+              onClick={() => setLeftSidebarOpen(true)}
+              className="absolute top-3 left-3 p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer z-10"
+              title="Show Sidebar (Ctrl+B)"
+              aria-label="Show sidebar"
+            >
+              <PanelLeftOpen className="w-4 h-4" />
+            </button>
+          )}
 
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 px-4 flex items-center justify-between shrink-0">
@@ -2499,9 +2526,21 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                   </div>
                                 </div>
                               </div>
-                              <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setArtifactHistoryTarget(art);
+                                  }}
+                                  className="p-1 text-neutral-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="History, restore, export"
+                                >
+                                  <History className="w-3.5 h-3.5" />
+                                </button>
+                                <button className="text-neutral-400 hover:text-neutral-700 p-1">
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
                           ))
                         ) : (
@@ -3012,6 +3051,18 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             </div>
           </div>
         </div>
+      )}
+
+      {artifactHistoryTarget && (
+        <ArtifactVersionsModal
+          artifact={artifactHistoryTarget}
+          onClose={() => setArtifactHistoryTarget(null)}
+          onArtifactChanged={(updated) => {
+            setArtifacts((current) =>
+              current.map((artifact) => (artifact.id === updated.id ? updated : artifact)),
+            );
+          }}
+        />
       )}
 
       {/* ─────────────────────────────────────────────────────────────

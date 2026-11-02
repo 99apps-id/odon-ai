@@ -23,7 +23,7 @@ pub struct Artifact {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ArtifactPayload {
     Code {
@@ -61,7 +61,7 @@ pub enum ArtifactPayload {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ArtifactFile {
     pub path: String,
     pub content: String,

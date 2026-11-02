@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use odon_core::{
-    Artifact, ArtifactKind, Message, MessageContent, MessageRole, Session, SessionMode,
-    SessionStatus,
+    Artifact, ArtifactKind, ArtifactPayload, Message, MessageContent, MessageRole, Session,
+    SessionMode, SessionStatus,
 };
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
@@ -104,6 +104,17 @@ impl StorageEngine {
                 payload_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS artifact_versions (
+                artifact_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (artifact_id, version)
             );
 
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -379,6 +390,15 @@ impl StorageEngine {
         let conn = self.conn.lock().unwrap();
         let kind_str = serde_json::to_string(&artifact.kind)?;
         let payload_json = serde_json::to_string(&artifact.payload)?;
+
+        let existing: Option<(String, String, String, String)> = conn
+            .query_row(
+                "SELECT title, kind, summary, payload_json FROM artifacts WHERE id = ?1",
+                params![artifact.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .ok();
+
         conn.execute(
             "INSERT INTO artifacts (id, session_id, title, kind, summary, payload_json, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -397,7 +417,117 @@ impl StorageEngine {
                 artifact.created_at.to_rfc3339(),
             ],
         )?;
+
+        // Persist immutable versions whenever an artifact is created or actually
+        // changes. This also backfills version 1 for pre-existing artifacts.
+        let changed = match &existing {
+            None => true,
+            Some((old_title, old_kind, old_summary, old_payload)) => {
+                old_title != &artifact.title
+                    || old_kind != &kind_str
+                    || old_summary != &artifact.summary
+                    || old_payload != &payload_json
+            }
+        };
+        if changed {
+            let next_version: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM artifact_versions WHERE artifact_id = ?1",
+                params![artifact.id],
+                |row| row.get(0),
+            )?;
+            conn.execute(
+                "INSERT INTO artifact_versions
+                    (artifact_id, version, title, kind, summary, payload_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    artifact.id,
+                    next_version,
+                    artifact.title,
+                    kind_str,
+                    artifact.summary,
+                    payload_json,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
+        }
         Ok(())
+    }
+
+    fn artifact_version_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtifactVersion> {
+        let kind_str: String = row.get(3)?;
+        let payload_json: String = row.get(5)?;
+        let created_at_str: String = row.get(6)?;
+        let kind: ArtifactKind =
+            serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
+        let payload = serde_json::from_str(&payload_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        Ok(ArtifactVersion {
+            artifact_id: row.get(0)?,
+            version: row.get(1)?,
+            title: row.get(2)?,
+            kind,
+            summary: row.get(4)?,
+            payload,
+            created_at,
+        })
+    }
+
+    pub fn list_artifact_versions(&self, artifact_id: &str) -> Result<Vec<ArtifactVersion>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, version, title, kind, summary, payload_json, created_at
+             FROM artifact_versions WHERE artifact_id = ?1 ORDER BY version DESC",
+        )?;
+        let rows = stmt.query_map(params![artifact_id], Self::artifact_version_from_row)?;
+        let mut versions = Vec::new();
+        for row in rows {
+            versions.push(row?);
+        }
+        Ok(versions)
+    }
+
+    pub fn get_artifact_version(
+        &self,
+        artifact_id: &str,
+        version: i64,
+    ) -> Result<ArtifactVersion> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, version, title, kind, summary, payload_json, created_at
+             FROM artifact_versions WHERE artifact_id = ?1 AND version = ?2",
+        )?;
+        let mut rows = stmt.query(params![artifact_id, version])?;
+        if let Some(row) = rows.next()? {
+            Ok(Self::artifact_version_from_row(row)?)
+        } else {
+            Err(StorageError::NotFound(format!(
+                "Artifact {artifact_id} version {version}"
+            )))
+        }
+    }
+
+    pub fn restore_artifact_version(
+        &self,
+        artifact_id: &str,
+        version: i64,
+    ) -> Result<Artifact> {
+        let old = self.get_artifact_version(artifact_id, version)?;
+        let mut artifact = self.get_artifact(artifact_id)?;
+        artifact.title = old.title;
+        artifact.kind = old.kind;
+        artifact.summary = old.summary;
+        artifact.payload = old.payload;
+        artifact.created_at = Utc::now();
+        self.save_artifact(&artifact)?;
+        Ok(artifact)
     }
 
     pub fn list_artifacts(&self, session_id: &str) -> Result<Vec<Artifact>> {
@@ -706,6 +836,17 @@ pub struct ProviderConfigRecord {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactVersion {
+    pub artifact_id: String,
+    pub version: i64,
+    pub title: String,
+    pub kind: ArtifactKind,
+    pub summary: String,
+    pub payload: ArtifactPayload,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryItem {
     pub key: String,
     pub value: String,
@@ -716,6 +857,36 @@ pub struct MemoryItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_versions_are_created_and_restorable() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        let session = Session::new("Version test", SessionMode::General, "odon-auto");
+        storage.save_session(&session).unwrap();
+        let mut artifact = Artifact::new_document(&session.id, "Spec", "PRD", "# v1");
+        storage.save_artifact(&artifact).unwrap();
+
+        artifact.payload = odon_core::ArtifactPayload::Document {
+            doc_type: "PRD".to_string(),
+            markdown: "# v2".to_string(),
+            size_bytes: 4,
+        };
+        storage.save_artifact(&artifact).unwrap();
+
+        let versions = storage.list_artifact_versions(&artifact.id).unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, 2);
+        assert_eq!(versions[1].version, 1);
+
+        let restored = storage.restore_artifact_version(&artifact.id, 1).unwrap();
+        assert_eq!(restored.payload, odon_core::ArtifactPayload::Document {
+            doc_type: "PRD".to_string(),
+            markdown: "# v1".to_string(),
+            size_bytes: 4,
+        });
+        let versions = storage.list_artifact_versions(&artifact.id).unwrap();
+        assert_eq!(versions.len(), 3);
+    }
 
     #[test]
     fn multiple_openai_compatible_endpoints_roundtrip() {

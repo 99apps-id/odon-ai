@@ -435,6 +435,32 @@ export const api = {
     return res.json();
   },
 
+  async listArtifactVersions(id: string): Promise<Array<{
+    artifact_id: string;
+    version: number;
+    title: string;
+    created_at: string;
+  }>> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/artifacts/${id}/versions`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async restoreArtifactVersion(id: string, version: number): Promise<Artifact> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/artifacts/${id}/versions/${version}/restore`,
+      { method: 'POST' },
+    );
+    if (!res.ok) throw new Error(`Failed to restore artifact version ${version}`);
+    return res.json();
+  },
+
+  artifactExportUrl(id: string, format: 'json' | 'md' | 'html'): string {
+    return this.authorizeUrl(
+      `${this.getBaseUrl()}/api/artifacts/${id}/export?format=${format}`,
+    );
+  },
+
   async listTools(): Promise<ToolSchema[]> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/tools`);
     if (!res.ok) return [];

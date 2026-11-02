@@ -4,7 +4,7 @@ use axum::{
     extract::Request,
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        DefaultBodyLimit, Path, Query, State,
     },
     http::{header, HeaderMap, HeaderName, Method, StatusCode},
     middleware::{self, Next},
@@ -2231,6 +2231,19 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .route("/api/workspaces/browse", get(browse_workspaces))
                 .route("/api/artifacts/{id}", get(get_artifact))
+                .route(
+                    "/api/artifacts/{id}/versions",
+                    get(list_artifact_versions),
+                )
+                .route(
+                    "/api/artifacts/{id}/versions/{version}",
+                    get(get_artifact_version),
+                )
+                .route(
+                    "/api/artifacts/{id}/versions/{version}/restore",
+                    post(restore_artifact_version),
+                )
+                .route("/api/artifacts/{id}/export", get(export_artifact))
                 .route("/api/memory", get(list_agent_memories))
                 .route(
                     "/api/memory/{*key}",
@@ -2350,6 +2363,7 @@ async fn main() -> anyhow::Result<()> {
             let auth_state = state.clone();
             let app = app
                 .layer(cors)
+                .layer(DefaultBodyLimit::max(36 * 1024 * 1024))
                 .with_state(state)
                 .layer(middleware::from_fn_with_state(
                     auth_state,
@@ -3312,6 +3326,8 @@ struct WhatsAppBridgeInbound {
     from: String,
     text: String,
     #[serde(default)]
+    attachments: Vec<odon_core::MessageAttachment>,
+    #[serde(default)]
     #[allow(dead_code)]
     id: Option<String>,
     #[serde(default)]
@@ -3347,18 +3363,23 @@ async fn whatsapp_bridge_inbound(
         }
     }
     let text = req.text.trim().to_string();
-    if text.is_empty() {
+    if text.is_empty() && req.attachments.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "Empty message" })),
         );
     }
+    let text = if text.is_empty() {
+        "[WhatsApp media message]".to_string()
+    } else {
+        text
+    };
     let message = IncomingChannelMessage {
         channel: "whatsapp".to_string(),
         sender_id: req.from.clone(),
         session_id: Some(format!("wa_{}", req.from)),
         text,
-        attachments: Vec::new(),
+        attachments: req.attachments,
     };
     let _ = state.relay_tx.send(message).await;
     (StatusCode::OK, Json(json!({ "accepted": true })))
@@ -3484,6 +3505,149 @@ async fn get_artifact(Path(id): Path<String>, State(state): State<AppState>) -> 
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+async fn list_artifact_versions(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.storage.list_artifact_versions(&id) {
+        Ok(versions) => (StatusCode::OK, Json(json!(versions))),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        ),
+    }
+}
+
+async fn get_artifact_version(
+    Path((id, version)): Path<(String, i64)>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.storage.get_artifact_version(&id, version) {
+        Ok(item) => (StatusCode::OK, Json(json!(item))),
+        Err(error) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": error.to_string() })),
+        ),
+    }
+}
+
+async fn restore_artifact_version(
+    Path((id, version)): Path<(String, i64)>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.storage.restore_artifact_version(&id, version) {
+        Ok(artifact) => (StatusCode::OK, Json(json!(artifact))),
+        Err(error) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": error.to_string() })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct ArtifactExportQuery {
+    #[serde(default)]
+    format: Option<String>,
+}
+
+fn artifact_export_file_name(title: &str, extension: &str) -> String {
+    let safe: String = title
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') { ch } else { '-' })
+        .collect::<String>()
+        .trim()
+        .replace(' ', "-")
+        .trim_matches('-')
+        .to_string();
+    let base = if safe.is_empty() { "artifact".to_string() } else { safe };
+    format!("{base}.{extension}")
+}
+
+fn artifact_export_content(artifact: &odon_core::Artifact, format: &str) -> Option<(String, String)> {
+    match format {
+        "json" => Some((
+            serde_json::to_string_pretty(artifact).ok()?,
+            "application/json".to_string(),
+        )),
+        "md" | "markdown" => match &artifact.payload {
+            ArtifactPayload::Document { markdown, .. } => Some((
+                markdown.clone(),
+                "text/markdown".to_string(),
+            )),
+            ArtifactPayload::Code { files, .. } => {
+                let content = files
+                    .iter()
+                    .map(|file| format!("## {}\n\n```\n{}\n```", file.path, file.content))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Some((content, "text/markdown".to_string()))
+            }
+            _ => None,
+        },
+        "html" => match &artifact.payload {
+            ArtifactPayload::Document { markdown, .. } => Some((
+                format!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>{}</title><pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>",
+                    artifact.title,
+                    markdown.replace('<', "&lt;").replace('>', "&gt;")
+                ),
+                "text/html".to_string(),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+async fn export_artifact(
+    Path(id): Path<String>,
+    Query(query): Query<ArtifactExportQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let format = query
+        .format
+        .unwrap_or_else(|| "json".to_string())
+        .to_ascii_lowercase();
+    let Ok(artifact) = state.storage.get_artifact(&id) else {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            json!({ "error": "Artifact not found" }).to_string().into_bytes(),
+        )
+            .into_response();
+    };
+    let Some((content, mime)) = artifact_export_content(&artifact, &format) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "application/json")],
+            json!({ "error": format!("Unsupported export format '{format}'") })
+                .to_string()
+                .into_bytes(),
+        )
+            .into_response();
+    };
+    let extension = if mime == "application/json" {
+        "json"
+    } else if mime == "text/html" {
+        "html"
+    } else {
+        "md"
+    };
+    let file_name = artifact_export_file_name(&artifact.title, extension);
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{file_name}\""),
+            ),
+        ],
+        content.into_bytes(),
+    )
+        .into_response()
 }
 
 async fn list_tools(State(state): State<AppState>) -> impl IntoResponse {
