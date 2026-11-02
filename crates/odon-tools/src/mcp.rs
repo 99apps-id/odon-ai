@@ -1,10 +1,13 @@
 use async_trait::async_trait;
+use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
 use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -217,6 +220,222 @@ impl StdioMcpClient {
     }
 }
 
+type SseByteStream = Pin<Box<dyn Stream<Item = std::result::Result<Bytes, reqwest::Error>> + Send>>;
+
+struct SseMcpClient {
+    http: reqwest::Client,
+    endpoint: String,
+    stream: SseByteStream,
+    buffer: String,
+    next_id: u64,
+}
+
+async fn next_sse_event(
+    stream: &mut SseByteStream,
+    buffer: &mut String,
+) -> Result<Option<(String, String)>> {
+    loop {
+        if let Some(index) = buffer.find("\n\n") {
+            let raw = buffer[..index].to_string();
+            buffer.drain(..index + 2);
+            let mut event = "message".to_string();
+            let mut data: Vec<String> = Vec::new();
+            for line in raw.lines() {
+                if let Some(value) = line.strip_prefix("event:") {
+                    event = value.trim().to_string();
+                } else if let Some(value) = line.strip_prefix("data:") {
+                    data.push(value.strip_prefix(' ').unwrap_or(value).to_string());
+                }
+            }
+            return Ok(Some((event, data.join("\n"))));
+        }
+        match stream.next().await {
+            Some(Ok(chunk)) => {
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                if buffer.contains('\r') {
+                    *buffer = buffer.replace("\r\n", "\n");
+                }
+            }
+            Some(Err(error)) => {
+                return Err(OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: format!("MCP SSE stream failed: {error}"),
+                });
+            }
+            None => return Ok(None),
+        }
+    }
+}
+
+impl SseMcpClient {
+    async fn connect(config: &McpServerConfig) -> Result<Self> {
+        let url = config
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("MCP SSE server '{}' has no url", config.name),
+            })?;
+        let base = reqwest::Url::parse(url).map_err(|error| OdonError::Tool {
+            tool: "mcp".to_string(),
+            message: format!("Invalid MCP SSE URL '{url}': {error}"),
+        })?;
+        let http = reqwest::Client::new();
+        let response = http
+            .get(base.clone())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .send()
+            .await
+            .map_err(|error| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("Failed to connect MCP SSE server '{}': {error}", config.name),
+            })?;
+        if !response.status().is_success() {
+            return Err(OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!(
+                    "MCP SSE server '{}' returned HTTP {}",
+                    config.name,
+                    response.status()
+                ),
+            });
+        }
+        let mut stream: SseByteStream = Box::pin(response.bytes_stream());
+        let mut buffer = String::new();
+        let endpoint = timeout(MCP_REQUEST_TIMEOUT, async {
+            loop {
+                let Some((event, data)) = next_sse_event(&mut stream, &mut buffer).await? else {
+                    return Err(OdonError::Tool {
+                        tool: "mcp".to_string(),
+                        message: "MCP SSE stream closed before sending an endpoint".to_string(),
+                    });
+                };
+                if event == "endpoint" && !data.trim().is_empty() {
+                    let resolved = base
+                        .join(data.trim())
+                        .map_err(|error| OdonError::Tool {
+                            tool: "mcp".to_string(),
+                            message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
+                        })?;
+                    return Ok(resolved.to_string());
+                }
+            }
+        })
+        .await
+        .map_err(|_| OdonError::Tool {
+            tool: "mcp".to_string(),
+            message: format!(
+                "MCP SSE server '{}' did not send an endpoint within 30 seconds",
+                config.name
+            ),
+        })??;
+
+        let mut client = Self {
+            http,
+            endpoint,
+            stream,
+            buffer,
+            next_id: 1,
+        };
+        client.initialize().await?;
+        Ok(client)
+    }
+
+    async fn initialize(&mut self) -> Result<()> {
+        self.request(
+            "initialize",
+            json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "odon", "version": env!("CARGO_PKG_VERSION") }
+            }),
+        )
+        .await?;
+        self.notify("notifications/initialized", json!({})).await
+    }
+
+    async fn post(&mut self, payload: &Value) -> Result<()> {
+        let response = self
+            .http
+            .post(&self.endpoint)
+            .json(payload)
+            .send()
+            .await
+            .map_err(|error| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("Failed to POST MCP request: {error}"),
+            })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("MCP endpoint returned HTTP {status}: {body}"),
+            });
+        }
+        Ok(())
+    }
+
+    async fn notify(&mut self, method: &str, params: Value) -> Result<()> {
+        self.post(&json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        }))
+        .await
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.post(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        }))
+        .await?;
+        timeout(MCP_REQUEST_TIMEOUT, self.read_response(id))
+            .await
+            .map_err(|_| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("MCP SSE request '{method}' timed out after 30 seconds"),
+            })?
+    }
+
+    async fn read_response(&mut self, id: u64) -> Result<Value> {
+        while let Some((event, data)) = next_sse_event(&mut self.stream, &mut self.buffer).await? {
+            if event != "message" {
+                continue;
+            }
+            let Ok(response) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
+            if response.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if let Some(error) = response.get("error") {
+                return Err(OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: format!("MCP server error: {error}"),
+                });
+            }
+            return response.get("result").cloned().ok_or_else(|| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: "MCP response had no result".to_string(),
+            });
+        }
+        Err(OdonError::Tool {
+            tool: "mcp".to_string(),
+            message: "MCP SSE stream closed before responding".to_string(),
+        })
+    }
+
+    async fn close(self) {}
+}
+
 fn find_server(server: &str) -> Result<McpServerConfig> {
     load_mcp_servers()
         .into_iter()
@@ -228,15 +447,37 @@ fn find_server(server: &str) -> Result<McpServerConfig> {
 }
 
 async fn call_server(config: &McpServerConfig, method: &str, params: Value) -> Result<Value> {
-    let mut client = timeout(MCP_REQUEST_TIMEOUT, StdioMcpClient::connect(config))
-        .await
-        .map_err(|_| OdonError::Tool {
+    match config.transport.to_ascii_lowercase().as_str() {
+        "stdio" => {
+            let mut client = timeout(MCP_REQUEST_TIMEOUT, StdioMcpClient::connect(config))
+                .await
+                .map_err(|_| OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: format!("MCP server '{}' did not initialize within 30 seconds", config.name),
+                })??;
+            let result = client.request(method, params).await;
+            client.close().await;
+            result
+        }
+        "sse" | "http+sse" | "http_sse" => {
+            let mut client = timeout(MCP_REQUEST_TIMEOUT, SseMcpClient::connect(config))
+                .await
+                .map_err(|_| OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: format!("MCP SSE server '{}' did not initialize within 30 seconds", config.name),
+                })??;
+            let result = client.request(method, params).await;
+            client.close().await;
+            result
+        }
+        other => Err(OdonError::Tool {
             tool: "mcp".to_string(),
-            message: format!("MCP server '{}' did not initialize within 30 seconds", config.name),
-        })??;
-    let result = client.request(method, params).await;
-    client.close().await;
-    result
+            message: format!(
+                "Unsupported MCP transport '{other}' on server '{}'; use stdio or sse",
+                config.name
+            ),
+        }),
+    }
 }
 
 pub struct McpListToolsTool;

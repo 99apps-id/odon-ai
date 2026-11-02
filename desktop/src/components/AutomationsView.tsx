@@ -32,6 +32,9 @@ interface AutomationJob {
   last_run: string | null;
   last_status: string | null;
   created_at: string;
+  retry_count?: number;
+  retry_delay_secs?: number;
+  depends_on?: string[];
 }
 
 interface AutomationLog {
@@ -42,6 +45,8 @@ interface AutomationLog {
   completed_at: string | null;
   status: string;
   output: string;
+  attempts?: number;
+  error?: string | null;
 }
 
 export const AutomationsView: React.FC = () => {
@@ -59,6 +64,9 @@ export const AutomationsView: React.FC = () => {
   const [triggerValue, setTriggerValue] = useState<string>('0 8 * * *');
   const [prompt, setPrompt] = useState<string>('');
   const [model, setModel] = useState<string>('odon-auto');
+  const [retryCount, setRetryCount] = useState<number>(0);
+  const [retryDelay, setRetryDelay] = useState<number>(30);
+  const [dependsOn, setDependsOn] = useState<string>('');
 
   const loadData = async () => {
     setIsLoading(true);
@@ -131,6 +139,12 @@ export const AutomationsView: React.FC = () => {
       last_run: null,
       last_status: null,
       created_at: new Date().toISOString().split('T')[0],
+      retry_count: Number(retryCount) || 0,
+      retry_delay_secs: Number(retryDelay) || 30,
+      depends_on: dependsOn
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
     };
 
     try {
@@ -366,7 +380,17 @@ export const AutomationsView: React.FC = () => {
                     </div>
 
                     {isExpanded && (
-                      <div className="pt-2 pl-5 font-mono text-xs text-neutral-700 dark:text-neutral-300 border-t border-neutral-200 dark:border-neutral-800">
+                      <div className="pt-2 pl-5 font-mono text-xs text-neutral-700 dark:text-neutral-300 border-t border-neutral-200 dark:border-neutral-800 space-y-1">
+                        {typeof log.attempts === 'number' && (
+                          <div className="text-[10px] text-neutral-400">
+                            Attempts: {log.attempts}
+                          </div>
+                        )}
+                        {log.error && (
+                          <div className="text-[11px] text-rose-600 dark:text-rose-400 whitespace-pre-wrap">
+                            {log.error}
+                          </div>
+                        )}
                         <pre className="whitespace-pre-wrap break-all leading-relaxed">
                           {log.output}
                         </pre>
@@ -461,6 +485,39 @@ export const AutomationsView: React.FC = () => {
                 className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">Retries</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={retryCount}
+                  onChange={(e) => setRetryCount(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">Retry Delay (s)</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={retryDelay}
+                  onChange={(e) => setRetryDelay(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">Depends On</label>
+                <input
+                  type="text"
+                  value={dependsOn}
+                  onChange={(e) => setDependsOn(e.target.value)}
+                  placeholder="job-id, job-id"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                />
+              </div>
             </div>
 
             <div>

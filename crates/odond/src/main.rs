@@ -16,6 +16,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
 use clap::{Parser, Subcommand};
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
@@ -44,7 +45,7 @@ use odon_provider::{
 };
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, ExecutionMode, SecurityPolicy};
 use odon_storage::StorageEngine;
-use odon_tools::ToolRegistry;
+use odon_tools::{Tool, ToolContext, ToolRegistry};
 
 #[derive(Parser)]
 #[command(name = "odond")]
@@ -69,6 +70,14 @@ enum Commands {
     },
     /// Initialize ODON storage schema and configurations
     Init,
+    /// Query a running daemon's status and metrics
+    Status {
+        #[arg(long, default_value = "http://127.0.0.1:4096")]
+        url: String,
+
+        #[arg(long)]
+        metrics: bool,
+    },
 }
 
 
@@ -85,6 +94,12 @@ pub struct AutomationJob {
     pub last_run: Option<String>,
     pub last_status: Option<String>, // "success", "failed", "running"
     pub created_at: String,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub retry_delay_secs: u64,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +111,10 @@ pub struct AutomationLog {
     pub completed_at: Option<String>,
     pub status: String,
     pub output: String,
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 fn get_automations_path() -> PathBuf {
@@ -117,6 +136,31 @@ fn load_automations_from_disk() -> Vec<AutomationJob> {
     // No seeded demo jobs: an automation that claims to have run when it never
     // did is worse than an empty state.
     Vec::new()
+}
+
+fn get_automation_logs_path() -> PathBuf {
+    get_automations_path().with_file_name("automation-logs.json")
+}
+
+fn load_automation_logs_from_disk() -> Vec<AutomationLog> {
+    if let Ok(content) = std::fs::read_to_string(get_automation_logs_path()) {
+        if let Ok(mut list) = serde_json::from_str::<Vec<AutomationLog>>(&content) {
+            if list.len() > 100 {
+                list.truncate(100);
+            }
+            return list;
+        }
+    }
+    Vec::new()
+}
+
+fn save_automation_logs_to_disk(list: &[AutomationLog]) {
+    if let Some(parent) = get_automation_logs_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(content) = serde_json::to_string_pretty(list) {
+        let _ = std::fs::write(get_automation_logs_path(), content);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -877,6 +921,297 @@ fn save_automations_to_disk(list: &[AutomationJob]) {
     }
 }
 
+fn parse_interval(value: &str) -> Option<std::time::Duration> {
+    let normalized = value.trim().to_lowercase();
+    let normalized = normalized
+        .strip_prefix("every ")
+        .unwrap_or(normalized.as_str())
+        .trim()
+        .to_string();
+    match normalized.as_str() {
+        "hourly" => return Some(std::time::Duration::from_secs(3600)),
+        "daily" => return Some(std::time::Duration::from_secs(86_400)),
+        "weekly" => return Some(std::time::Duration::from_secs(604_800)),
+        _ => {}
+    }
+    let split = normalized.find(|ch: char| !ch.is_ascii_digit())?;
+    let amount = normalized[..split].parse::<u64>().ok()?.max(1);
+    let unit = normalized[split..].trim();
+    let seconds = if unit.starts_with('s') {
+        1
+    } else if unit.starts_with('m') {
+        60
+    } else if unit.starts_with('h') {
+        3600
+    } else if unit.starts_with('d') {
+        86_400
+    } else {
+        return None;
+    };
+    Some(std::time::Duration::from_secs(amount * seconds))
+}
+
+fn cron_field_matches(field: &str, value: u32, min: u32) -> bool {
+    if field == "*" {
+        return true;
+    }
+    field.split(',').any(|part| {
+        if let Some(step) = part.strip_prefix("*/") {
+            step.parse::<u32>()
+                .ok()
+                .filter(|step| *step > 0)
+                .map(|step| value >= min && (value - min) % step == 0)
+                .unwrap_or(false)
+        } else if let Some((start, end)) = part.split_once('-') {
+            match (start.parse::<u32>(), end.parse::<u32>()) {
+                (Ok(start), Ok(end)) => value >= start && value <= end,
+                _ => false,
+            }
+        } else {
+            part.parse::<u32>()
+                .map(|expected| {
+                    if expected == 7 {
+                        value == 0
+                    } else {
+                        expected == value
+                    }
+                })
+                .unwrap_or(false)
+        }
+    })
+}
+
+fn normalize_cron_expression(value: &str) -> String {
+    let fields: Vec<&str> = value.split_whitespace().collect();
+    if fields.len() >= 5 {
+        fields[..5].join(" ")
+    } else {
+        value.trim().to_string()
+    }
+}
+
+fn parse_last_run(value: &str) -> Option<chrono::DateTime<Local>> {
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value.trim()) {
+        return Some(parsed.with_timezone(&Local));
+    }
+    let lower = value.trim().to_lowercase();
+    let now = Local::now();
+    if let Some(rest) = lower.strip_suffix(" ago") {
+        let mut parts = rest.split_whitespace();
+        let amount = parts.next()?.parse::<i64>().ok()?;
+        let unit = parts.next().unwrap_or("");
+        let seconds = if unit.starts_with("min") {
+            60
+        } else if unit.starts_with("hour") {
+            3600
+        } else if unit.starts_with("day") {
+            86_400
+        } else {
+            return None;
+        };
+        return Some(now - chrono::Duration::seconds(amount * seconds));
+    }
+    if lower.starts_with("yesterday") {
+        let time_part = lower.split(" at ").nth(1)?;
+        let time = chrono::NaiveTime::parse_from_str(time_part.trim(), "%I:%M %p").ok()?;
+        let date = (now - chrono::Duration::days(1)).date_naive();
+        return Local.from_local_datetime(&date.and_time(time)).single();
+    }
+    None
+}
+
+fn cron_matches(expression: &str, now: &chrono::DateTime<Local>) -> bool {
+    let expression = normalize_cron_expression(expression);
+    let expression = expression.as_str();
+    let fields: Vec<&str> = expression.split_whitespace().collect();
+    if fields.len() != 5 {
+        return false;
+    }
+    if !cron_field_matches(fields[0], now.minute(), 0)
+        || !cron_field_matches(fields[1], now.hour(), 0)
+        || !cron_field_matches(fields[3], now.month(), 1)
+    {
+        return false;
+    }
+    let dom_matches = cron_field_matches(fields[2], now.day(), 1);
+    let dow = now.weekday().num_days_from_sunday();
+    let dow_matches = cron_field_matches(fields[4], dow, 0);
+    if fields[2] == "*" || fields[4] == "*" {
+        dom_matches && dow_matches
+    } else {
+        dom_matches || dow_matches
+    }
+}
+
+fn automation_dependencies_satisfied(job: &AutomationJob, jobs: &[AutomationJob]) -> bool {
+    job.depends_on.iter().all(|dependency| {
+        jobs.iter()
+            .find(|candidate| candidate.id == *dependency)
+            .and_then(|candidate| candidate.last_status.as_deref())
+            == Some("success")
+    })
+}
+
+fn automation_due(
+    job: &AutomationJob,
+    jobs: &[AutomationJob],
+    now: &chrono::DateTime<Local>,
+) -> bool {
+    if !job.enabled || job.last_status.as_deref() == Some("running") {
+        return false;
+    }
+    if !automation_dependencies_satisfied(job, jobs) {
+        return false;
+    }
+    let last_run = job.last_run.as_deref().and_then(parse_last_run);
+    match job.trigger_type.as_str() {
+        "interval" => parse_interval(&job.trigger_value)
+            .map(|interval| {
+                last_run
+                    .map(|last| {
+                        now.signed_duration_since(last).num_seconds() >= interval.as_secs() as i64
+                    })
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false),
+        "cron" => {
+            if !cron_matches(&job.trigger_value, now) {
+                return false;
+            }
+            match last_run {
+                Some(last) => {
+                    last.format("%Y-%m-%d %H:%M").to_string()
+                        != now.format("%Y-%m-%d %H:%M").to_string()
+                }
+                None => true,
+            }
+        }
+        _ => false,
+    }
+}
+
+async fn run_automation_job(state: AppState, job: AutomationJob) {
+    let started = Utc::now().to_rfc3339();
+    let max_attempts = job.retry_count.saturating_add(1);
+    let mut attempts = 0;
+    let mut output = String::new();
+    let mut success = false;
+
+    for attempt in 1..=max_attempts {
+        attempts = attempt;
+        let session_id = format!("auto_{}_{}_{}", job.id, Utc::now().timestamp_millis(), attempt);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        match state
+            .runtime
+            .execute_turn(&session_id, &job.prompt, Some(&job.model), cancel)
+            .await
+        {
+            Ok(turn) => {
+                success = true;
+                output = turn.content.text;
+                break;
+            }
+            Err(error) => {
+                output = error.to_string();
+                if attempt < max_attempts {
+                    let delay = job.retry_delay_secs.max(1) * attempt as u64;
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                }
+            }
+        }
+    }
+
+    let status = if success { "success" } else { "failed" };
+    if !success {
+        send_automation_failure_alert(&state, &job, &output).await;
+    }
+    {
+        let mut jobs = state.automations.write().await;
+        if let Some(existing) = jobs.iter_mut().find(|candidate| candidate.id == job.id) {
+            existing.last_run = Some(started.clone());
+            existing.last_status = Some(status.to_string());
+        }
+        save_automations_to_disk(&jobs);
+    }
+    {
+        let mut logs = state.automation_logs.write().await;
+        logs.insert(
+            0,
+            AutomationLog {
+                id: uuid::Uuid::new_v4().to_string(),
+                automation_id: job.id.clone(),
+                automation_name: job.name.clone(),
+                triggered_at: started,
+                completed_at: Some(Utc::now().to_rfc3339()),
+                status: status.to_string(),
+                output: output.clone(),
+                attempts,
+                error: if success { None } else { Some(output) },
+            },
+        );
+        if logs.len() > 100 {
+            logs.truncate(100);
+        }
+        save_automation_logs_to_disk(&logs);
+    }
+}
+
+async fn send_automation_failure_alert(state: &AppState, job: &AutomationJob, error: &str) {
+    if std::env::var("ODON_AUTOMATION_ALERTS")
+        .map(|value| value == "0")
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let ctx = ToolContext {
+        session_id: format!("automation-alert-{}", job.id),
+        workspace_root: state.workspace_root.clone(),
+        approval_engine: state.approval.clone(),
+        audit_logger: state.audit.clone(),
+        storage: Some(state.storage.clone()),
+    };
+    let message: String = error.chars().take(300).collect();
+    let _ = odon_tools::shell_ext::NotificationSendTool
+        .execute(
+            &ctx,
+            json!({
+                "title": format!("Automation failed: {}", job.name),
+                "message": message
+            }),
+        )
+        .await;
+}
+
+async fn automation_scheduler_tick(state: &AppState) {
+    let mut jobs = state.automations.write().await;
+    // Reload under the same lock used by API saves so a tick cannot overwrite
+    // a job that was just created or edited from the UI.
+    *jobs = load_automations_from_disk();
+    let now = Local::now();
+    let due: Vec<AutomationJob> = jobs
+        .iter()
+        .filter(|job| automation_due(job, &jobs, &now))
+        .cloned()
+        .collect();
+    for job in &due {
+        if let Some(existing) = jobs.iter_mut().find(|candidate| candidate.id == job.id) {
+            existing.last_run = Some(now.to_rfc3339());
+            existing.last_status = Some("running".to_string());
+        }
+    }
+    if !due.is_empty() {
+        save_automations_to_disk(&jobs);
+    }
+    drop(jobs);
+
+    for job in due {
+        let state = state.clone();
+        tokio::spawn(async move {
+            run_automation_job(state, job).await;
+        });
+    }
+}
+
 #[derive(Clone)]
 struct TurnHandle {
     turn_id: String,
@@ -907,6 +1242,7 @@ struct AppState {
     workspaces: Arc<tokio::sync::RwLock<WorkspaceConfig>>,
     api_token: Option<String>,
     active_turns: Arc<tokio::sync::RwLock<HashMap<String, TurnHandle>>>,
+    started_at: std::time::Instant,
 }
 
 /// Loads `.env` then `.env.local` from the working directory into the process
@@ -944,6 +1280,40 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Status { url, metrics } => {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .build()?;
+            let token = std::env::var("ODON_API_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty());
+            let get_json = |path: &str| {
+                let client = client.clone();
+                let token = token.clone();
+                let endpoint = format!("{}{}", url.trim_end_matches('/'), path);
+                async move {
+                    let mut request = client.get(endpoint);
+                    if let Some(token) = token {
+                        request = request.bearer_auth(token);
+                    }
+                    let response = request.send().await?;
+                    if !response.status().is_success() {
+                        anyhow::bail!("daemon returned HTTP {}", response.status());
+                    }
+                    Ok::<Value, anyhow::Error>(response.json().await?)
+                }
+            };
+            let status = get_json("/api/status").await.map_err(|error| {
+                anyhow::anyhow!(
+                    "Cannot reach odond at {url}: {error}. Start it with `odond serve`."
+                )
+            })?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+            if metrics {
+                let metrics = get_json("/api/metrics").await?;
+                println!("{}", serde_json::to_string_pretty(&metrics)?);
+            }
+        }
         Commands::Init => {
             println!("Initializing ODON SQLite storage...");
             let _storage = StorageEngine::default_storage()?;
@@ -1105,16 +1475,15 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     loop {
                         let cloud_active = cloud_handle.read().await.is_some();
-                        let bridge_connected = if bridge.child_running() {
-                            bridge
-                                .status()
-                                .await
-                                .get("connected")
-                                .and_then(|value| value.as_bool())
-                                .unwrap_or(false)
-                        } else {
-                            false
-                        };
+                        // The bridge may have been adopted from a previous
+                        // daemon instead of spawned by this process, so always
+                        // probe it rather than relying on child ownership.
+                        let bridge_connected = bridge
+                            .status()
+                            .await
+                            .get("connected")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(false);
                         flag.store(
                             cloud_active || bridge_connected,
                             std::sync::atomic::Ordering::SeqCst,
@@ -1194,8 +1563,31 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
 
-            let automations = Arc::new(tokio::sync::RwLock::new(load_automations_from_disk()));
-            let automation_logs = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+            let mut loaded_automations = load_automations_from_disk();
+            for job in &mut loaded_automations {
+                if job.trigger_type == "cron" {
+                    job.trigger_value = normalize_cron_expression(&job.trigger_value);
+                }
+                if job.last_status.as_deref() == Some("running") {
+                    // A previous daemon exited mid-run; do not leave the job
+                    // permanently stuck in "running".
+                    job.last_status = Some("failed".to_string());
+                }
+                if let Some(raw_last_run) = job.last_run.clone() {
+                    if let Some(parsed) = parse_last_run(&raw_last_run) {
+                        job.last_run = Some(parsed.with_timezone(&Utc).to_rfc3339());
+                    } else if job.trigger_type == "interval" {
+                        // Never fire a legacy interval job immediately just
+                        // because its old timestamp was human-readable.
+                        job.last_run = Some(Utc::now().to_rfc3339());
+                    }
+                }
+            }
+            save_automations_to_disk(&loaded_automations);
+            let automations = Arc::new(tokio::sync::RwLock::new(loaded_automations));
+            let automation_logs = Arc::new(tokio::sync::RwLock::new(
+                load_automation_logs_from_disk(),
+            ));
 
             let workspace_config = load_workspace_config(&workspace);
             let workspace_default = workspace_config.default.clone();
@@ -1222,7 +1614,18 @@ async fn main() -> anyhow::Result<()> {
                 workspaces: Arc::new(tokio::sync::RwLock::new(workspace_config)),
                 api_token: api_token.clone(),
                 active_turns: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                started_at: std::time::Instant::now(),
             };
+
+            {
+                let scheduler_state = state.clone();
+                tokio::spawn(async move {
+                    loop {
+                        automation_scheduler_tick(&scheduler_state).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    }
+                });
+            }
 
             let allowed_origins: Vec<String> = std::env::var("ODON_ALLOWED_ORIGINS")
                 .ok()
@@ -1262,6 +1665,7 @@ async fn main() -> anyhow::Result<()> {
 
             let mut app = Router::new()
                 .route("/api/status", get(get_status))
+                .route("/api/metrics", get(get_metrics))
                 .route("/api/sessions", get(list_sessions).post(create_session))
                 .route("/api/sessions/{id}", get(get_session).delete(delete_session))
                 .route("/api/sessions/{id}/messages", get(list_messages).post(send_message))
@@ -1431,6 +1835,39 @@ async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
             "desktop_api": true,
             "sse_stream": true,
             "cli": true,
+            "telegram": state.telegram_online.load(std::sync::atomic::Ordering::SeqCst),
+            "whatsapp": state.whatsapp_online.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }))
+}
+
+async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let sessions = state.storage.list_sessions().map(|items| items.len()).unwrap_or(0);
+    let provider_configs = state
+        .storage
+        .list_provider_configs()
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let pending_approvals = state.approval.list_pending().await.len();
+    let audit_records = state.approval.get_audit_history().await.len();
+    let automations = state.automations.read().await.len();
+    let active_turns = state.active_turns.read().await.len();
+    let oauth_accounts = state.oauth_accounts.read().await.len();
+
+    Json(json!({
+        "status": "online",
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": state.started_at.elapsed().as_secs(),
+        "workspace_root": state.workspace_root,
+        "tools_count": state.tools.schemas().len(),
+        "sessions": sessions,
+        "provider_configs": provider_configs,
+        "oauth_accounts": oauth_accounts,
+        "automations": automations,
+        "active_turns": active_turns,
+        "pending_approvals": pending_approvals,
+        "audit_records": audit_records,
+        "relays": {
             "telegram": state.telegram_online.load(std::sync::atomic::Ordering::SeqCst),
             "whatsapp": state.whatsapp_online.load(std::sync::atomic::Ordering::SeqCst)
         }
@@ -4266,37 +4703,21 @@ async fn trigger_automation(
     };
 
     if let Some(job) = job_opt {
+        if job.last_status.as_deref() == Some("running") {
+            return Json(json!({ "success": false, "error": "Automation is already running" }));
+        }
         let session_id = format!("auto_{}_{}", job.id, chrono::Utc::now().timestamp());
-        let rt = state.runtime.clone();
-        let logs = state.automation_logs.clone();
-        let job_name = job.name.clone();
-        let prompt = job.prompt.clone();
-        let model = job.model.clone();
-
-        let run_session_id = session_id.clone();
-        tokio::spawn(async move {
-            let start = chrono::Utc::now().to_rfc3339();
-            let cancel = tokio_util::sync::CancellationToken::new();
-            let result = rt.execute_turn(&run_session_id, &prompt, Some(&model), cancel).await;
-            let end = chrono::Utc::now().to_rfc3339();
-            let (status, output) = match result {
-                Ok(turn) => ("success".to_string(), turn.content.text),
-                Err(e) => ("failed".to_string(), e.to_string()),
-            };
-
-            let mut log_list = logs.write().await;
-            log_list.insert(0, AutomationLog {
-                id: uuid::Uuid::new_v4().to_string(),
-                automation_id: id,
-                automation_name: job_name,
-                triggered_at: start,
-                completed_at: Some(end),
-                status,
-                output,
-            });
-            if log_list.len() > 100 {
-                log_list.truncate(100);
+        {
+            let mut list = state.automations.write().await;
+            if let Some(existing) = list.iter_mut().find(|candidate| candidate.id == job.id) {
+                existing.last_run = Some(Utc::now().to_rfc3339());
+                existing.last_status = Some("running".to_string());
             }
+            save_automations_to_disk(&list);
+        }
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            run_automation_job(state_clone, job).await;
         });
 
         Json(json!({ "success": true, "status": "triggered", "session_id": session_id }))
@@ -5137,6 +5558,26 @@ async fn delete_skill_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn automation_intervals_and_cron_match() {
+        assert_eq!(parse_interval("15m").unwrap().as_secs(), 900);
+        assert_eq!(parse_interval("Every 2 hours").unwrap().as_secs(), 7200);
+        assert_eq!(parse_interval("daily").unwrap().as_secs(), 86_400);
+        assert!(parse_interval("nonsense").is_none());
+
+        let at = Local.with_ymd_and_hms(2026, 11, 2, 8, 0, 0).unwrap();
+        assert!(cron_matches("0 8 * * *", &at));
+        assert!(!cron_matches("0 9 * * *", &at));
+        assert!(cron_matches("*/15 * * * *", &at));
+        assert_eq!(
+            normalize_cron_expression("0 8 * * * (Daily @ 08:00 AM)"),
+            "0 8 * * *"
+        );
+        assert!(parse_last_run("2 hours ago").is_some());
+        assert!(parse_last_run("Yesterday at 08:00 AM").is_some());
+    }
 
     #[test]
     fn workspace_validator_accepts_temp_and_rejects_system_roots() {

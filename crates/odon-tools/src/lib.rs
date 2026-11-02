@@ -115,6 +115,10 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(git_ext::GitHubMergePrTool::new()));
     reg.register(Box::new(git_ext::GitHubWorkflowListTool::new()));
     reg.register(Box::new(git_ext::GitHubWorkflowRunTool::new()));
+    reg.register(Box::new(git_ext::GitHubWorkflowRunsTool::new()));
+    reg.register(Box::new(git_ext::GitHubWorkflowJobsTool::new()));
+    reg.register(Box::new(git_ext::GitHubWorkflowLogsTool::new()));
+    reg.register(Box::new(git_ext::GitHubPrFilesTool::new()));
 
     // 5. Shell & Execution
     reg.register(Box::new(shell::ShellExecTool));
@@ -130,6 +134,9 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(shell_ext::ProcessKillTool));
     reg.register(Box::new(shell_ext::ExecBackgroundTool));
     reg.register(Box::new(shell_ext::ExecStreamStdoutTool));
+    reg.register(Box::new(shell_ext::ExecBackgroundListTool));
+    reg.register(Box::new(shell_ext::ExecBackgroundKillTool));
+    reg.register(Box::new(shell_ext::ProjectTaskTool));
     reg.register(Box::new(shell_ext::CronAddTool));
     reg.register(Box::new(shell_ext::CronListTool));
     reg.register(Box::new(shell_ext::CronRemoveTool));

@@ -155,9 +155,9 @@ impl ApprovalEngine {
             | "termigo_copy_selection" | "termigo_paste_buffer_history" | "editor_open" | "editor_reveal" | "editor_reload"
             | "read_file" | "list_directory" | "grep" | "glob"
             | "git_status" | "git_diff" | "git_log" | "git_show" | "git_stash_list" | "git_blame" | "git_log_file" | "git_ls_files"
-            | "github_list_issues" | "github_get_repo" | "github_list_prs" | "github_list_comments" | "github_workflow_list"
+            | "github_list_issues" | "github_get_repo" | "github_list_prs" | "github_list_comments" | "github_workflow_list" | "github_workflow_runs" | "github_workflow_jobs" | "github_workflow_logs" | "github_pr_files"
             | "web_search" | "web_fetch" | "web_search_news" | "web_search_code" | "web_scrape" | "probe_url" | "http_get" | "security_audit_headers" | "security_audit_cert" | "network_traceroute" | "url_preview" | "dns_lookup" | "port_scan"
-            | "system_info" | "calc_eval" | "env_get" | "env_list" | "process_list" | "disk_usage" | "file_hash" | "file_checksum" | "clipboard_read" | "clipboard_write" | "notification_send" | "terminal_info"
+            | "system_info" | "calc_eval" | "env_get" | "env_list" | "process_list" | "exec_stream_stdout" | "exec_background_list" | "disk_usage" | "file_hash" | "file_checksum" | "clipboard_read" | "clipboard_write" | "notification_send" | "terminal_info"
             | "memory_recall" | "memory_search" | "todo_write" | "todo_read" | "todo_update" | "think" | "plan_mode" | "remember"
             | "mcp_list_tools" | "mcp_list_servers" | "approval_list" | "session_list" | "session_export" | "relay_status" | "automation_list" | "settings_get" => {
                 RiskTier::Tier0ReadOnly
@@ -251,6 +251,13 @@ impl ApprovalEngine {
                 Ok(ApprovalDecision::Expired)
             }
         }
+    }
+
+    /// Pre-approve a single tool invocation for this process. Used by the CLI
+    /// `tools run --yes` path after the user explicitly opts in.
+    pub async fn pre_approve(&self, tool_name: &str, parameters: &serde_json::Value) {
+        let key = Self::policy_key(tool_name, parameters);
+        self.always_allowed.write().await.insert(key);
     }
 
     pub async fn submit_decision(&self, approval_id: &str, decision: ApprovalDecision) -> bool {

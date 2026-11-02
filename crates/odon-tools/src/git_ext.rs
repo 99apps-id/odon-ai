@@ -3,6 +3,7 @@ use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde_json::{json, Value};
+use std::io::Read;
 use tokio::process::Command;
 
 use crate::registry::{Tool, ToolContext};
@@ -48,6 +49,18 @@ impl GitHubApiClient {
             }
         }
         headers
+    }
+
+    async fn response_json(tool: &str, response: reqwest::Response) -> Result<Value> {
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+        if !status.is_success() {
+            return Err(OdonError::Tool {
+                tool: tool.to_string(),
+                message: format!("GitHub API returned HTTP {status}: {body}"),
+            });
+        }
+        Ok(body)
     }
 }
 
@@ -473,6 +486,216 @@ impl Tool for GitHubMergePrTool {
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let data: Value = resp.json().await.unwrap_or(json!({ "merged": true }));
         Ok(json!({ "pull_number": num, "result": data }))
+    }
+}
+
+pub struct GitHubWorkflowRunsTool {
+    gh: GitHubApiClient,
+}
+impl GitHubWorkflowRunsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubWorkflowRunsTool {
+    fn name(&self) -> &str { "github_workflow_runs" }
+    fn description(&self) -> &str { "List recent GitHub Actions runs with status, conclusion, branch, and URL" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "workflow_id": { "type": "string", "description": "Optional workflow ID or filename" },
+                "limit": { "type": "integer", "description": "Number of runs (default 10)" }
+            },
+            "required": ["owner", "repo"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
+        let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(50);
+        if owner.is_empty() || repo.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner and repo are required".to_string() });
+        }
+        let url = match args.get("workflow_id").and_then(|v| v.as_str()) {
+            Some(workflow) if !workflow.is_empty() => format!(
+                "https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow}/runs?per_page={limit}"
+            ),
+            _ => format!("https://api.github.com/repos/{owner}/{repo}/actions/runs?per_page={limit}"),
+        };
+        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let data: Value = GitHubApiClient::response_json("github_workflow_runs", response).await?;
+        Ok(data)
+    }
+}
+
+pub struct GitHubWorkflowJobsTool {
+    gh: GitHubApiClient,
+}
+impl GitHubWorkflowJobsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubWorkflowJobsTool {
+    fn name(&self) -> &str { "github_workflow_jobs" }
+    fn description(&self) -> &str { "List jobs and step results for a GitHub Actions run" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "run_id": { "type": "string", "description": "GitHub Actions run ID" }
+            },
+            "required": ["owner", "repo", "run_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
+        let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+        let run_id = args.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+        if owner.is_empty() || repo.is_empty() || run_id.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner, repo, and run_id are required".to_string() });
+        }
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs");
+        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let data: Value = GitHubApiClient::response_json("github_workflow_jobs", response).await?;
+        Ok(data)
+    }
+}
+
+pub struct GitHubWorkflowLogsTool {
+    gh: GitHubApiClient,
+}
+impl GitHubWorkflowLogsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubWorkflowLogsTool {
+    fn name(&self) -> &str { "github_workflow_logs" }
+    fn description(&self) -> &str {
+        "Download and extract GitHub Actions run logs as text, with size limits"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "run_id": { "type": "string", "description": "GitHub Actions run ID" },
+                "max_bytes": { "type": "integer", "description": "Maximum extracted text bytes (default 120000)" }
+            },
+            "required": ["owner", "repo", "run_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
+        let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+        let run_id = args.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+        if owner.is_empty() || repo.is_empty() || run_id.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner, repo, and run_id are required".to_string() });
+        }
+        let max_bytes = args.get("max_bytes").and_then(|v| v.as_u64()).unwrap_or(120_000).clamp(1_000, 1_000_000) as usize;
+
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs");
+        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("GitHub logs download returned HTTP {status}: {body}"),
+            });
+        }
+        let bytes = response.bytes().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Could not read logs archive: {e}"),
+        })?;
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("GitHub logs were not a valid zip archive: {e}"),
+        })?;
+
+        let mut files = Vec::new();
+        let mut remaining = max_bytes;
+        let mut truncated = false;
+        for index in 0..archive.len() {
+            if remaining == 0 {
+                truncated = true;
+                break;
+            }
+            let mut entry = match archive.by_index(index) {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().to_string();
+            let mut buffer = Vec::new();
+            let _ = entry.read_to_end(&mut buffer);
+            let text = String::from_utf8_lossy(&buffer);
+            if text.trim().is_empty() {
+                continue;
+            }
+            let clipped: String = text.chars().take(remaining).collect();
+            let used = clipped.len();
+            if used < text.len() {
+                truncated = true;
+            }
+            remaining = remaining.saturating_sub(used);
+            files.push(json!({ "file": name, "content": clipped }));
+        }
+
+        Ok(json!({
+            "run_id": run_id,
+            "files": files,
+            "extracted_bytes": max_bytes.saturating_sub(remaining),
+            "truncated": truncated
+        }))
+    }
+}
+
+pub struct GitHubPrFilesTool {
+    gh: GitHubApiClient,
+}
+impl GitHubPrFilesTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+
+#[async_trait]
+impl Tool for GitHubPrFilesTool {
+    fn name(&self) -> &str { "github_pr_files" }
+    fn description(&self) -> &str { "List changed files and diff stats for a pull request" }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string" },
+                "repo": { "type": "string" },
+                "pull_number": { "type": "integer", "description": "Pull request number" }
+            },
+            "required": ["owner", "repo", "pull_number"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
+        let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+        let number = args.get("pull_number").and_then(|v| v.as_u64()).unwrap_or(0);
+        if owner.is_empty() || repo.is_empty() || number == 0 {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner, repo, and pull_number are required".to_string() });
+        }
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{number}/files?per_page=100");
+        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
+            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let files: Value = GitHubApiClient::response_json("github_pr_files", response).await?;
+        let additions: u64 = files.as_array().map(|items| items.iter().filter_map(|f| f.get("additions").and_then(|v| v.as_u64())).sum()).unwrap_or(0);
+        let deletions: u64 = files.as_array().map(|items| items.iter().filter_map(|f| f.get("deletions").and_then(|v| v.as_u64())).sum()).unwrap_or(0);
+        Ok(json!({ "pull_number": number, "files": files, "additions": additions, "deletions": deletions }))
     }
 }
 
