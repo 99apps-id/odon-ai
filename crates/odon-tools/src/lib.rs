@@ -301,13 +301,13 @@ mod tests {
 
         assert_eq!(
             unavailable,
-            HashSet::from(["browser_click", "session_switch"]),
+            HashSet::from(["session_switch"]),
             "Unavailable capabilities must be reviewed explicitly"
         );
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 175);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 176);
     }
 
     #[test]

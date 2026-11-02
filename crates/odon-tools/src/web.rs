@@ -873,28 +873,188 @@ impl Tool for BrowserClickTool {
         json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or link text to click" }
+                "url": { "type": "string", "description": "Page URL to open before clicking" },
+                "selector": { "type": "string", "description": "CSS selector, button text, or link href to click" }
             },
-            "required": ["selector"]
+            "required": ["url", "selector"]
         })
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
     }
-    fn availability(&self) -> crate::registry::ToolAvailability {
-        crate::registry::ToolAvailability::Unavailable {
-            reason: "Interactive browser clicking requires a persistent browser runtime, which is not implemented yet".to_string(),
-        }
-    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'url' parameter".to_string(),
+            })?;
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
+
         let selector = args.get("selector").and_then(|s| s.as_str()).unwrap_or("");
-        Err(OdonError::Tool {
+        if selector.is_empty() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'selector' parameter".to_string(),
+            });
+        }
+
+        let chrome = find_chrome()?;
+        let port = find_free_port().await?;
+
+        let mut cmd = tokio::process::Command::new(chrome);
+        cmd.args([
+            "--headless",
+            "--disable-gpu",
+            "--no-first-run",
+            &format!("--remote-debugging-port={}", port),
+            "--window-size=1280,800",
+            url_str,
+        ]);
+        let mut child = cmd.spawn().map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
-            message: format!(
-                "Interactive browser clicking is not implemented in this build (selector '{selector}'). Use browser_navigate to inspect page content."
-            ),
+            message: format!("Failed to launch browser: {e}"),
+        })?;
+
+        let cdp_ws = wait_for_cdp_websocket(port)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("CDP not ready: {e}"),
+            })?;
+
+        let result = click_via_cdp(cdp_ws, selector.to_string()).await;
+
+        let _ = child.kill().await;
+        result
+    }
+}
+
+fn find_chrome() -> Result<&'static str> {
+    let edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+    let chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+
+    if std::path::Path::new(edge_path).exists() {
+        Ok(edge_path)
+    } else if std::path::Path::new(chrome_path).exists() {
+        Ok(chrome_path)
+    } else {
+        Err(OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: "No headless Chrome/Edge executable was found.".to_string(),
         })
     }
+}
+
+async fn find_free_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Failed to find free port: {e}"),
+    })?;
+    let port = listener.local_addr().map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Failed to read port: {e}"),
+    })?;
+    drop(listener);
+    Ok(port.port())
+}
+
+async fn wait_for_cdp_websocket(port: u16) -> Result<url::Url> {
+    let base = format!("http://127.0.0.1:{}", port);
+    let json_url = format!("{}/json", base);
+    for _ in 0..50 {
+        if let Ok(body) = reqwest::get(&json_url).await {
+            if body.status().is_success() {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    let targets_url = format!("{}/json/new?{}", base, urlencoding::encode("about:blank"));
+    let body = reqwest::get(&targets_url).await.map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Failed to create CDP target: {e}"),
+    })?;
+    let target: serde_json::Value = body.json().await.map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Invalid CDP target response: {e}"),
+    })?;
+    let ws_url = target
+        .get("webSocketDebuggerUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: "CDP target did not expose a WebSocket URL".to_string(),
+        })?;
+    url::Url::parse(ws_url).map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Invalid CDP WebSocket URL: {e}"),
+    })
+}
+
+async fn click_via_cdp(ws_url: url::Url, selector: String) -> Result<Value> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::protocol::Message;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url.as_str())
+        .await
+        .map_err(|e| OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: format!("Failed to connect to CDP: {e}"),
+        })?;
+
+    let js = format!(
+        "(() => {{ \
+            const el = document.querySelector({:?}); \
+            if (!el) return 'not_found'; \
+            el.click(); \
+            return 'clicked'; \
+        }})()",
+        selector
+    );
+
+    let payload = serde_json::json!({
+        "id": 1,
+        "method": "Runtime.evaluate",
+        "params": { "expression": js, "returnByValue": true }
+    });
+
+    ws.send(Message::Text(payload.to_string().into()))
+        .await
+        .map_err(|e| OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: format!("Failed to send CDP command: {e}"),
+        })?;
+
+    let msg = ws
+        .next()
+        .await
+        .ok_or_else(|| OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: "CDP connection closed without response".to_string(),
+        })?
+        .map_err(|e| OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: format!("CDP message error: {e}"),
+        })?;
+
+    let text = msg.to_text().map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Invalid CDP message: {e}"),
+    })?;
+    let response: serde_json::Value = serde_json::from_str(text).map_err(|e| OdonError::Tool {
+        tool: "browser_click".to_string(),
+        message: format!("Invalid CDP response: {e}"),
+    })?;
+
+    Ok(json!({
+        "selector": selector,
+        "result": response.get("result").and_then(|r| r.get("result")).cloned().unwrap_or(serde_json::Value::Null),
+        "cdp_response": response
+    }))
 }
 
 pub(crate) mod urlencoding {
