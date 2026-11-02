@@ -2083,7 +2083,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                       className="flex items-center justify-between p-2.5 rounded-xl border border-neutral-200/90 bg-neutral-50/70 hover:bg-neutral-100/70 transition-all cursor-pointer group shadow-2xs"
                     >
                       <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-xl bg-neutral-900 text-white group-hover:scale-105 transition-transform">
+                        <div className="p-2 rounded-xl bg-blue-600 text-white group-hover:scale-105 transition-transform shadow-2xs">
                           <Terminal className="w-4 h-4" />
                         </div>
                         <div>

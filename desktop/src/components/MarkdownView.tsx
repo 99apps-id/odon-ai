@@ -488,11 +488,11 @@ function AlertBlock({
       title: 'Tip',
     },
     IMPORTANT: {
-      border: 'border-purple-500',
-      bg: 'bg-purple-50/80 dark:bg-purple-950/30',
-      titleColor: 'text-purple-900 dark:text-purple-200',
-      textColor: 'text-purple-950 dark:text-purple-100',
-      icon: <AlertCircle className="w-4 h-4 text-purple-600" />,
+      border: 'border-blue-500',
+      bg: 'bg-blue-50/80 dark:bg-blue-950/30',
+      titleColor: 'text-blue-900 dark:text-blue-200',
+      textColor: 'text-blue-950 dark:text-blue-100',
+      icon: <AlertCircle className="w-4 h-4 text-blue-600" />,
       title: 'Important',
     },
     WARNING: {
