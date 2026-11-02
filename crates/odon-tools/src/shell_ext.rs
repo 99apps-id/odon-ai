@@ -19,16 +19,16 @@ pub const MAX_BACKGROUND_BUFFER: usize = 1_000_000;
 pub const RUNNING_EXIT_CODE: i32 = i32::MIN;
 
 pub struct BackgroundTask {
-    child: tokio::sync::Mutex<Option<tokio::process::Child>>,
-    stdout: Mutex<String>,
-    stderr: Mutex<String>,
-    exit_code: AtomicI32,
-    pid: u32,
-    command: String,
-    started_at: String,
+    pub child: tokio::sync::Mutex<Option<tokio::process::Child>>,
+    pub stdout: Mutex<String>,
+    pub stderr: Mutex<String>,
+    pub exit_code: AtomicI32,
+    pub pid: u32,
+    pub command: String,
+    pub started_at: String,
 }
 
-fn background_tasks() -> &'static tokio::sync::Mutex<HashMap<String, Arc<BackgroundTask>>> {
+pub fn background_tasks() -> &'static tokio::sync::Mutex<HashMap<String, Arc<BackgroundTask>>> {
     static TASKS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<BackgroundTask>>>> =
         OnceLock::new();
     TASKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
