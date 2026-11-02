@@ -201,7 +201,7 @@ export const AutomationsView: React.FC = () => {
       {/* Header bar */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-950/40 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs">
+          <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-xs">
             <Share2 className="w-5 h-5" />
           </div>
           <div>
@@ -209,7 +209,7 @@ export const AutomationsView: React.FC = () => {
               <h2 className="text-base font-bold text-neutral-900 dark:text-neutral-100">
                 Automations & Scheduled Agents
               </h2>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-semibold font-mono">
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-semibold font-mono">
                 {jobs.filter((j) => j.enabled).length} Active Jobs
               </span>
             </div>
@@ -288,7 +288,7 @@ export const AutomationsView: React.FC = () => {
                     className="shrink-0 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
                   >
                     {job.enabled ? (
-                      <ToggleRight className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                      <ToggleRight className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                     ) : (
                       <ToggleLeft className="w-6 h-6 text-neutral-300 dark:text-neutral-600" />
                     )}
@@ -297,7 +297,7 @@ export const AutomationsView: React.FC = () => {
 
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-500 font-mono">
                   <span className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-lg">
-                    <Clock className="w-3 h-3 text-indigo-500" />
+                    <Clock className="w-3 h-3 text-blue-500" />
                     {job.trigger_value}
                   </span>
                   <span className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-lg">
@@ -327,9 +327,9 @@ export const AutomationsView: React.FC = () => {
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-neutral-800 dark:text-neutral-200 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 transition-colors"
                     >
                       {runningJobId === job.id ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
+                        <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
                       ) : (
-                        <Play className="w-3 h-3 text-indigo-500" />
+                        <Play className="w-3 h-3 text-blue-500" />
                       )}
                       <span>Run Now</span>
                     </button>
@@ -470,7 +470,7 @@ export const AutomationsView: React.FC = () => {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Daily Code Review..."
-                className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
             </div>
@@ -482,7 +482,7 @@ export const AutomationsView: React.FC = () => {
                 value={triggerValue}
                 onChange={(e) => setTriggerValue(e.target.value)}
                 placeholder="e.g. 0 8 * * * or Every 2 hours"
-                className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                 required
               />
             </div>
@@ -495,7 +495,7 @@ export const AutomationsView: React.FC = () => {
                   min={0}
                   value={retryCount}
                   onChange={(e) => setRetryCount(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div>
@@ -505,7 +505,7 @@ export const AutomationsView: React.FC = () => {
                   min={1}
                   value={retryDelay}
                   onChange={(e) => setRetryDelay(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div>
@@ -515,7 +515,7 @@ export const AutomationsView: React.FC = () => {
                   value={dependsOn}
                   onChange={(e) => setDependsOn(e.target.value)}
                   placeholder="job-id, job-id"
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                 />
               </div>
             </div>
@@ -527,7 +527,7 @@ export const AutomationsView: React.FC = () => {
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={3}
                 placeholder="What should the agent execute on each run?"
-                className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
             </div>
