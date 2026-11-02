@@ -77,14 +77,14 @@ impl ProviderConfig {
     pub fn new_openai_codex(access_token: impl Into<String>, account_id: Option<String>) -> Self {
         Self {
             kind: ProviderKind::OpenAiCodex,
-            base_url: "https://chatgpt.com/backend-api".to_string(),
+            base_url: "https://chatgpt.com/backend-api/codex".to_string(),
             auth: AuthKind::OAuth {
                 access_token: access_token.into(),
                 refresh_token: None,
                 expires_at: None,
                 account_id,
             },
-            default_model: "gpt-4o".to_string(),
+            default_model: "gpt-6.1-sol".to_string(),
             custom_headers: std::collections::HashMap::new(),
         }
     }
@@ -92,14 +92,14 @@ impl ProviderConfig {
     pub fn new_muse(access_token: impl Into<String>) -> Self {
         Self {
             kind: ProviderKind::Muse,
-            base_url: "https://api.muse.ai/v1".to_string(),
+            base_url: "https://api.meta.ai/v1".to_string(),
             auth: AuthKind::OAuth {
                 access_token: access_token.into(),
                 refresh_token: None,
                 expires_at: None,
                 account_id: None,
             },
-            default_model: "muse-claude-3-7-sonnet".to_string(),
+            default_model: "muse-spark-1.3".to_string(),
             custom_headers: std::collections::HashMap::new(),
         }
     }

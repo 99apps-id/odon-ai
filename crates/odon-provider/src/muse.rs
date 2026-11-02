@@ -23,7 +23,7 @@ impl MuseProvider {
     pub fn new(access_token: impl Into<String>, base_url: Option<&str>) -> Self {
         Self {
             client: reqwest::Client::new(),
-            base_url: base_url.unwrap_or("https://api.muse.ai/v1").to_string(),
+            base_url: base_url.unwrap_or("https://api.meta.ai/v1").to_string(),
             access_token: access_token.into(),
         }
     }

@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
             println!("   Version: {}", env!("CARGO_PKG_VERSION").green());
             println!("{}", "====================================================".bold());
             println!(" • Model:        {}", default_model.cyan());
-            println!(" • Relays:       {}", "Telegram Ready | WhatsApp Stub Ready".magenta());
+            println!(" • Relays:       {}", "Telegram | WhatsApp relays".magenta());
             println!(" • Persistence:  {}", "Durable SQLite State".yellow());
             println!(" • Connectors:   {}", "GitHub | Stdio MCP | Local Filesystem".blue());
             println!(" • Mode:         {}", "ChatGPT Desktop + Codex Workspace (Fluid)".bright_white());

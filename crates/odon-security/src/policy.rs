@@ -21,7 +21,7 @@ pub struct SecurityPolicy {
 impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
-            mode: ExecutionMode::Autonomous,
+            mode: ExecutionMode::Supervised,
             allowed_directories: Vec::new(),
             forbidden_commands: vec![
                 "rm -rf /".to_string(),

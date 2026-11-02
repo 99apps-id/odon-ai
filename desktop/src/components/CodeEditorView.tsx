@@ -128,7 +128,8 @@ interface CodeEditorViewProps {
 }
 
 export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEditorViewProps) {
-  const fileList = files && files.length > 0 ? files : SAMPLE_FILES;
+  const [showSample, setShowSample] = useState(false);
+  const fileList = files && files.length > 0 ? files : showSample ? SAMPLE_FILES : [];
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const currentFile = fileList[activeFileIndex] || fileList[0];
@@ -141,6 +142,25 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEdit
   };
 
   const lines = currentFile ? currentFile.content.split('\n') : [];
+
+  if (!currentFile) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2 bg-slate-50/70 text-slate-500 rounded-xl border border-slate-200 p-8 text-center font-sans">
+        <FileCode className="w-8 h-8 text-slate-300" />
+        <div className="text-sm font-semibold text-slate-700">No generated code yet</div>
+        <p className="text-xs max-w-sm leading-relaxed">
+          Ask the agent to build a project or module, or open a workspace file from the File Explorer.
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowSample(true)}
+          className="mt-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 transition-colors"
+        >
+          Load example project (demo)
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-slate-50/70 text-slate-800 rounded-xl overflow-hidden border border-slate-200 font-mono text-[13px] select-text">

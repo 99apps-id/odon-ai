@@ -18,6 +18,24 @@ use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+/// The registry now asks the approval engine before every mutating tool. Tests
+/// have no UI, so approve each request as it is published on the event bus.
+fn auto_approve(policy: SecurityPolicy) -> Arc<ApprovalEngine> {
+    let (tx, mut rx) = create_event_bus(64);
+    let engine = Arc::new(ApprovalEngine::new(policy).with_events(tx));
+    let approver = engine.clone();
+    tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            if let AgentEvent::ApprovalRequested { approval_id, .. } = event {
+                let _ = approver
+                    .submit_decision(&approval_id, ApprovalDecision::Approved)
+                    .await;
+            }
+        }
+    });
+    engine
+}
+
 /// Mock provider that simulates a natural ChatGPT/Codex conversational response
 /// and creates artifacts and contextual action chips.
 struct MockConversationalProvider;
@@ -139,8 +157,7 @@ async fn test_security_policy_and_risk_tiers() {
 #[tokio::test]
 async fn test_conversational_agent_turn_with_artifacts() {
     let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
-    let policy = SecurityPolicy::default();
-    let approval = Arc::new(ApprovalEngine::new(policy));
+    let approval = auto_approve(SecurityPolicy::default());
     let audit = Arc::new(AuditLogger::new());
 
     let (event_tx, mut event_rx) = create_event_bus(128);
@@ -213,8 +230,7 @@ async fn test_conversational_agent_turn_with_artifacts() {
 #[tokio::test]
 async fn test_extended_tools_execution() {
     let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
-    let policy = SecurityPolicy::default();
-    let approval = Arc::new(ApprovalEngine::new(policy));
+    let approval = auto_approve(SecurityPolicy::default());
     let audit = Arc::new(AuditLogger::new());
 
     let registry = odon_tools::build_full_tool_registry();
@@ -278,8 +294,7 @@ async fn test_extended_tools_execution() {
 #[tokio::test]
 async fn test_simulated_provider_turn() {
     let storage = std::sync::Arc::new(StorageEngine::new_in_memory().unwrap());
-    let policy = SecurityPolicy::default();
-    let approval = std::sync::Arc::new(ApprovalEngine::new(policy));
+    let approval = auto_approve(SecurityPolicy::default());
     let audit = std::sync::Arc::new(AuditLogger::new());
     let (event_tx, _event_rx) = create_event_bus(64);
     let registry = odon_tools::build_full_tool_registry();
@@ -323,7 +338,7 @@ async fn test_simulated_provider_turn() {
 #[tokio::test]
 async fn test_tool_history_orders_assistant_calls_before_tool_results() {
     let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
-    let approval = Arc::new(ApprovalEngine::new(SecurityPolicy::default()));
+    let approval = auto_approve(SecurityPolicy::default());
     let audit = Arc::new(AuditLogger::new());
     let (event_tx, _rx) = create_event_bus(64);
     let temp_dir = tempfile::tempdir().unwrap();
@@ -420,7 +435,7 @@ impl ModelProvider for SteerableProvider {
 #[tokio::test]
 async fn test_priority_steer_interrupts_running_turn() {
     let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
-    let approval = Arc::new(ApprovalEngine::new(SecurityPolicy::default()));
+    let approval = auto_approve(SecurityPolicy::default());
     let audit = Arc::new(AuditLogger::new());
     let (event_tx, mut event_rx) = create_event_bus(128);
     let calls = Arc::new(AtomicUsize::new(0));

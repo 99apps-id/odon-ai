@@ -54,101 +54,9 @@ pub fn load_mcp_servers() -> Vec<McpServerConfig> {
             return servers;
         }
     }
-    // Default initial catalog presets
-    vec![
-        McpServerConfig {
-            id: "github".to_string(),
-            name: "GitHub MCP Server".to_string(),
-            transport: "stdio".to_string(),
-            command: Some("npx".to_string()),
-            args: Some(vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-github".to_string(),
-            ]),
-            env: Some(HashMap::from([(
-                "GITHUB_PERSONAL_ACCESS_TOKEN".to_string(),
-                "".to_string(),
-            )])),
-            url: None,
-            enabled: true,
-            tools: vec![
-                McpToolInfo {
-                    name: "github_search_repositories".to_string(),
-                    description: "Search for GitHub repositories by query".to_string(),
-                    input_schema: json!({ "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }),
-                },
-                McpToolInfo {
-                    name: "github_get_pull_request".to_string(),
-                    description: "Get detailed pull request status and diff".to_string(),
-                    input_schema: json!({ "type": "object", "properties": { "owner": { "type": "string" }, "repo": { "type": "string" }, "pull_number": { "type": "number" } }, "required": ["owner", "repo", "pull_number"] }),
-                },
-            ],
-        },
-        McpServerConfig {
-            id: "postgres".to_string(),
-            name: "PostgreSQL MCP Server".to_string(),
-            transport: "stdio".to_string(),
-            command: Some("npx".to_string()),
-            args: Some(vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-postgres".to_string(),
-                "postgresql://localhost/mydb".to_string(),
-            ]),
-            env: None,
-            url: None,
-            enabled: false,
-            tools: vec![McpToolInfo {
-                name: "postgres_query".to_string(),
-                description: "Run read-only SQL queries on connected database".to_string(),
-                input_schema: json!({ "type": "object", "properties": { "sql": { "type": "string" } }, "required": ["sql"] }),
-            }],
-        },
-        McpServerConfig {
-            id: "memory".to_string(),
-            name: "Memory Graph MCP Server".to_string(),
-            transport: "stdio".to_string(),
-            command: Some("npx".to_string()),
-            args: Some(vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-memory".to_string(),
-            ]),
-            env: None,
-            url: None,
-            enabled: true,
-            tools: vec![
-                McpToolInfo {
-                    name: "memory_create_entities".to_string(),
-                    description: "Create new nodes/entities in the memory knowledge graph"
-                        .to_string(),
-                    input_schema: json!({ "type": "object", "properties": { "entities": { "type": "array" } } }),
-                },
-                McpToolInfo {
-                    name: "memory_read_graph".to_string(),
-                    description: "Read all entities and relations from memory graph".to_string(),
-                    input_schema: json!({ "type": "object", "properties": {} }),
-                },
-            ],
-        },
-        McpServerConfig {
-            id: "filesystem".to_string(),
-            name: "Filesystem MCP Server".to_string(),
-            transport: "stdio".to_string(),
-            command: Some("npx".to_string()),
-            args: Some(vec![
-                "-y".to_string(),
-                "@modelcontextprotocol/server-filesystem".to_string(),
-                ".".to_string(),
-            ]),
-            env: None,
-            url: None,
-            enabled: true,
-            tools: vec![McpToolInfo {
-                name: "fs_read_file".to_string(),
-                description: "Read complete contents of a file".to_string(),
-                input_schema: json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }),
-            }],
-        },
-    ]
+    // No seeded servers: an empty config is honest, and the UI has a preset
+    // catalog for adding real entries.
+    Vec::new()
 }
 
 pub fn save_mcp_servers(servers: &[McpServerConfig]) -> Result<()> {
@@ -225,22 +133,12 @@ impl Tool for McpCallTool {
             .and_then(|s| s.as_str())
             .unwrap_or("default");
         let tool = args.get("tool").and_then(|t| t.as_str()).unwrap_or("ping");
-        let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
-
-        let servers = load_mcp_servers();
-        let matched = servers
-            .iter()
-            .find(|s| s.id == server || s.name.eq_ignore_ascii_case(server));
-
-        Ok(json!({
-            "status": "success",
-            "server": server,
-            "server_name": matched.map(|m| m.name.as_str()).unwrap_or(server),
-            "tool": tool,
-            "execution": "mcp_bridge_invoked",
-            "arguments": arguments,
-            "output": format!("Tool '{tool}' executed successfully on MCP server '{server}'")
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!(
+                "MCP execution is not implemented in this build. Server '{server}' and tool '{tool}' are configured, but no stdio/SSE MCP bridge is running."
+            ),
+        })
     }
 }
 
@@ -271,17 +169,12 @@ impl Tool for McpCallStreamTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let server = args.get("server").and_then(|s| s.as_str()).unwrap_or("default");
         let tool = args.get("tool").and_then(|t| t.as_str()).unwrap_or("ping");
-        let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
-
-        Ok(json!({
-            "status": "completed",
-            "server": server,
-            "tool": tool,
-            "streamed": true,
-            "chunks_count": 1,
-            "arguments": arguments,
-            "output": format!("Streamed response from '{server}/{tool}' completed.")
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!(
+                "Streaming MCP execution is not implemented in this build. Server '{server}' and tool '{tool}' are configured, but no stdio/SSE MCP bridge is running."
+            ),
+        })
     }
 }
 
@@ -312,10 +205,19 @@ impl Tool for McpRemoveServerTool {
         if sid.is_empty() {
             return Err(OdonError::Tool { tool: self.name().to_string(), message: "server_id is required".into() });
         }
+        let mut servers = load_mcp_servers();
+        let before = servers.len();
+        servers.retain(|server| server.id != sid && !server.name.eq_ignore_ascii_case(sid));
+        save_mcp_servers(&servers)?;
+        let removed = servers.len() != before;
         Ok(json!({
             "server_id": sid,
-            "removed": true,
-            "message": format!("Server '{sid}' successfully deregistered from MCP pool")
+            "removed": removed,
+            "message": if removed {
+                format!("Server '{sid}' was removed from the MCP configuration")
+            } else {
+                format!("No MCP server matched '{sid}'")
+            }
         }))
     }
 }

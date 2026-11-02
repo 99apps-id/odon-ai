@@ -163,9 +163,11 @@ impl Tool for ExecStreamStdoutTool {
         })
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let tid = args.get("task_id").and_then(|t| t.as_str()).unwrap_or("");
-        Ok(json!({ "task_id": tid, "status": "completed", "output": "Task completed successfully." }))
+    async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "Background output streaming is not implemented in this build. exec_background returns a PID; inspect the process directly or use a terminal.".to_string(),
+        })
     }
 }
 
@@ -186,11 +188,11 @@ impl Tool for CronAddTool {
         })
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        let sched = args.get("schedule").and_then(|s| s.as_str()).unwrap_or("");
-        let job_id = uuid::Uuid::new_v4().to_string();
-        Ok(json!({ "id": job_id, "name": name, "schedule": sched, "status": "scheduled" }))
+    async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "The agent cron tools are not wired to a scheduler yet. Create automations from the Automations view; scheduled execution is not implemented in this build.".to_string(),
+        })
     }
 }
 
@@ -202,12 +204,10 @@ impl Tool for CronListTool {
     fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        Ok(json!({
-            "jobs": [
-                { "id": "job_1", "name": "Daily Git Standup", "schedule": "0 8 * * *", "enabled": true },
-                { "id": "job_2", "name": "Repo Health Check", "schedule": "Every 4 hours", "enabled": true }
-            ]
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "The agent cron tools are not wired to a scheduler yet. Use the Automations view to inspect configured workflows.".to_string(),
+        })
     }
 }
 
@@ -226,9 +226,11 @@ impl Tool for CronRemoveTool {
         })
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
-        Ok(json!({ "id": id, "removed": true }))
+    async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "The agent cron tools are not wired to a scheduler yet. Remove automations from the Automations view.".to_string(),
+        })
     }
 }
 

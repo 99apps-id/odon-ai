@@ -58,7 +58,7 @@ export const AutomationsView: React.FC = () => {
   const [triggerType, setTriggerType] = useState<string>('cron');
   const [triggerValue, setTriggerValue] = useState<string>('0 8 * * *');
   const [prompt, setPrompt] = useState<string>('');
-  const [model, setModel] = useState<string>('gpt-4o');
+  const [model, setModel] = useState<string>('odon-auto');
 
   const loadData = async () => {
     setIsLoading(true);
@@ -151,9 +151,9 @@ export const AutomationsView: React.FC = () => {
         setName('Daily Git Standup & Digest');
         setDescription('Summarize git commits, pull requests, and pending tasks every morning');
         setTriggerType('cron');
-        setTriggerValue('0 8 * * * (Daily @ 08:00 AM)');
+        setTriggerValue('0 8 * * *');
         setPrompt('Summarize git commits made over the last 24 hours and highlight open PRs.');
-        setModel('claude-sonnet-4-20250514');
+        setModel('odon-auto');
         break;
       case 'tests':
         setName('Repository Health & Cargo Tests');
@@ -161,23 +161,23 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('interval');
         setTriggerValue('Every 4 hours');
         setPrompt('Run workspace test suites and report any failing tests or lint warnings.');
-        setModel('gpt-4.1');
+        setModel('odon-auto');
         break;
       case 'security':
         setName('Automated Secret & Security Audit');
         setDescription('Scan code for accidentally committed secrets, dangerous bash calls, and CVEs');
         setTriggerType('cron');
-        setTriggerValue('0 0 * * * (Midnight)');
+        setTriggerValue('0 0 * * *');
         setPrompt('Audit workspace for exposed API keys, unpinned dependencies, and security headers.');
-        setModel('gemini-2.5-flash');
+        setModel('odon-auto');
         break;
       case 'hygiene':
         setName('Stale Branch & PR Hygiene');
         setDescription('List stale branches without recent commits and suggest cleanup');
         setTriggerType('interval');
-        setTriggerValue('Weekly');
+        setTriggerValue('Every 7 days');
         setPrompt('Check git branches that have not been modified for over 14 days and flag them.');
-        setModel('claude-sonnet-4-20250514');
+        setModel('odon-auto');
         break;
     }
   };
@@ -225,12 +225,16 @@ export const AutomationsView: React.FC = () => {
         </div>
       </div>
 
+      <div className="mx-6 mt-4 p-3 rounded-xl border border-amber-200 bg-amber-50 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+        Automatic cron/interval execution is not enabled in this build. Use <span className="font-semibold">Run Now</span> to execute a workflow manually.
+      </div>
+
       {/* Main content body */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* Scheduled Jobs Grid */}
+        {/* Workflows Grid */}
         <div className="space-y-3">
           <div className="text-xs font-bold text-neutral-800 dark:text-neutral-200 uppercase tracking-wider">
-            Scheduled Workflows ({jobs.length})
+            Workflows ({jobs.length})
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Code2,
   FileText,
@@ -13,6 +13,7 @@ import {
   ExternalLink,
   ChevronRight,
   Database,
+  Trash2,
 } from 'lucide-react';
 import { Artifact } from '../types';
 import { api } from '../api';
@@ -34,14 +35,58 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
   const [activeTab, setActiveTab] = useState<'artifacts' | 'memory' | 'relays'>('artifacts');
   const [selectedFileIdx, setSelectedFileIdx] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [memories, setMemories] = useState<any[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [relayStatus, setRelayStatus] = useState<any>(null);
 
   const selectedArtifact =
     artifacts.find((a) => a.id === activeArtifactId) || artifacts[0];
+
+  useEffect(() => {
+    if (activeTab !== 'memory') return;
+    let cancelled = false;
+    setMemoryLoading(true);
+    api
+      .getMemories()
+      .then((items) => {
+        if (!cancelled) setMemories(Array.isArray(items) ? items : []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setMemoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'relays') return;
+    let cancelled = false;
+    api
+      .getStatus()
+      .then((status) => {
+        if (!cancelled) setRelayStatus(status);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleForgetMemory = async (key: string) => {
+    try {
+      await api.deleteMemory(key);
+      setMemories((prev) => prev.filter((item) => item.key !== key));
+    } catch {
+      // Keep the row when the daemon refuses the delete.
+    }
   };
 
   return (
@@ -279,26 +324,44 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
               </h4>
             </div>
             <p className="text-[12px] text-neutral-500 leading-relaxed">
-              ODON retains project architectural decisions, preferences, and facts across sessions in SQLite.
+              Live entries from the agent's SQLite memory. These are the facts and preferences it recalls across sessions.
             </p>
-            <div className="space-y-2 pt-2">
-              {[
-                { key: 'ui_style', val: 'Clean ChatGPT style, no AI slop, high-contrast typography', cat: 'design' },
-                { key: 'framework', val: 'React 19, TypeScript, Tailwind CSS, Vite', cat: 'tech-stack' },
-                { key: 'runtime', val: 'Native Rust agent loop with SQLite durability', cat: 'architecture' },
-                { key: 'relays', val: 'Telegram long-polling & local HTTP/SSE server active', cat: 'system' },
-              ].map((m, i) => (
-                <div key={i} className="p-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-[12px]">
-                  <div className="flex items-center justify-between font-mono text-[11px] text-neutral-500 mb-1">
-                    <span>{m.key}</span>
-                    <span className="px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
-                      {m.cat}
-                    </span>
+            {memoryLoading ? (
+              <div className="text-center py-8 text-neutral-400 text-[12px]">Loading memories…</div>
+            ) : memories.length === 0 ? (
+              <div className="text-center py-8 text-neutral-400 text-[12px]">
+                No long-term memories yet. Ask the agent to remember something, or use the memory_store tool.
+              </div>
+            ) : (
+              <div className="space-y-2 pt-2">
+                {memories.map((memory) => (
+                  <div key={memory.key} className="p-2.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-[12px]">
+                    <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-neutral-500 mb-1">
+                      <span className="truncate">{memory.key}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
+                          {memory.category || 'general'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleForgetMemory(memory.key)}
+                          title="Forget this memory"
+                          className="p-0.5 rounded text-neutral-400 hover:text-rose-500"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-neutral-800 dark:text-neutral-200 whitespace-pre-wrap break-words">{memory.value}</div>
+                    {memory.updated_at && (
+                      <div className="text-[10px] text-neutral-400 mt-1">
+                        {new Date(memory.updated_at).toLocaleString()}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-neutral-800 dark:text-neutral-200">{m.val}</div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -311,26 +374,53 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                 Universal Relays & Connectors
               </h4>
             </div>
+            <p className="text-[12px] text-neutral-500 leading-relaxed">
+              Live status from the daemon. Configure tokens, allowlists, and QR pairing in Settings → Relays.
+            </p>
             <div className="space-y-2 pt-2">
               {[
-                { name: 'Desktop IPC & HTTP Server', port: '127.0.0.1:4096', active: true, desc: 'Active daemon serving REST and real-time SSE' },
-                { name: 'CLI Channel', port: 'odon chat', active: true, desc: 'Terminal interactive REPL and headless runs' },
-                { name: 'Telegram Bot Relay', port: 'Long-polling', active: false, desc: 'Forward prompts directly via Telegram bot token' },
-                { name: 'WhatsApp Gateway', port: 'Stub Ready', active: false, desc: 'Webhook gateway for WhatsApp multi-device relay' },
-              ].map((r, i) => (
-                <div key={i} className="p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 space-y-1">
+                {
+                  name: 'Desktop IPC & HTTP Server',
+                  port: '127.0.0.1:4096',
+                  active: relayStatus ? !!relayStatus.relays?.desktop_api : true,
+                  desc: 'Daemon serving REST and real-time SSE',
+                },
+                {
+                  name: 'CLI Channel',
+                  port: 'odon chat',
+                  active: relayStatus ? !!relayStatus.relays?.cli : true,
+                  desc: 'Terminal interactive REPL and headless runs',
+                },
+                {
+                  name: 'Telegram Bot Relay',
+                  port: 'Long-polling',
+                  active: !!relayStatus?.relays?.telegram,
+                  desc: relayStatus?.relays?.telegram
+                    ? 'Connected and polling for messages'
+                    : 'Not connected — configure the bot token in Settings → Relays',
+                },
+                {
+                  name: 'WhatsApp Relay',
+                  port: 'Web bridge / Cloud API',
+                  active: !!relayStatus?.relays?.whatsapp,
+                  desc: relayStatus?.relays?.whatsapp
+                    ? 'Connected — QR/pairing session or Cloud API webhook is live'
+                    : 'Not connected — pair a device or configure Cloud API in Settings → Relays',
+                },
+              ].map((relay, index) => (
+                <div key={index} className="p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-[12.5px] font-semibold text-neutral-900 dark:text-neutral-100">{r.name}</span>
+                    <span className="text-[12.5px] font-semibold text-neutral-900 dark:text-neutral-100">{relay.name}</span>
                     <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${
-                      r.active
+                      relay.active
                         ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
                         : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'
                     }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${r.active ? 'bg-emerald-500' : 'bg-neutral-400'}`}></span>
-                      {r.active ? 'Active' : 'Standby'}
+                      <span className={`w-1.5 h-1.5 rounded-full ${relay.active ? 'bg-emerald-500' : 'bg-neutral-400'}`}></span>
+                      {relay.active ? 'Active' : 'Standby'}
                     </span>
                   </div>
-                  <div className="text-[11.5px] text-neutral-500">{r.desc}</div>
+                  <div className="text-[11.5px] text-neutral-500">{relay.desc}</div>
                 </div>
               ))}
             </div>

@@ -298,6 +298,7 @@ impl ApprovalEngine {
                 if audit.len() > 500 {
                     audit.truncate(500);
                 }
+                Self::persist_audit_record(&audit[0], &self.audit_path);
             }
 
             let _ = entry.sender.send(decision);
@@ -339,6 +340,19 @@ impl ApprovalEngine {
 
     pub async fn get_audit_history(&self) -> Vec<AuditRecord> {
         self.audit_history.read().await.clone()
+    }
+
+    fn persist_audit_record(record: &AuditRecord, path: &PathBuf) {
+        if let Ok(line) = serde_json::to_string(record) {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "{line}")
+                });
+        }
     }
 
     pub async fn get_always_allowed(&self) -> Vec<String> {

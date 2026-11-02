@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod antigravity;
 pub mod codex;
+pub mod codex_catalog;
 pub mod copilot;
 pub mod host_creds;
 pub mod multimodal;

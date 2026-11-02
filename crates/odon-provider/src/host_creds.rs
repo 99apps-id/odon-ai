@@ -171,3 +171,34 @@ pub async fn discover_antigravity() -> Option<OAuthToken> {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct CodexHostAuth {
+    pub access_token: String,
+    pub account_id: Option<String>,
+}
+
+/// Read the ChatGPT/Codex CLI login. The Codex CLI stores the session in
+/// `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`).
+pub fn discover_codex() -> Option<CodexHostAuth> {
+    let home = std::env::var_os("CODEX_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
+    let text = std::fs::read_to_string(home.join("auth.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let tokens = value.get("tokens")?;
+    let access_token = tokens.get("access_token")?.as_str()?.trim().to_string();
+    if access_token.is_empty() {
+        return None;
+    }
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Some(CodexHostAuth {
+        access_token,
+        account_id,
+    })
+}

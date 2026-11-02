@@ -18,6 +18,9 @@ pub struct OpenAiCodexProvider {
     base_url: String,
     access_token: String,
     account_id: Option<String>,
+    session_id: String,
+    models_cache:
+        tokio::sync::Mutex<Option<(std::time::Instant, Vec<crate::codex_catalog::CodexModelInfo>)>>,
 }
 
 impl OpenAiCodexProvider {
@@ -26,14 +29,44 @@ impl OpenAiCodexProvider {
         account_id: Option<String>,
         custom_base: Option<&str>,
     ) -> Self {
+        let session_id = format!(
+            "odon-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        );
         Self {
             client: reqwest::Client::new(),
             base_url: custom_base
-                .unwrap_or("https://chatgpt.com/backend-api")
+                .unwrap_or("https://chatgpt.com/backend-api/codex")
                 .to_string(),
             access_token: access_token.into(),
             account_id,
+            session_id,
+            models_cache: tokio::sync::Mutex::new(None),
         }
+    }
+
+    async fn codex_models(&self) -> Option<Vec<crate::codex_catalog::CodexModelInfo>> {
+        if !self.base_url.contains("chatgpt.com") {
+            return None;
+        }
+        {
+            let cache = self.models_cache.lock().await;
+            if let Some((fetched_at, models)) = cache.as_ref() {
+                if fetched_at.elapsed() < std::time::Duration::from_secs(5 * 60) {
+                    return Some(models.clone());
+                }
+            }
+        }
+        let models = crate::codex_catalog::fetch_models_with_token(
+            &self.access_token,
+            self.account_id.as_deref(),
+        )
+        .await?;
+        *self.models_cache.lock().await = Some((std::time::Instant::now(), models.clone()));
+        Some(models)
     }
 }
 
@@ -49,6 +82,26 @@ impl ModelProvider for OpenAiCodexProvider {
         event_sender: Sender<StreamEvent>,
         cancellation: CancellationToken,
     ) -> Result<()> {
+        let requested = request.model.trim().to_string();
+        if !requested.is_empty() && requested != "auto" && requested != "odon-auto" {
+            if let Some(models) = self.codex_models().await {
+                if !models.iter().any(|model| model.id == requested) {
+                    let available = models
+                        .iter()
+                        .map(|model| model.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(OdonError::Provider {
+                        provider: "openai-codex".to_string(),
+                        message: format!(
+                            "Model '{}' is not available for this ChatGPT account. Pick another model. Available: {}",
+                            requested, available
+                        ),
+                    });
+                }
+            }
+        }
+
         let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
 
         let mut headers = HeaderMap::new();
@@ -64,6 +117,14 @@ impl ModelProvider for OpenAiCodexProvider {
         );
         headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
         headers.insert("version", HeaderValue::from_static(CODEX_CLI_VERSION));
+        headers.insert(
+            "session_id",
+            HeaderValue::from_str(&self.session_id)
+                .map_err(|e| OdonError::Provider {
+                    provider: "openai-codex".to_string(),
+                    message: format!("Invalid Codex session id: {e}"),
+                })?,
+        );
 
         if let Some(acc) = &self.account_id {
             if let Ok(val) = HeaderValue::from_str(acc) {

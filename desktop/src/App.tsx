@@ -3014,13 +3014,13 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
                 <span className="text-neutral-600">Telegram Bot Relay</span>
                 <span className={`font-semibold ${systemStatus?.relays.telegram ? 'text-emerald-600' : 'text-neutral-700'}`}>
-                  {systemStatus?.relays.telegram ? 'Connected & polling' : 'Standby (TELEGRAM_BOT_TOKEN not set)'}
+                  {systemStatus?.relays.telegram ? 'Connected & polling' : 'Standby — configure in Settings → Relays'}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
                 <span className="text-neutral-600">WhatsApp Cloud Relay</span>
                 <span className={`font-semibold ${systemStatus?.relays.whatsapp ? 'text-emerald-600' : 'text-neutral-700'}`}>
-                  {systemStatus?.relays.whatsapp ? 'Connected (webhook ready)' : 'Standby (WhatsApp env not set)'}
+                  {systemStatus?.relays.whatsapp ? 'Connected' : 'Standby — pair in Settings → Relays'}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
@@ -3064,42 +3064,42 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                   <p>
                     ODON can be fully controlled from Telegram. Messages sent to your bot run an autonomous agent turn in the workspace and the final answer is sent back to the same chat. Text, images, PDFs, and text documents are supported.
                   </p>
-                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 font-mono text-[11px] space-y-1">
-                    <div className="text-neutral-500 font-sans text-[10px]">Set these in `.env` (or pass --telegram-token):</div>
-                    <div className="text-neutral-800">TELEGRAM_BOT_TOKEN=123456:ABC...</div>
-                    <div className="text-neutral-800">TELEGRAM_ALLOWED_USERS=@yourname,123456789</div>
-                    <div className="mt-1 text-neutral-500 font-sans text-[10px]">Then restart:</div>
-                    <div className="text-blue-600">odond serve</div>
+                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 text-[11px] space-y-1">
+                    <div className="text-neutral-700">
+                      Open <span className="font-semibold">Settings → Relays → Telegram</span>, paste the bot token and allowed user IDs, then click <span className="font-semibold">Save &amp; Connect</span>. No daemon restart is needed.
+                    </div>
+                    <div className="text-neutral-500 text-[10px] pt-1">
+                      Headless deployments can still use TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS.
+                    </div>
                   </div>
                   <div className="text-[11px] text-neutral-500">
                     Status:{' '}
                     <span className={`font-semibold ${systemStatus?.relays.telegram ? 'text-emerald-600' : 'text-amber-600'}`}>
                       {systemStatus?.relays.telegram
                         ? 'Connected — polling for updates'
-                        : 'Standby — waiting for TELEGRAM_BOT_TOKEN'}
+                        : 'Not connected — configure it in Settings → Relays'}
                     </span>
                   </div>
                 </>
               ) : (
                 <>
                   <p>
-                    WhatsApp Cloud API (Meta Graph API) sends messages to ODON through a webhook and ODON replies through the same Cloud API number. Text, images, PDFs, and text documents are supported.
+                    Pair a phone with WhatsApp Web (QR or pairing code) in Settings → Relays, or use the official Meta Cloud API with a public webhook. Text, images, PDFs, and documents are supported.
                   </p>
-                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 font-mono text-[11px] space-y-1">
-                    <div className="text-neutral-500 font-sans text-[10px]">Set these in `.env`:</div>
-                    <div className="text-neutral-800">WHATSAPP_ACCESS_TOKEN=EAAG...</div>
-                    <div className="text-neutral-800">WHATSAPP_PHONE_NUMBER_ID=1234567890</div>
-                    <div className="text-neutral-800">WHATSAPP_VERIFY_TOKEN=my-verify-token</div>
-                    <div className="text-neutral-800">WHATSAPP_APP_SECRET=... (optional)</div>
-                    <div className="mt-1 text-neutral-500 font-sans text-[10px]">Meta webhook URL (must be publicly reachable):</div>
-                    <div className="text-neutral-800 break-all">https://your-domain/api/relays/whatsapp</div>
+                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 text-[11px] space-y-1">
+                    <div className="text-neutral-700">
+                      Use <span className="font-semibold">Settings → Relays → WhatsApp</span> for QR pairing. For Cloud API or headless deployments, set WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN, and optionally WHATSAPP_APP_SECRET.
+                    </div>
+                    <div className="text-neutral-500 text-[10px] pt-1">
+                      Meta webhook URL: <span className="break-all">https://your-domain/api/relays/whatsapp</span>
+                    </div>
                   </div>
                   <div className="text-[11px] text-neutral-500">
                     Status:{' '}
                     <span className={`font-semibold ${systemStatus?.relays.whatsapp ? 'text-emerald-600' : 'text-amber-600'}`}>
                       {systemStatus?.relays.whatsapp
-                        ? 'Connected — webhook ready'
-                        : 'Standby — waiting for WhatsApp env vars'}
+                        ? 'Connected — bridge or webhook is live'
+                        : 'Not connected — pair it in Settings → Relays'}
                     </span>
                   </div>
                 </>

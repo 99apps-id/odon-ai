@@ -143,11 +143,11 @@ export const McpView: React.FC = () => {
                 Model Context Protocol (MCP) Hub
               </h2>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-semibold font-mono">
-                {servers.filter((s) => s.enabled).length} Connected
+                {servers.filter((s) => s.enabled).length} Enabled
               </span>
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Discover external tool servers, stdio/SSE connectors, and custom schema wiring
+              Register external MCP servers. Execution requires the MCP bridge, which is not enabled in this build.
             </p>
           </div>
         </div>
@@ -219,7 +219,7 @@ export const McpView: React.FC = () => {
         {/* Configured Servers Section */}
         <div className="space-y-3 pt-4 border-t border-neutral-200 dark:border-neutral-800">
           <div className="text-xs font-bold text-neutral-800 dark:text-neutral-200 uppercase tracking-wider">
-            Active MCP Servers ({servers.length})
+            Configured MCP Servers ({servers.length})
           </div>
 
           <div className="space-y-3">
@@ -252,7 +252,7 @@ export const McpView: React.FC = () => {
                           </span>
                         </div>
                         <div className="text-[11px] text-neutral-500 font-mono mt-0.5">
-                          {toolsCount} discovered tools
+                          {toolsCount} configured tools
                         </div>
                       </div>
                     </div>
@@ -284,7 +284,7 @@ export const McpView: React.FC = () => {
                     <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 space-y-2">
                       <div className="text-[11px] font-bold text-neutral-700 dark:text-neutral-300">Exposed Tools:</div>
                       {toolsCount === 0 ? (
-                        <p className="text-xs text-neutral-400 italic">No tools discovered for this server yet.</p>
+                        <p className="text-xs text-neutral-400 italic">No tools configured for this server yet.</p>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           {server.tools?.map((tool) => (

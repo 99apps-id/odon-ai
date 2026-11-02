@@ -190,8 +190,21 @@ export const api = {
 
   async getTools(): Promise<any[]> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/tools`);
-    if (!res.ok) throw new Error(`Failed to list tools: ${res.statusText}`);
+    if (!res.ok) return [];
     return res.json();
+  },
+
+  async getMemories(): Promise<any[]> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/memory`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async deleteMemory(key: string): Promise<boolean> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/memory/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
   },
 
   async listSessions(): Promise<Session[]> {

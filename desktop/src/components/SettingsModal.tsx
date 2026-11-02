@@ -1421,7 +1421,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Model Context Protocol (MCP) Servers
               </span>
               <span className="text-xs text-neutral-500">
-                Connect external tool servers via standard stdio or SSE transport protocols.
+                Register external MCP servers (stdio or SSE). Execution requires the MCP bridge, which is not enabled in this build.
               </span>
             </div>
 
@@ -1465,18 +1465,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 onClick={async () => {
                   if (!newMcpName.trim() || !newMcpCommand.trim()) return;
+                  const name = newMcpName.trim();
+                  const id = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+                  const parts = newMcpCommand.trim().split(/\s+/);
                   await api.saveMcpServer({
-                    name: newMcpName.trim(),
+                    id: id || `mcp-${Date.now()}`,
+                    name,
                     transport: newMcpTransport,
-                    command: newMcpCommand.trim(),
-                    status: 'connected',
+                    command: newMcpTransport === 'stdio' ? parts[0] : undefined,
+                    args: newMcpTransport === 'stdio' ? parts.slice(1) : undefined,
+                    url: newMcpTransport === 'sse' ? newMcpCommand.trim() : undefined,
+                    enabled: true,
+                    tools: [],
                   });
                   const servers = await api.getMcpServers();
                   setMcpServers(servers || []);
                   setNewMcpName('');
                   setNewMcpCommand('');
                 }}
-                disabled={!newMcpName.trim()}
+                disabled={!newMcpName.trim() || !newMcpCommand.trim()}
                 className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 cursor-pointer shadow-xs"
               >
                 Register MCP Server
@@ -1486,21 +1493,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* List MCP Servers */}
             <div className="space-y-2">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-                Connected MCP Servers ({mcpServers.length})
+                Configured MCP Servers ({mcpServers.length})
               </span>
               {mcpServers.length === 0 ? (
                 <div className="p-6 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center text-xs text-neutral-400">
-                  No custom MCP servers configured. Built-in tools (149) are active.
+                  No custom MCP servers configured. Built-in tools are active.
                 </div>
               ) : (
                 mcpServers.map((s, idx) => (
                   <div key={idx} className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-850 flex items-center justify-between">
                     <div>
                       <div className="font-semibold text-xs text-neutral-900 dark:text-white">{s.name}</div>
-                      <div className="text-[11px] text-neutral-400 font-mono">{s.command}</div>
+                      <div className="text-[11px] text-neutral-400 font-mono">
+                        {s.transport === 'sse' ? s.url : [s.command, ...(s.args || [])].filter(Boolean).join(' ')}
+                      </div>
                     </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
-                      Connected
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600 font-semibold">
+                      Configured
                     </span>
                   </div>
                 ))

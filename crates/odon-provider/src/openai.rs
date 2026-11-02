@@ -58,6 +58,17 @@ fn copilot_escalate(err: &OdonError) -> bool {
         || message.contains("model_not_supported")
 }
 
+/// GPT-6 and the newer Codex models expose tool calling through the Responses
+/// API; Chat Completions cannot carry the agent's tools reliably.
+fn openai_prefers_responses(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gpt-6")
+        || model.starts_with("gpt-5.6")
+        || model.starts_with("gpt-5.5")
+        || model.starts_with("gpt-5.4")
+        || model.contains("codex")
+}
+
 impl OpenAiCompatibleProvider {
     pub fn new(
         base_url: impl Into<String>,
@@ -243,7 +254,7 @@ impl OpenAiCompatibleProvider {
         }
         if self.is_copilot_responses_model(&model) {
             return self
-                .stream_copilot_responses(&headers, &model, &request, event_sender, cancellation)
+                .stream_copilot_responses(&headers, &request, event_sender, cancellation)
                 .await;
         }
 
@@ -260,7 +271,7 @@ impl OpenAiCompatibleProvider {
             if copilot_escalate(err) && !lower.contains("gemini") {
                 self.mark_copilot_responses(&model);
                 return self
-                    .stream_copilot_responses(&headers, &model, &request, event_sender, cancellation)
+                    .stream_copilot_responses(&headers, &request, event_sender, cancellation)
                     .await;
             }
         }
@@ -468,15 +479,14 @@ impl OpenAiCompatibleProvider {
         Ok(())
     }
 
-    async fn stream_copilot_responses(
+    async fn stream_responses_request(
         &self,
+        endpoint: &str,
         headers: &HeaderMap,
-        model: &str,
         request: &ChatRequest,
         event_sender: Sender<StreamEvent>,
         cancellation: CancellationToken,
     ) -> Result<()> {
-        let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let mut input_items = Vec::new();
         for msg in &request.messages {
             match msg.role {
@@ -525,13 +535,16 @@ impl OpenAiCompatibleProvider {
         }
 
         let mut body = json!({
-            "model": model,
+            "model": request.model,
             "stream": true,
             "store": false,
             "input": input_items,
         });
         if let Some(system) = &request.system_prompt {
             body["instructions"] = json!(system);
+        }
+        if let Some(effort) = &request.effort {
+            body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
         }
         if !request.tools.is_empty() {
             let tools: Vec<_> = request
@@ -552,14 +565,14 @@ impl OpenAiCompatibleProvider {
 
         let response = self
             .client
-            .post(&endpoint)
+            .post(endpoint)
             .headers(headers.clone())
             .json(&body)
             .send()
             .await
             .map_err(|e| OdonError::Provider {
-                provider: "github-copilot".to_string(),
-                message: format!("Could not reach GitHub Copilot: {e}"),
+                provider: self.provider_label.clone(),
+                message: format!("Could not reach {}: {e}", self.provider_label),
             })?;
 
         if !response.status().is_success() {
@@ -570,12 +583,12 @@ impl OpenAiCompatibleProvider {
                 err_body.push_str("…");
             }
             return Err(OdonError::Provider {
-                provider: "github-copilot".to_string(),
+                provider: self.provider_label.clone(),
                 message: format!(
                     "HTTP {} from {} (model: {}). Response: {}",
                     status.as_u16(),
                     endpoint,
-                    model,
+                    request.model,
                     err_body.trim()
                 ),
             });
@@ -637,7 +650,7 @@ impl OpenAiCompatibleProvider {
                                         .pointer("/response/error/message")
                                         .or_else(|| val.pointer("/error/message"))
                                         .and_then(|message| message.as_str())
-                                        .unwrap_or("GitHub Copilot response error");
+                                        .unwrap_or("Responses API error");
                                     let _ = event_sender.send(StreamEvent::Error(message.to_string())).await;
                                     break;
                                 }
@@ -662,6 +675,18 @@ impl OpenAiCompatibleProvider {
         }
 
         Ok(())
+    }
+
+    async fn stream_copilot_responses(
+        &self,
+        headers: &HeaderMap,
+        request: &ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
+        self.stream_responses_request(&endpoint, headers, request, event_sender, cancellation)
+            .await
     }
 
     pub fn new_deepseek(api_key: impl Into<String>) -> Self {
@@ -695,6 +720,21 @@ impl ModelProvider for OpenAiCompatibleProvider {
     ) -> Result<()> {
         if self.provider_label == "github-copilot" {
             return self.stream_copilot(request, event_sender, cancellation).await;
+        }
+
+        if self.provider_label == "openai" && openai_prefers_responses(&request.model) {
+            let token = self.current_token().await;
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            if !token.is_empty() {
+                if let Ok(auth) = HeaderValue::from_str(&format!("Bearer {token}")) {
+                    headers.insert(AUTHORIZATION, auth);
+                }
+            }
+            let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
+            return self
+                .stream_responses_request(&endpoint, &headers, &request, event_sender, cancellation)
+                .await;
         }
 
         let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
@@ -997,6 +1037,15 @@ mod tests {
             message: "HTTP 401 unauthorized".to_string(),
         };
         assert!(!copilot_escalate(&auth));
+    }
+
+    #[test]
+    fn openai_gpt6_uses_responses() {
+        assert!(openai_prefers_responses("gpt-6-astra"));
+        assert!(openai_prefers_responses("gpt-6.1-sol"));
+        assert!(openai_prefers_responses("gpt-5.6-terra"));
+        assert!(openai_prefers_responses("gpt-5.3-codex"));
+        assert!(!openai_prefers_responses("gpt-4o"));
     }
 
     #[test]
