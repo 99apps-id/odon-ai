@@ -523,7 +523,7 @@ impl Tool for HttpPostTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url_str = args
@@ -631,6 +631,9 @@ impl Tool for PortScanTool {
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
+    }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Experimental
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let host = args

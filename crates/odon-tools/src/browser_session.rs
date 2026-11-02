@@ -450,6 +450,225 @@ impl Tool for BrowserSessionClickTool {
     }
 }
 
+pub struct BrowserSessionTextTool;
+#[async_trait]
+impl Tool for BrowserSessionTextTool {
+    fn name(&self) -> &str {
+        "browser_session_text"
+    }
+    fn description(&self) -> &str {
+        "Read visible page text and links from a live persistent browser session"
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" } }),
+            json!(["session_id"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("session_id is required"))?;
+        let js = "(()=>{const text=document.body?document.body.innerText:'';const links=[...document.links].slice(0,100).map(a=>({text:(a.innerText||'').trim().slice(0,200),href:a.href})).filter(x=>x.href);return JSON.stringify({title:document.title,url:location.href,text:text.slice(0,50000),links})})()";
+        let value = cdp(
+            id,
+            "Runtime.evaluate",
+            json!({ "expression": js, "returnByValue": true }),
+        )
+        .await?;
+        let raw = value
+            .pointer("/result/result/value")
+            .and_then(Value::as_str)
+            .unwrap_or("{}");
+        let parsed: Value =
+            serde_json::from_str(raw).map_err(|e| err(format!("failed to parse page data: {e}")))?;
+        Ok(parsed)
+    }
+}
+
+pub struct BrowserSessionTypeTool;
+#[async_trait]
+impl Tool for BrowserSessionTypeTool {
+    fn name(&self) -> &str {
+        "browser_session_type"
+    }
+    fn description(&self) -> &str {
+        "Set the value of an input, textarea, or contenteditable element in a live browser session"
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" } }),
+            json!(["session_id", "selector", "text"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("session_id is required"))?;
+        let selector = args
+            .get("selector")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("selector is required"))?;
+        let text = args
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let js = format!(
+            "(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');if(e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement){{e.focus();e.value={};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));}}else{{e.focus();e.textContent={};e.dispatchEvent(new InputEvent('input',{{bubbles:true}}));}}return true}})()",
+            serde_json::to_string(selector).unwrap(),
+            serde_json::to_string(text).unwrap(),
+            serde_json::to_string(text).unwrap()
+        );
+        Ok(cdp(
+            id,
+            "Runtime.evaluate",
+            json!({ "expression": js, "returnByValue": true }),
+        )
+        .await?)
+    }
+}
+
+pub struct BrowserSessionWaitTool;
+#[async_trait]
+impl Tool for BrowserSessionWaitTool {
+    fn name(&self) -> &str {
+        "browser_session_wait"
+    }
+    fn description(&self) -> &str {
+        "Wait until an element exists and is visible in a live browser session"
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "timeout_ms": { "type": "integer", "description": "Maximum wait time (default 5000, max 30000)" } }),
+            json!(["session_id", "selector"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("session_id is required"))?;
+        let selector = args
+            .get("selector")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("selector is required"))?;
+        let timeout_ms = args
+            .get("timeout_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(5_000)
+            .clamp(100, 30_000);
+        let js = format!(
+            "(()=>{{const e=document.querySelector({});if(!e)return false;const r=e.getBoundingClientRect();const style=getComputedStyle(e);return r.width>0&&r.height>0&&style.visibility!=='hidden'&&style.display!=='none'}})()",
+            serde_json::to_string(selector).unwrap()
+        );
+        let started = std::time::Instant::now();
+        while started.elapsed().as_millis() < timeout_ms as u128 {
+            let value = cdp(
+                id,
+                "Runtime.evaluate",
+                json!({ "expression": js, "returnByValue": true }),
+            )
+            .await?;
+            if value
+                .pointer("/result/result/value")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                return Ok(json!({
+                    "session_id": id,
+                    "selector": selector,
+                    "visible": true,
+                    "elapsed_ms": started.elapsed().as_millis()
+                }));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        Ok(json!({
+            "session_id": id,
+            "selector": selector,
+            "visible": false,
+            "elapsed_ms": started.elapsed().as_millis(),
+            "timeout": true
+        }))
+    }
+}
+
+pub struct BrowserSessionScreenshotTool;
+#[async_trait]
+impl Tool for BrowserSessionScreenshotTool {
+    fn name(&self) -> &str {
+        "browser_session_screenshot"
+    }
+    fn description(&self) -> &str {
+        "Capture a PNG screenshot from a live browser session and save it in the workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "filename": { "type": "string", "description": "Workspace-relative PNG path (default generated/browser/<session>.png)" } }),
+            json!(["session_id"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("session_id is required"))?;
+        let fallback = format!("generated/browser/{id}.png");
+        let requested = args
+            .get("filename")
+            .and_then(Value::as_str)
+            .unwrap_or(&fallback);
+        if !requested.to_ascii_lowercase().ends_with(".png") {
+            return Err(err("filename must end with .png"));
+        }
+        let path = crate::workspace_path::resolve_write(&ctx.workspace_root, requested)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| err(e.to_string()))?;
+        }
+        let value = cdp(
+            id,
+            "Page.captureScreenshot",
+            json!({ "format": "png", "captureBeyondViewport": true }),
+        )
+        .await?;
+        let data = value
+            .pointer("/result/data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("browser did not return screenshot data"))?;
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| err(format!("invalid screenshot payload: {e}")))?;
+        std::fs::write(&path, &bytes).map_err(|e| err(e.to_string()))?;
+        let relative = path
+            .strip_prefix(std::path::Path::new(&ctx.workspace_root))
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        Ok(json!({
+            "session_id": id,
+            "path": relative,
+            "absolute_path": path,
+            "bytes": bytes.len(),
+            "status": "saved"
+        }))
+    }
+}
+
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 /// Load all persisted session metadata from disk into the in-memory store.
@@ -460,6 +679,34 @@ pub fn store_init(workspace_root: &str) {
     tokio::spawn(async move {
         load_persisted_sessions(&root).await;
     });
+}
+
+/// Count live and persisted browser sessions so capability status reflects the
+/// actual browser session runtime rather than a hardcoded false value.
+pub async fn session_status_counts(workspace_root: &str) -> (usize, usize) {
+    let persisted_count = {
+        let map = persisted().lock().await;
+        map.len()
+    };
+    let live_count = {
+        let map = live().lock().await;
+        map.len()
+    };
+    if persisted_count > 0 || live_count > 0 {
+        (live_count, persisted_count)
+    } else {
+        // Cover cases where startup loading has not completed yet.
+        let dir = sessions_dir(workspace_root);
+        let count = std::fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.path().join(METADATA_FILE).is_file())
+                    .count()
+            })
+            .unwrap_or(0);
+        (live_count, count)
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

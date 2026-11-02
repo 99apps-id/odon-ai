@@ -121,7 +121,7 @@ impl Tool for HttpPutTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
@@ -168,7 +168,7 @@ impl Tool for HttpPatchTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");

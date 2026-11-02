@@ -283,7 +283,7 @@ impl Tool for TodoUpdateTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let storage = ctx
@@ -304,7 +304,7 @@ impl Tool for TodoUpdateTool {
             Vec::new()
         };
 
-        let mut found = false;
+        let mut updated: Vec<Value> = Vec::new();
         for item in list.iter_mut() {
             let item_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
             let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -313,23 +313,30 @@ impl Tool for TodoUpdateTool {
                 if let Some(t) = args.get("title").and_then(|t| t.as_str()) {
                     item["title"] = json!(t);
                 }
-                found = true;
+                updated.push(item.clone());
                 break;
             }
         }
 
-        if !found {
-            list.push(json!({
-                "id": id,
-                "title": args.get("title").and_then(|t| t.as_str()).unwrap_or(id),
-                "status": new_status
-            }));
+        if updated.is_empty() {
+            return Err(tool_err(
+                self.name(),
+                format!("todo item '{id}' was not found; use todo_read first"),
+            ));
         }
 
-        let serialized = serde_json::to_string(&list).unwrap_or_default();
+        // Reuse the same validation/invariants as todo_write: bounded list,
+        // valid status, and exactly one in_progress item.
+        let validated = normalize_todos(self.name(), &json!(list))?;
+        let serialized = serde_json::to_string(&validated).unwrap_or_default();
         let _ = storage.set_memory(&key, &serialized, "todos");
 
-        Ok(json!({ "updated_id": id, "status": new_status, "count": list.len() }))
+        Ok(json!({
+            "updated_id": updated[0]["id"],
+            "status": updated[0]["status"],
+            "count": validated.as_array().map(|items| items.len()).unwrap_or(0),
+            "todos": validated
+        }))
     }
 }
 

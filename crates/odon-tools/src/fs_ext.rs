@@ -183,35 +183,65 @@ impl Tool for FsChmodTool {
     }
 }
 
-// 3. fs_chown
-pub struct FsChownTool;
+// 3. fs_owner_check (read-only; never claims to mutate ownership)
+pub struct FsOwnerCheckTool;
 #[async_trait]
-impl Tool for FsChownTool {
+impl Tool for FsOwnerCheckTool {
     fn name(&self) -> &str {
-        "fs_chown"
+        "fs_owner_check"
     }
     fn description(&self) -> &str {
-        "Inspect or update ownership metadata for a workspace file"
+        "Inspect ownership and permission metadata for a workspace path without modifying it"
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "File or folder path" },
-                "owner": { "type": "string", "description": "Target owner or user" }
+                "path": { "type": "string", "description": "File or folder path" }
             },
             "required": ["path"]
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-        let _ = resolve_path(&ctx.workspace_root, rel)?;
-        Ok(
-            json!({ "path": rel, "owner": args.get("owner").and_then(|o| o.as_str()).unwrap_or("current"), "status": "verified" }),
-        )
+        let input = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let path = crate::workspace_path::resolve_existing(&ctx.workspace_root, input)?;
+        let metadata = std::fs::metadata(&path).map_err(|error| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("cannot read path metadata: {error}"),
+        })?;
+        let readonly = metadata.permissions().readonly();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            use std::os::unix::fs::PermissionsExt;
+            let mode = format!("{:o}", metadata.permissions().mode());
+            return Ok(json!({
+                "path": path,
+                "uid": metadata.uid(),
+                "gid": metadata.gid(),
+                "mode": mode,
+                "readonly": readonly,
+                "is_file": metadata.is_file(),
+                "is_dir": metadata.is_dir(),
+                "status": "inspected"
+            }));
+        }
+
+        #[cfg(not(unix))]
+        {
+            Ok(json!({
+                "path": path,
+                "readonly": readonly,
+                "is_file": metadata.is_file(),
+                "is_dir": metadata.is_dir(),
+                "unix_ownership": "not applicable on this platform",
+                "status": "inspected"
+            }))
+        }
     }
 }
 
@@ -1037,13 +1067,16 @@ impl Tool for TermigoPasteBufferHistoryTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Paste buffer history capture is not implemented yet".to_string(),
+        }
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        Ok(json!({
-            "buffers": [
-                { "id": "buf_1", "preview": "cargo test --workspace", "timestamp": "recent" },
-                { "id": "buf_2", "preview": "import { api } from './api';", "timestamp": "recent" }
-            ]
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "Paste buffer history capture is not implemented yet".to_string(),
+        })
     }
 }
 
@@ -1071,12 +1104,20 @@ impl Tool for EditorOpenTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Desktop editor open integration is not connected yet".to_string(),
+        }
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let line = args.get("line").and_then(|l| l.as_u64()).unwrap_or(1);
         let col = args.get("column").and_then(|c| c.as_u64()).unwrap_or(1);
         let _ = resolve_path(&ctx.workspace_root, rel)?;
-        Ok(json!({ "path": rel, "line": line, "column": col, "status": "opened_in_editor" }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Desktop editor open integration is not connected yet ({rel}:{line}:{col})"),
+        })
     }
 }
 
@@ -1101,10 +1142,18 @@ impl Tool for EditorRevealTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Workspace file-tree reveal integration is not connected yet".to_string(),
+        }
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let _ = resolve_path(&ctx.workspace_root, rel)?;
-        Ok(json!({ "path": rel, "status": "revealed" }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Workspace file-tree reveal integration is not connected yet ({rel})"),
+        })
     }
 }
 

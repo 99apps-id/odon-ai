@@ -513,6 +513,156 @@ impl Tool for SftpListTool {
     }
 }
 
+fn clip_ssh_output(raw: &[u8], limit: usize) -> String {
+    if raw.len() <= limit {
+        String::from_utf8_lossy(raw).to_string()
+    } else {
+        String::from_utf8_lossy(&raw[..limit]).to_string()
+    }
+}
+
+async fn run_ssh_command(
+    profile_id: &str,
+    command: &str,
+    timeout_secs: u64,
+    tool_name: &str,
+) -> Result<Value> {
+    if command.trim().is_empty() {
+        return Err(OdonError::Tool {
+            tool: tool_name.to_string(),
+            message: "command is required".to_string(),
+        });
+    }
+    if command.len() > 10_000 {
+        return Err(OdonError::Tool {
+            tool: tool_name.to_string(),
+            message: "command is too long".to_string(),
+        });
+    }
+    let target = load_ssh_target(profile_id)?;
+    let mut cmd = Command::new("ssh");
+    cmd.args(target.ssh_args());
+    cmd.arg(command);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let started = std::time::Instant::now();
+    let execution = timeout(Duration::from_secs(timeout_secs), cmd.output()).await;
+    let output = match execution {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            return Err(OdonError::Tool {
+                tool: tool_name.to_string(),
+                message: format!("ssh execution failed: {e}"),
+            });
+        }
+        Err(_) => {
+            return Err(OdonError::Tool {
+                tool: tool_name.to_string(),
+                message: format!("ssh command timed out after {timeout_secs} seconds"),
+            });
+        }
+    };
+    Ok(json!({
+        "profile_id": profile_id,
+        "command": command,
+        "success": output.status.success(),
+        "exit_code": output.status.code().unwrap_or(-1),
+        "stdout": clip_ssh_output(&output.stdout, 256 * 1024),
+        "stderr": clip_ssh_output(&output.stderr, 256 * 1024),
+        "duration_ms": started.elapsed().as_millis()
+    }))
+}
+
+pub struct SshExecTool;
+#[async_trait::async_trait]
+impl Tool for SshExecTool {
+    fn name(&self) -> &str {
+        "ssh_exec"
+    }
+    fn description(&self) -> &str {
+        "Execute a single command on a configured SSH host"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "profile_id": { "type": "string", "description": "Saved SSH profile ID or alias" },
+                "command": { "type": "string", "description": "Remote command to execute" },
+                "timeout_secs": { "type": "integer", "description": "Execution timeout (default 30, max 300)" }
+            },
+            "required": ["profile_id", "command"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let profile_id = args
+            .get("profile_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'profile_id' parameter".to_string(),
+            })?;
+        let command = args
+            .get("command")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'command' parameter".to_string(),
+            })?;
+        let timeout_secs = args
+            .get("timeout_secs")
+            .and_then(Value::as_u64)
+            .unwrap_or(30)
+            .clamp(1, 300);
+        run_ssh_command(profile_id, command, timeout_secs, self.name()).await
+    }
+}
+
+pub struct SshProfileTestTool;
+#[async_trait::async_trait]
+impl Tool for SshProfileTestTool {
+    fn name(&self) -> &str {
+        "ssh_profile_test"
+    }
+    fn description(&self) -> &str {
+        "Verify that a saved SSH profile can authenticate and execute a harmless echo command"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "profile_id": { "type": "string", "description": "Saved SSH profile ID or alias" }
+            },
+            "required": ["profile_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let profile_id = args
+            .get("profile_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'profile_id' parameter".to_string(),
+            })?;
+        let mut result =
+            run_ssh_command(profile_id, "echo odon-ssh-ok", 15, self.name()).await?;
+        if let Some(object) = result.as_object_mut() {
+            object.insert(
+                "authenticated".into(),
+                json!(object.get("success").and_then(Value::as_bool).unwrap_or(false)),
+            );
+            object.remove("command");
+        }
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

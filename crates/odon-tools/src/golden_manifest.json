@@ -4,6 +4,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -12,6 +13,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -20,6 +22,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -28,6 +31,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -36,6 +40,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -44,6 +49,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "approval_history",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -52,6 +67,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "approval_policy_revoke",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -60,6 +85,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -68,6 +94,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -76,6 +103,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -84,6 +112,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -92,6 +121,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -100,6 +130,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -108,6 +139,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -116,6 +148,25 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "audit_search",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "automation_delete",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -124,6 +175,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "automation_logs",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -132,6 +193,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "automation_update",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -140,6 +211,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -148,6 +220,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -156,6 +229,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -164,6 +238,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -172,6 +247,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -180,6 +256,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -188,6 +265,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -196,6 +274,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -204,6 +283,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -212,6 +292,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -220,6 +301,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -228,6 +310,43 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_screenshot",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_text",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_type",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_wait",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -236,6 +355,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -244,6 +364,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -252,30 +373,40 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
   {
     "name": "clipboard_read",
     "availability": {
-      "status": "stable"
+      "status": "unavailable",
+      "reason": "Native clipboard access is not implemented yet"
     },
-    "ready": true,
-    "issues": []
+    "visibility": "model",
+    "ready": false,
+    "issues": [
+      "Native clipboard access is not implemented yet"
+    ]
   },
   {
     "name": "clipboard_write",
     "availability": {
-      "status": "stable"
+      "status": "unavailable",
+      "reason": "Native clipboard write is not implemented yet"
     },
-    "ready": true,
-    "issues": []
+    "visibility": "model",
+    "ready": false,
+    "issues": [
+      "Native clipboard write is not implemented yet"
+    ]
   },
   {
     "name": "code_index",
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -284,6 +415,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -292,6 +424,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -300,6 +433,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -308,6 +442,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -316,6 +451,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -324,6 +460,25 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "daemon_metrics",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "daemon_status",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -332,6 +487,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -340,6 +496,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -348,6 +505,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -356,6 +514,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -364,6 +523,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -372,6 +532,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -380,6 +541,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "doctor",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -388,38 +559,49 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
   {
     "name": "editor_open",
     "availability": {
-      "status": "stable"
+      "status": "unavailable",
+      "reason": "Desktop editor open integration is not connected yet"
     },
-    "ready": true,
-    "issues": []
+    "visibility": "model",
+    "ready": false,
+    "issues": [
+      "Desktop editor open integration is not connected yet"
+    ]
   },
   {
     "name": "editor_reload",
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
   {
     "name": "editor_reveal",
     "availability": {
-      "status": "stable"
+      "status": "unavailable",
+      "reason": "Workspace file-tree reveal integration is not connected yet"
     },
-    "ready": true,
-    "issues": []
+    "visibility": "model",
+    "ready": false,
+    "issues": [
+      "Workspace file-tree reveal integration is not connected yet"
+    ]
   },
   {
     "name": "editor_save",
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -428,6 +610,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -436,6 +619,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -444,6 +628,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -452,6 +637,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -460,6 +646,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -468,6 +655,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -476,6 +664,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -484,6 +673,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -492,6 +682,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -500,14 +691,7 @@
     "availability": {
       "status": "stable"
     },
-    "ready": true,
-    "issues": []
-  },
-  {
-    "name": "fs_chown",
-    "availability": {
-      "status": "stable"
-    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -516,6 +700,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -524,6 +709,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -532,6 +718,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -540,6 +727,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -548,6 +736,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -556,6 +745,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -564,6 +754,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -572,6 +763,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "fs_owner_check",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -580,6 +781,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -588,6 +790,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -596,6 +799,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -604,6 +808,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -612,6 +817,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -620,6 +826,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -628,6 +835,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -636,6 +844,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -644,6 +853,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -652,6 +862,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -660,6 +871,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -668,6 +880,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -676,6 +889,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -684,6 +898,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -692,6 +907,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -700,6 +916,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -708,6 +925,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -716,6 +934,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -724,6 +943,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -732,6 +952,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -740,6 +961,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -748,6 +970,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -756,6 +979,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -764,6 +988,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -772,6 +997,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -780,6 +1006,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -788,6 +1015,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -796,6 +1024,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -804,6 +1033,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -812,6 +1042,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -820,6 +1051,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -828,6 +1060,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -836,6 +1069,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -844,6 +1078,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -852,6 +1087,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -860,6 +1096,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -868,6 +1105,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -876,6 +1114,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -884,6 +1123,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -892,6 +1132,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -900,6 +1141,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -908,6 +1150,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -916,6 +1159,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -924,6 +1168,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -932,6 +1177,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -940,6 +1186,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -948,6 +1195,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -956,6 +1204,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -964,6 +1213,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -972,6 +1222,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -980,6 +1231,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -988,6 +1240,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -996,6 +1249,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1004,6 +1258,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1012,6 +1267,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1020,6 +1276,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1028,6 +1285,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1036,6 +1294,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1044,6 +1303,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1052,6 +1312,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1060,22 +1321,28 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
   {
     "name": "mcp_call_stream",
     "availability": {
-      "status": "stable"
+      "status": "unavailable",
+      "reason": "MCP progress streaming is not implemented yet; use mcp_call"
     },
-    "ready": true,
-    "issues": []
+    "visibility": "model",
+    "ready": false,
+    "issues": [
+      "MCP progress streaming is not implemented yet; use mcp_call"
+    ]
   },
   {
     "name": "mcp_list_servers",
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1084,6 +1351,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1092,6 +1360,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1100,6 +1369,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1108,6 +1378,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1116,6 +1387,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1124,6 +1396,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1132,6 +1405,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1140,6 +1414,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1148,6 +1423,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1156,6 +1432,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1164,14 +1441,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
   {
     "name": "port_scan",
     "availability": {
-      "status": "stable"
+      "status": "experimental"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1180,6 +1459,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1188,6 +1468,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1196,6 +1477,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1204,6 +1486,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1212,6 +1495,34 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "provider_list",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "provider_set_default",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "provider_test",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1220,6 +1531,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1228,6 +1540,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1236,6 +1549,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1244,6 +1558,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1252,6 +1567,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1260,6 +1576,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1268,6 +1585,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1276,6 +1594,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1284,6 +1603,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1292,6 +1612,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1300,6 +1621,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": false,
     "issues": [
       "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
@@ -1310,6 +1632,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": false,
     "issues": [
       "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
@@ -1320,16 +1643,36 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": false,
     "issues": [
       "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
     ]
   },
   {
+    "name": "session_delete",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "session_export",
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "session_get",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1338,6 +1681,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "session_messages",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1347,6 +1700,7 @@
       "status": "unavailable",
       "reason": "Session switching must be performed by the agent runtime; a tool call cannot mutate its immutable execution context"
     },
+    "visibility": "model",
     "ready": false,
     "issues": [
       "Session switching must be performed by the agent runtime; a tool call cannot mutate its immutable execution context"
@@ -1357,6 +1711,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1365,6 +1720,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1373,6 +1729,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1381,6 +1738,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1389,6 +1747,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1397,6 +1756,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1405,6 +1765,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1413,6 +1774,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1421,6 +1783,25 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "ssh_exec",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "ssh_profile_test",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1429,6 +1810,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1437,6 +1819,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1445,22 +1828,28 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
   {
     "name": "termigo_paste_buffer_history",
     "availability": {
-      "status": "stable"
+      "status": "unavailable",
+      "reason": "Paste buffer history capture is not implemented yet"
     },
-    "ready": true,
-    "issues": []
+    "visibility": "model",
+    "ready": false,
+    "issues": [
+      "Paste buffer history capture is not implemented yet"
+    ]
   },
   {
     "name": "terminal_exec",
     "availability": {
       "status": "stable"
     },
+    "visibility": "compatibility",
     "ready": true,
     "issues": []
   },
@@ -1469,6 +1858,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1477,6 +1867,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1485,6 +1876,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1493,6 +1885,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1501,6 +1894,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1509,6 +1903,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "tool_diagnostics",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1517,6 +1921,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1525,6 +1930,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1533,6 +1939,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1541,6 +1948,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1549,6 +1957,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1557,6 +1966,16 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "workspace_list",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
     "issues": []
   },
@@ -1565,6 +1984,7 @@
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
     "ready": true,
     "issues": []
   }

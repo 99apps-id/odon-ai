@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
 
+use crate::net_guard;
 use crate::registry::{Tool, ToolContext};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,7 +296,13 @@ impl SseMcpClient {
             tool: "mcp".to_string(),
             message: format!("Invalid MCP SSE URL '{url}': {error}"),
         })?;
-        let http = reqwest::Client::new();
+        let base = net_guard::validate_url(base.as_str()).await?;
+        let http = reqwest::Client::builder()
+            .redirect(net_guard::redirect_policy(
+                base.host_str().unwrap_or("").to_string(),
+            ))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         let response = http
             .get(base.clone())
             .header(reqwest::header::ACCEPT, "text/event-stream")
@@ -617,7 +624,7 @@ impl Tool for McpCallStreamTool {
         "mcp_call_stream"
     }
     fn description(&self) -> &str {
-        "Invoke an MCP tool and stream intermediate progress chunks"
+        "Invoke an MCP tool with a progress-capable request (streaming is not implemented yet)"
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -632,6 +639,11 @@ impl Tool for McpCallStreamTool {
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
+    }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "MCP progress streaming is not implemented yet; use mcp_call".to_string(),
+        }
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let server = args

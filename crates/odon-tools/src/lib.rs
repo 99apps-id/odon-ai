@@ -2,6 +2,7 @@ pub mod artifact_gen;
 pub mod browser_session;
 pub mod coding;
 pub mod dev_server;
+pub mod daemon_ops;
 pub mod fs;
 pub mod fs_ext;
 pub mod git;
@@ -15,6 +16,7 @@ pub mod memory;
 pub mod net_guard;
 pub mod ops_ext;
 pub mod quality;
+pub mod provider_ops;
 pub mod registry;
 pub mod review;
 pub mod runtime;
@@ -25,6 +27,7 @@ pub mod skills;
 pub mod system;
 pub mod web;
 pub mod web_ext;
+pub mod workspace_path;
 
 pub use registry::{Tool, ToolContext, ToolRegistry, ToolSchema};
 
@@ -53,7 +56,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     // Extended Filesystem & Editor Tools
     reg.register(Box::new(fs_ext::FsStatTool));
     reg.register(Box::new(fs_ext::FsChmodTool));
-    reg.register(Box::new(fs_ext::FsChownTool));
+    reg.register(Box::new(fs_ext::FsOwnerCheckTool));
     reg.register(Box::new(fs_ext::FsSymlinkCreateTool));
     reg.register(Box::new(fs_ext::FsReadlinkTool));
     reg.register(Box::new(fs_ext::FsDiffTool));
@@ -149,6 +152,8 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(sftp::SftpUploadTool));
     reg.register(Box::new(sftp::SftpDownloadTool));
     reg.register(Box::new(sftp::SftpListTool));
+    reg.register(Box::new(sftp::SshExecTool));
+    reg.register(Box::new(sftp::SshProfileTestTool));
 
     // Extended Shell & Process Management
     reg.register(Box::new(shell_ext::ProcessKillTool));
@@ -222,6 +227,22 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(browser_session::BrowserSessionCloseTool));
     reg.register(Box::new(browser_session::BrowserSessionNavigateTool));
     reg.register(Box::new(browser_session::BrowserSessionClickTool));
+    reg.register(Box::new(browser_session::BrowserSessionTextTool));
+    reg.register(Box::new(browser_session::BrowserSessionTypeTool));
+    reg.register(Box::new(browser_session::BrowserSessionWaitTool));
+    reg.register(Box::new(browser_session::BrowserSessionScreenshotTool));
+
+    // Provider operations
+    reg.register(Box::new(provider_ops::ProviderListTool));
+    reg.register(Box::new(provider_ops::ProviderTestTool));
+    reg.register(Box::new(provider_ops::ProviderSetDefaultTool));
+
+    // Daemon operations
+    reg.register(Box::new(daemon_ops::DaemonStatusTool));
+    reg.register(Box::new(daemon_ops::DaemonMetricsTool));
+    reg.register(Box::new(daemon_ops::ToolDiagnosticsTool));
+    reg.register(Box::new(daemon_ops::DoctorTool));
+    reg.register(Box::new(daemon_ops::WorkspaceListTool));
 
     // Autonomous Skills (.odon/skills)
     reg.register(Box::new(skills::SkillListTool));
@@ -254,13 +275,22 @@ pub fn build_full_tool_registry() -> ToolRegistry {
 
     // 11. Approvals, Sessions & Relays
     reg.register(Box::new(ops_ext::ApprovalListTool));
+    reg.register(Box::new(ops_ext::ApprovalHistoryTool));
+    reg.register(Box::new(ops_ext::ApprovalPolicyRevokeTool));
     reg.register(Box::new(ops_ext::ApprovalDecideTool));
+    reg.register(Box::new(ops_ext::AuditSearchTool));
     reg.register(Box::new(ops_ext::SessionListTool));
+    reg.register(Box::new(ops_ext::SessionGetTool));
+    reg.register(Box::new(ops_ext::SessionMessagesTool));
+    reg.register(Box::new(ops_ext::SessionDeleteTool));
     reg.register(Box::new(ops_ext::SessionSwitchTool));
     reg.register(Box::new(ops_ext::SessionExportTool));
     reg.register(Box::new(ops_ext::RelayStatusTool));
     reg.register(Box::new(ops_ext::AutomationListTool));
     reg.register(Box::new(ops_ext::AutomationTriggerTool));
+    reg.register(Box::new(ops_ext::AutomationLogsTool));
+    reg.register(Box::new(ops_ext::AutomationUpdateTool));
+    reg.register(Box::new(ops_ext::AutomationDeleteTool));
     reg.register(Box::new(ops_ext::SettingsGetTool));
     reg.register(Box::new(ops_ext::SettingsSetTool));
 
@@ -271,16 +301,40 @@ pub fn build_full_tool_registry() -> ToolRegistry {
 mod tests {
     use super::*;
     use crate::registry::ToolAvailability;
+    use crate::registry::ToolVisibility;
     use std::collections::HashSet;
 
     #[test]
     fn full_registry_contract_is_explicit_and_valid() {
         let reg = build_full_tool_registry();
         let schemas = reg.schemas();
+        let all_schemas = reg.all_schemas();
+        let compatibility = all_schemas
+            .iter()
+            .filter(|schema| schema.visibility == ToolVisibility::Compatibility)
+            .map(|schema| schema.name.as_str())
+            .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            195,
+            207,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
+        );
+        assert_eq!(
+            compatibility,
+            HashSet::from([
+                "fs_read",
+                "fs_write",
+                "fs_edit",
+                "fs_list",
+                "fs_search",
+                "fs_delete",
+                "bash_run",
+                "terminal_exec",
+                "cron_add",
+                "cron_list",
+                "cron_remove",
+            ]),
+            "Compatibility tools must be reviewed explicitly"
         );
 
         let mut names = HashSet::new();
@@ -321,15 +375,29 @@ mod tests {
             }
         }
 
+        let unavailable = all_schemas
+            .iter()
+            .filter(|schema| matches!(schema.availability, ToolAvailability::Unavailable { .. }))
+            .map(|schema| schema.name.as_str())
+            .collect::<HashSet<_>>();
+
         assert_eq!(
             unavailable,
-            HashSet::from(["session_switch"]),
+            HashSet::from([
+                "session_switch",
+                "mcp_call_stream",
+                "clipboard_read",
+                "clipboard_write",
+                "editor_open",
+                "editor_reveal",
+                "termigo_paste_buffer_history",
+            ]),
             "Unavailable capabilities must be reviewed explicitly"
         );
 
         let diagnostics = reg.diagnostics();
-        assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 191);
+        assert_eq!(diagnostics.len(), all_schemas.len());
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 208);
     }
 
     #[test]
@@ -343,7 +411,7 @@ mod tests {
         let manifest_items: Vec<serde_json::Value> =
             serde_json::from_str(&manifest).expect("manifest must be valid JSON");
         let reg = build_full_tool_registry();
-        let schemas = reg.schemas();
+        let schemas = reg.all_schemas();
         let diagnostics = reg.diagnostics();
 
         let by_name: std::collections::HashMap<_, _> =

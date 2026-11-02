@@ -871,10 +871,23 @@ impl Tool for GitHubWorkflowLogsTool {
         let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
         let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
         let run_id = args.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
-        if owner.is_empty() || repo.is_empty() || run_id.is_empty() {
+        let valid_slug = |value: &str| {
+            !value.is_empty()
+                && value.len() <= 100
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        };
+        if !valid_slug(owner)
+            || !valid_slug(repo)
+            || run_id.is_empty()
+            || !run_id.chars().all(|c| c.is_ascii_digit())
+            || run_id.len() > 20
+        {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),
-                message: "owner, repo, and run_id are required".to_string(),
+                message: "owner, repo, and run_id are required and must be valid identifiers"
+                    .to_string(),
             });
         }
         let max_bytes = args
@@ -882,6 +895,8 @@ impl Tool for GitHubWorkflowLogsTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(120_000)
             .clamp(1_000, 1_000_000) as usize;
+        const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
+        const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs");
         let response = self
@@ -903,15 +918,42 @@ impl Tool for GitHubWorkflowLogsTool {
                 message: format!("GitHub logs download returned HTTP {status}: {body}"),
             });
         }
+        if let Some(length) = response.content_length() {
+            if length as usize > MAX_ARCHIVE_BYTES {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!(
+                        "GitHub logs archive is too large: {} bytes (limit {} bytes)",
+                        length, MAX_ARCHIVE_BYTES
+                    ),
+                });
+            }
+        }
         let bytes = response.bytes().await.map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("Could not read logs archive: {e}"),
         })?;
+        if bytes.len() > MAX_ARCHIVE_BYTES {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "GitHub logs archive is too large: {} bytes (limit {} bytes)",
+                    bytes.len(),
+                    MAX_ARCHIVE_BYTES
+                ),
+            });
+        }
         let cursor = std::io::Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("GitHub logs were not a valid zip archive: {e}"),
         })?;
+        if archive.len() > 500 {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("GitHub logs archive has too many entries: {}", archive.len()),
+            });
+        }
 
         let mut files = Vec::new();
         let mut remaining = max_bytes;
@@ -921,7 +963,7 @@ impl Tool for GitHubWorkflowLogsTool {
                 truncated = true;
                 break;
             }
-            let mut entry = match archive.by_index(index) {
+            let entry = match archive.by_index(index) {
                 Ok(entry) => entry,
                 Err(_) => continue,
             };
@@ -929,8 +971,12 @@ impl Tool for GitHubWorkflowLogsTool {
                 continue;
             }
             let name = entry.name().to_string();
+            let mut limited = entry.take(MAX_ENTRY_BYTES as u64);
             let mut buffer = Vec::new();
-            let _ = entry.read_to_end(&mut buffer);
+            let _ = limited.read_to_end(&mut buffer);
+            if buffer.len() >= MAX_ENTRY_BYTES {
+                truncated = true;
+            }
             let text = String::from_utf8_lossy(&buffer);
             if text.trim().is_empty() {
                 continue;

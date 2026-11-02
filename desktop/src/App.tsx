@@ -81,6 +81,81 @@ interface ChatMessage {
   attachments?: MessageAttachment[];
 }
 
+function formatSessionTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Persisted agent history contains intermediate assistant/tool records required
+// by model providers. Rebuild the user-facing transcript so reopening a session
+// shows the same coherent prompt/response flow as the live chat instead of raw
+// tool JSON and partial streaming steps.
+function normalizeSessionHistory(history: Message[]): ChatMessage[] {
+  const output: ChatMessage[] = [];
+  let currentUser: Message | null = null;
+  let currentAssistants: Message[] = [];
+
+  const flushTurn = () => {
+    if (currentUser) {
+      output.push({
+        id: currentUser.id,
+        role: 'user',
+        content: currentUser.content.text,
+        timestamp: formatSessionTimestamp(currentUser.created_at),
+        attachments: currentUser.content.attachments || [],
+      });
+    }
+
+    const assistants = currentAssistants.filter((message) => message.role === 'assistant');
+    const finalAssistant = [...assistants]
+      .reverse()
+      .find((message) => message.content.text.trim().length > 0);
+
+    if (finalAssistant) {
+      const toolCalls = Array.from(
+        new Set(
+          assistants.flatMap(
+            (message) => message.content.tool_calls?.map((call) => call.tool_name) || [],
+          ),
+        ),
+      ).filter(Boolean);
+
+      output.push({
+        id: finalAssistant.id,
+        role: 'assistant',
+        content: finalAssistant.content.text,
+        timestamp: formatSessionTimestamp(finalAssistant.created_at),
+        showAppCard:
+          (finalAssistant.content.artifact_ids?.length || 0) > 0 ||
+          finalAssistant.content.text.includes('```') ||
+          toolCalls.length > 0,
+        thought: finalAssistant.content.thought,
+        toolCalls,
+        attachments: finalAssistant.content.attachments || [],
+      });
+    }
+
+    currentUser = null;
+    currentAssistants = [];
+  };
+
+  for (const message of history) {
+    if (message.role === 'user') {
+      flushTurn();
+      currentUser = message;
+      currentAssistants = [];
+    } else if (message.role === 'assistant') {
+      currentAssistants.push(message);
+    }
+    // System and tool records are provider-protocol details, not chat bubbles.
+  }
+
+  flushTurn();
+  return output;
+}
+
 interface SteerCard {
   id: string;
   text: string;
@@ -703,18 +778,7 @@ export default function App() {
       const data = await api.getSession(id);
       setActiveWorkspace(data.session?.workspace_root || workspaces.default || '');
       if (data.messages && data.messages.length > 0) {
-        setMessages(
-          data.messages.map((m) => ({
-            id: m.id,
-            role: m.role as 'user' | 'assistant',
-            content: m.content.text,
-            timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            showAppCard: m.content.artifact_ids?.length > 0 || m.content.text.includes('```'),
-            thought: m.content.thought,
-            toolCalls: m.content.tool_calls?.map((t) => t.tool_name),
-            attachments: m.content.attachments || [],
-          }))
-        );
+        setMessages(normalizeSessionHistory(data.messages));
       } else {
         setMessages([]);
       }
@@ -1581,7 +1645,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           )}
 
           {/* Top Bar inside Center Card */}
-          <div className="h-12 border-b border-neutral-100 px-4 flex items-center justify-between shrink-0">
+          <div
+            className={`h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 ${!leftSidebarOpen ? 'pl-10 pr-4' : 'px-4'}`}
+          >
             {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
               <div className="flex items-center gap-2">
                 <button

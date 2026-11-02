@@ -937,7 +937,7 @@ impl Tool for FileHashTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-        let full = Path::new(&ctx.workspace_root).join(rel);
+        let full = crate::workspace_path::resolve_existing(&ctx.workspace_root, rel)?;
         let bytes = fs::read(&full).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: e.to_string(),
@@ -979,7 +979,7 @@ impl Tool for FileChecksumTool {
             .get("expected_sha256")
             .and_then(|e| e.as_str())
             .unwrap_or("");
-        let full = Path::new(&ctx.workspace_root).join(rel);
+        let full = crate::workspace_path::resolve_existing(&ctx.workspace_root, rel)?;
         let bytes = fs::read(&full).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: e.to_string(),
@@ -1009,8 +1009,16 @@ impl Tool for ClipboardReadTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Native clipboard access is not implemented yet".to_string(),
+        }
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        Ok(json!({ "clipboard": "ODON Universal Agent Clipboard ready" }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "Native clipboard access is not implemented yet".to_string(),
+        })
     }
 }
 
@@ -1033,11 +1041,22 @@ impl Tool for ClipboardWriteTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
+    }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "Native clipboard write is not implemented yet".to_string(),
+        }
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let text = args.get("text").and_then(|t| t.as_str()).unwrap_or("");
-        Ok(json!({ "status": "copied", "chars": text.len() }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!(
+                "Native clipboard write is not implemented yet ({} chars requested)",
+                text.len()
+            ),
+        })
     }
 }
 
@@ -1061,7 +1080,7 @@ impl Tool for NotificationSendTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("ODON");

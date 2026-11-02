@@ -33,6 +33,27 @@ pub struct ToolRequirements {
     pub environment: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolVisibility {
+    /// Sent to the model as a first-class tool.
+    Model,
+    /// Still executable for compatibility, but not advertised to the model.
+    Compatibility,
+    /// Local/host tool that must only be exposed when its capability is present.
+    HostOnly,
+}
+
+impl ToolVisibility {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Compatibility => "compatibility",
+            Self::HostOnly => "host",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
     pub name: String,
@@ -41,12 +62,14 @@ pub struct ToolSchema {
     pub risk_tier: u8,
     pub availability: ToolAvailability,
     pub requirements: ToolRequirements,
+    pub visibility: ToolVisibility,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDiagnostic {
     pub name: String,
     pub availability: ToolAvailability,
+    pub visibility: ToolVisibility,
     pub ready: bool,
     pub issues: Vec<String>,
 }
@@ -160,6 +183,7 @@ impl ToolRegistry {
             "createdirectory" | "create_dir" | "mkdir" => "create_directory".to_string(),
             "deletefile" | "rm" | "fs_delete" => "delete_file".to_string(),
             "bash" | "shell" | "sh" | "terminal" => "bash_run".to_string(),
+            "fs_chown" => "fs_owner_check".to_string(),
             "processlist" | "ps" => "process_list".to_string(),
             "memorysearch" => "memory_search".to_string(),
             _ => lower,
@@ -182,18 +206,55 @@ impl ToolRegistry {
         self.tools.contains_key(&norm)
     }
 
+    fn visibility_for_name(name: &str) -> ToolVisibility {
+        matches!(
+            name,
+            "fs_read"
+                | "fs_write"
+                | "fs_edit"
+                | "fs_list"
+                | "fs_search"
+                | "fs_delete"
+                | "bash_run"
+                | "terminal_exec"
+                | "cron_add"
+                | "cron_list"
+                | "cron_remove"
+        )
+        .then_some(ToolVisibility::Compatibility)
+        .unwrap_or(ToolVisibility::Model)
+    }
+
+    fn schema_for(tool: &Box<dyn Tool>) -> ToolSchema {
+        ToolSchema {
+            name: tool.name().to_string(),
+            description: tool.description().to_string(),
+            parameters: tool.parameters_schema(),
+            risk_tier: tool.risk_tier() as u8,
+            availability: tool.availability(),
+            requirements: tool.requirements(),
+            visibility: Self::visibility_for_name(tool.name()),
+        }
+    }
+
+    /// Model-facing schemas only. Compatibility wrappers remain executable via
+    /// `get`/`execute_tool`, but are not advertised as separate capabilities.
     pub fn schemas(&self) -> Vec<ToolSchema> {
-        self.tools
+        let mut schemas = self
+            .tools
             .values()
-            .map(|t| ToolSchema {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema(),
-                risk_tier: t.risk_tier() as u8,
-                availability: t.availability(),
-                requirements: t.requirements(),
-            })
-            .collect()
+            .map(Self::schema_for)
+            .filter(|schema| schema.visibility == ToolVisibility::Model)
+            .collect::<Vec<_>>();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
+    }
+
+    /// Complete registry, including compatibility and host-gated tools.
+    pub fn all_schemas(&self) -> Vec<ToolSchema> {
+        let mut schemas = self.tools.values().map(Self::schema_for).collect::<Vec<_>>();
+        schemas.sort_by(|a, b| a.name.cmp(&b.name));
+        schemas
     }
 
     pub fn diagnostics(&self) -> Vec<ToolDiagnostic> {
@@ -231,6 +292,7 @@ impl ToolRegistry {
                 ToolDiagnostic {
                     name: tool.name().to_string(),
                     availability,
+                    visibility: Self::visibility_for_name(tool.name()),
                     ready: issues.is_empty(),
                     issues,
                 }

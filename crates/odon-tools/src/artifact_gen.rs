@@ -476,7 +476,7 @@ impl Tool for ArtifactCreateImageTool {
             slugify(title),
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
-        let abs = std::path::Path::new(&ctx.workspace_root).join(&rel);
+        let abs = crate::workspace_path::resolve_write(&ctx.workspace_root, &rel)?;
         if let Some(dir) = abs.parent() {
             std::fs::create_dir_all(dir)
                 .map_err(|e| tool_err(format!("Cannot create {}: {e}", dir.display())))?;
@@ -584,7 +584,7 @@ impl Tool for ArtifactImportTool {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Workspace-relative or absolute path of file to import" },
+                "path": { "type": "string", "description": "Workspace-relative path of file to import" },
                 "title": { "type": "string", "description": "Optional custom artifact title" },
                 "summary": { "type": "string", "description": "Optional brief summary" }
             },
@@ -603,12 +603,7 @@ impl Tool for ArtifactImportTool {
             });
         }
 
-        let p = std::path::Path::new(path_str);
-        let abs = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            std::path::Path::new(&ctx.workspace_root).join(p)
-        };
+        let abs = crate::workspace_path::resolve_existing(&ctx.workspace_root, path_str)?;
 
         if !abs.exists() {
             return Err(OdonError::Tool {

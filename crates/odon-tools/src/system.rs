@@ -103,7 +103,17 @@ fn eval_simple_math(expr: &str) -> std::result::Result<f64, String> {
     // Evaluate basic arithmetic +, -, *, /, ^
     // Simple recursive descent parser
     let mut chars = clean.chars().peekable();
-    parse_addition(&mut chars)
+    let result = parse_addition(&mut chars)?;
+    if chars.peek().is_some() {
+        return Err(format!(
+            "Unexpected trailing input near '{}'",
+            chars.collect::<String>()
+        ));
+    }
+    if !result.is_finite() {
+        return Err("Expression did not produce a finite number".to_string());
+    }
+    Ok(result)
 }
 
 fn parse_addition(
@@ -129,26 +139,45 @@ fn parse_addition(
 fn parse_multiplication(
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> std::result::Result<f64, String> {
-    let mut left = parse_primary(chars)?;
+    let mut left = parse_power(chars)?;
     while let Some(&op) = chars.peek() {
         if op == '*' {
             chars.next();
-            let right = parse_primary(chars)?;
+            let right = parse_power(chars)?;
             left *= right;
         } else if op == '/' {
             chars.next();
-            let right = parse_primary(chars)?;
+            let right = parse_power(chars)?;
             if right == 0.0 {
                 return Err("Division by zero".to_string());
             }
             left /= right;
         } else if op == '%' {
             chars.next();
-            let right = parse_primary(chars)?;
+            let right = parse_power(chars)?;
+            if right == 0.0 {
+                return Err("Modulo by zero".to_string());
+            }
             left %= right;
         } else {
             break;
         }
+    }
+    Ok(left)
+}
+
+fn parse_power(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> std::result::Result<f64, String> {
+    let left = parse_primary(chars)?;
+    if chars.peek() == Some(&'^') {
+        chars.next();
+        let right = parse_power(chars)?;
+        let result = left.powf(right);
+        if !result.is_finite() {
+            return Err("Exponentiation did not produce a finite number".to_string());
+        }
+        return Ok(result);
     }
     Ok(left)
 }
@@ -259,8 +288,24 @@ impl Tool for EnvListTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let vars: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
-        Ok(json!({ "variables": vars, "count": vars.len() }))
+        let sensitive = |name: &str| {
+            let upper = name.to_uppercase();
+            upper.ends_with("KEY")
+                || upper.ends_with("TOKEN")
+                || upper.ends_with("SECRET")
+                || upper.ends_with("PASSWORD")
+                || upper.ends_with("PASSWD")
+                || upper.ends_with("API_KEY")
+                || upper.contains("SECRET")
+                || upper.contains("PASSWORD")
+                || upper.contains("PRIVATE_KEY")
+        };
+        let vars: Vec<String> = std::env::vars()
+            .map(|(k, _)| k)
+            .filter(|name| !sensitive(name))
+            .collect();
+        let filtered: usize = std::env::vars().count().saturating_sub(vars.len());
+        Ok(json!({ "variables": vars, "count": vars.len(), "filtered_sensitive": filtered }))
     }
 }
 
@@ -318,18 +363,82 @@ impl Tool for DiskUsageTool {
         "disk_usage"
     }
     fn description(&self) -> &str {
-        "Inspect workspace disk usage"
+        "Inspect workspace disk usage with a bounded recursive size scan"
     }
     fn parameters_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": {
+                "max_entries": { "type": "integer", "description": "Maximum entries to scan (default 20000)" }
+            }
+        })
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
-    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let max_entries = args
+            .get("max_entries")
+            .and_then(Value::as_u64)
+            .unwrap_or(20_000)
+            .clamp(1, 200_000) as u64;
+        let root = std::path::Path::new(&ctx.workspace_root).to_path_buf();
+        let mut stack = vec![root.clone()];
+        let mut files = 0u64;
+        let mut directories = 0u64;
+        let mut total_bytes = 0u64;
+        let mut truncated = false;
+
+        while let Some(dir) = stack.pop() {
+            if files + directories >= max_entries {
+                truncated = true;
+                break;
+            }
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            directories += 1;
+            for entry in entries.filter_map(|entry| entry.ok()) {
+                if files + directories >= max_entries {
+                    truncated = true;
+                    break;
+                }
+                let Ok(metadata) = entry.metadata() else { continue };
+                if metadata.is_dir() {
+                    stack.push(entry.path());
+                } else if metadata.is_file() {
+                    files += 1;
+                    total_bytes += metadata.len();
+                }
+            }
+        }
+
         Ok(json!({
             "workspace": ctx.workspace_root,
-            "status": "active"
+            "total_bytes": total_bytes,
+            "files": files,
+            "directories": directories,
+            "max_entries": max_entries,
+            "truncated": truncated,
+            "status": "measured"
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eval_simple_math;
+
+    #[test]
+    fn calc_eval_rejects_trailing_input_and_division_by_zero() {
+        assert!(eval_simple_math("1+2abc").is_err());
+        assert!(eval_simple_math("1/0").is_err());
+    }
+
+    #[test]
+    fn calc_eval_supports_exponents_parentheses_and_precedence() {
+        assert_eq!(eval_simple_math("2^3").unwrap(), 8.0);
+        assert_eq!(eval_simple_math("(2+3)*4").unwrap(), 20.0);
+        assert_eq!(eval_simple_math("2^2^2").unwrap(), 16.0);
     }
 }

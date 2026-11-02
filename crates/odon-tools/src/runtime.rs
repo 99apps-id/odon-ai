@@ -52,15 +52,19 @@ impl Tool for BrowserStatusTool {
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
 
-    async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
         let has_chrome = has_executable("chrome") || has_executable("google-chrome") || has_executable("chromium") || has_executable("chromium-browser");
         let has_edge = has_executable("msedge");
+        let (live_sessions, persisted_sessions) =
+            crate::browser_session::session_status_counts(&ctx.workspace_root).await;
         Ok(json!({
             "chrome": has_chrome,
             "edge": has_edge,
             "headless_screenshot": has_chrome || has_edge,
-            "persistent_session": false,
-            "note": if has_chrome || has_edge { "Headless screenshots are available via browser_screenshot." } else { "No Chromium-class browser detected on PATH." }
+            "persistent_session": persisted_sessions > 0 || live_sessions > 0,
+            "live_sessions": live_sessions,
+            "persisted_sessions": persisted_sessions,
+            "note": if has_chrome || has_edge { "Persistent browser sessions are available via browser_session_create and browser_session_resume." } else { "No Chromium-class browser detected on PATH." }
         }))
     }
 }

@@ -112,11 +112,16 @@ export function BrowserPreviewView({
     setHistory(updatedHistory);
     setHistoryIndex(updatedHistory.length - 1);
 
-    // Fetch page text content in background for the Agent Reader
-    fetchPageText(formatted);
+    // Fetch and proxy the page. Direct iframes are blocked by X-Frame-Options,
+    // CSP frame-ancestors, and unavailable localhost servers; the daemon proxy
+    // makes typed URLs render reliably and still exposes text to the reader.
+    fetchPagePreview(formatted);
   };
 
-  const fetchPageText = async (targetUrl: string) => {
+  const buildPreviewError = (targetUrl: string, message: string) =>
+    `<!doctype html><html><head><meta charset="utf-8"><title>Preview unavailable</title></head><body style="margin:0;background:#fff;color:#111;font-family:system-ui"><div style="padding:24px"><h1 style="font-size:18px;margin:0 0 8px">Preview unavailable</h1><p style="font-size:13px;line-height:1.5;margin:0 0 12px">${message.replace(/[<>&]/g, '')}</p><code style="font-size:12px;color:#555">${targetUrl}</code></div></body></html>`;
+
+  const fetchPagePreview = async (targetUrl: string) => {
     setReaderLoading(true);
     try {
       const data = await api.browserRead(targetUrl);
@@ -131,29 +136,31 @@ export function BrowserPreviewView({
         sections.push('', 'Links:', ...data.links.slice(0, 40));
       }
       setExtractedText(sections.filter(Boolean).join('\n'));
-    } catch (e: any) {
-      setExtractedText(
-        `Could not read ${targetUrl}\n\n${e.message || 'Unknown error'}\n\nThe embedded preview may still render this page.`,
+      setHtmlContent(
+        data.html ||
+          buildPreviewError(data.url, 'The server returned a response without renderable HTML.'),
       );
+      setMode('iframe');
+    } catch (e: any) {
+      const message = e.message || 'Unknown error';
+      setExtractedText(`Could not read ${targetUrl}\n\n${message}`);
+      setHtmlContent(buildPreviewError(targetUrl, message));
+      setMode('iframe');
     } finally {
       setReaderLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleRefresh = () => {
-    setIsLoading(true);
-    if (iframeRef.current) {
-      iframeRef.current.src = url;
-    }
-    setTimeout(() => setIsLoading(false), 800);
+    navigateTo(url);
   };
 
   const handleBack = () => {
     if (historyIndex > 0) {
       const prev = history[historyIndex - 1];
       setHistoryIndex(historyIndex - 1);
-      setUrl(prev);
-      setInputUrl(prev);
+      navigateTo(prev);
     }
   };
 
@@ -161,8 +168,7 @@ export function BrowserPreviewView({
     if (historyIndex < history.length - 1) {
       const next = history[historyIndex + 1];
       setHistoryIndex(historyIndex + 1);
-      setUrl(next);
-      setInputUrl(next);
+      navigateTo(next);
     }
   };
 

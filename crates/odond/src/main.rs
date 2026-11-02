@@ -5069,6 +5069,25 @@ struct BrowserReadQuery {
     url: String,
 }
 
+fn inject_preview_base(html: &str, base_url: &reqwest::Url) -> String {
+    let lowered = html.to_ascii_lowercase();
+    if lowered.contains("<base") {
+        return html.to_string();
+    }
+    let tag = format!(r#"<base href="{}">"#, base_url);
+    if let Some(position) = lowered.find("<head") {
+        if let Some(tag_end) = html[position..].find('>') {
+            let insert_at = position + tag_end + 1;
+            let mut output = String::with_capacity(html.len() + tag.len());
+            output.push_str(&html[..insert_at]);
+            output.push_str(&tag);
+            output.push_str(&html[insert_at..]);
+            return output;
+        }
+    }
+    format!("{tag}{html}")
+}
+
 /// Read a page for the in-app browser reader. The request goes through the
 /// same SSRF guard as agent web tools, so a preview URL cannot probe localhost
 /// or private networks.
@@ -5137,6 +5156,13 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
         }
     };
     let status = resp.status().as_u16();
+    let final_url = resp.url().clone();
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("text/html")
+        .to_string();
     let bytes = resp.bytes().await.unwrap_or_default();
     let capped = &bytes[..bytes.len().min(2_000_000)];
     let body = String::from_utf8_lossy(capped);
@@ -5147,6 +5173,32 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().trim().to_string())
         .unwrap_or_default();
+
+    let is_html = content_type.to_ascii_lowercase().contains("text/html")
+        || body.trim_start().to_ascii_lowercase().starts_with("<!doctype html")
+        || body.trim_start().to_ascii_lowercase().starts_with("<html");
+    let preview_html = if is_html {
+        inject_preview_base(&body, &final_url)
+    } else if content_type.to_ascii_lowercase().contains("json") {
+        let escaped = body
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><base href=\"{}\"><title>{}</title></head><body style=\"margin:0;background:#fff;color:#111;font-family:ui-monospace,SFMono-Regular,Menlo,monospace\"><pre style=\"white-space:pre-wrap;padding:16px\">{}</pre></body></html>",
+            final_url,
+            title,
+            escaped
+        )
+    } else {
+        format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><base href=\"{}\"><title>{}</title></head><body style=\"margin:0;background:#fff;color:#111;font-family:system-ui\"><div style=\"padding:16px\">This URL returned <strong>{}</strong> content, which the built-in preview cannot render. <a href=\"{}\" target=\"_blank\" rel=\"noreferrer\">Open it directly</a>.</div></body></html>",
+            final_url,
+            title,
+            content_type,
+            final_url
+        )
+    };
 
     let mut text = odon_tools::web::clean_html_snippet(&body);
     if text.chars().count() > 120_000 {
@@ -5175,9 +5227,11 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
     (
         StatusCode::OK,
         Json(json!({
-            "url": validated.to_string(),
+            "url": final_url.to_string(),
             "status": status,
             "title": title,
+            "content_type": content_type,
+            "html": preview_html,
             "text": text,
             "links": links,
         })),

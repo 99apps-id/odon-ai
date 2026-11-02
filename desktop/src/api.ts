@@ -205,6 +205,8 @@ export const api = {
     url: string;
     status: number;
     title: string;
+    content_type: string;
+    html: string;
     text: string;
     links: string[];
   }> {

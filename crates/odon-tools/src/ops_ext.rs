@@ -3,7 +3,6 @@ use odon_core::{OdonError, Result};
 use odon_security::{ApprovalDecision, RiskTier};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::Path;
 
 use crate::mcp::{load_mcp_servers, save_mcp_servers, McpServerConfig};
 use crate::registry::{Tool, ToolContext};
@@ -86,7 +85,7 @@ impl Tool for ArtifactExportTool {
 
         if let Some(storage) = &ctx.storage {
             if let Ok(art) = storage.get_artifact(art_id) {
-                let full = Path::new(&ctx.workspace_root).join(dest);
+                let full = crate::workspace_path::resolve_write(&ctx.workspace_root, dest)?;
                 if let Some(parent) = full.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
@@ -181,6 +180,186 @@ impl Tool for ApprovalDecideTool {
 }
 
 // 4. Session Operations
+pub struct AuditSearchTool;
+#[async_trait]
+impl Tool for AuditSearchTool {
+    fn name(&self) -> &str {
+        "audit_search"
+    }
+    fn description(&self) -> &str {
+        "Search the append-only tool execution audit trail with bounded filters"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Defaults to the current session; pass 'all' for every session" },
+                "tool": { "type": "string", "description": "Optional exact tool name" },
+                "query": { "type": "string", "description": "Optional case-insensitive description substring" },
+                "success": { "type": "boolean" },
+                "approved": { "type": "boolean" },
+                "limit": { "type": "integer", "description": "Maximum newest events (default 50, max 500)" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let requested_session = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or(&ctx.session_id);
+        let session_filter = if requested_session.eq_ignore_ascii_case("all") {
+            None
+        } else {
+            Some(requested_session)
+        };
+        let tool_filter = args.get("tool").and_then(Value::as_str);
+        let query = args
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::to_lowercase);
+        let success = args.get("success").and_then(Value::as_bool);
+        let approved = args.get("approved").and_then(Value::as_bool);
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50)
+            .clamp(1, 500) as usize;
+
+        let events = ctx.audit_logger.get_history(session_filter).await;
+        let selected: Vec<Value> = events
+            .iter()
+            .filter(|event| {
+                tool_filter.map_or(true, |filter| event.tool_name == filter)
+                    && success.map_or(true, |filter| event.success == filter)
+                    && approved.map_or(true, |filter| event.approved == filter)
+                    && query.as_ref().map_or(true, |filter| {
+                        event.description.to_lowercase().contains(filter)
+                    })
+            })
+            .take(limit)
+            .filter_map(|event| serde_json::to_value(event).ok())
+            .collect();
+        Ok(json!({ "count": selected.len(), "events": selected }))
+    }
+}
+fn redact_sensitive_values(value: &mut Value) {
+    const SENSITIVE: [&str; 6] = ["key", "token", "secret", "password", "authorization", "credential"];
+    match value {
+        Value::Object(map) => {
+            for (name, item) in map.iter_mut() {
+                let lower = name.to_lowercase();
+                if SENSITIVE.iter().any(|part| lower.contains(part)) {
+                    *item = Value::String("[REDACTED]".to_string());
+                } else {
+                    redact_sensitive_values(item);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_sensitive_values(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub struct ApprovalHistoryTool;
+#[async_trait]
+impl Tool for ApprovalHistoryTool {
+    fn name(&self) -> &str {
+        "approval_history"
+    }
+    fn description(&self) -> &str {
+        "Review recent approval decisions with sensitive parameters redacted"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": { "type": "integer", "description": "Maximum records (default 25, max 100)" },
+                "tool": { "type": "string", "description": "Optional exact tool name filter" },
+                "session_id": { "type": "string", "description": "Optional session filter" },
+                "decision": { "type": "string", "enum": ["approved", "approved_always", "rejected", "expired"] }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(25)
+            .clamp(1, 100) as usize;
+        let tool_filter = args.get("tool").and_then(Value::as_str);
+        let session_filter = args.get("session_id").and_then(Value::as_str);
+        let decision_filter = args.get("decision").and_then(Value::as_str);
+
+        let records = ctx.approval_engine.get_audit_history().await;
+        let mut filtered: Vec<Value> = records
+            .iter()
+            .filter(|record| {
+                tool_filter.map_or(true, |filter| record.tool_name == filter)
+                    && session_filter.map_or(true, |filter| record.session_id == filter)
+                    && decision_filter.map_or(true, |filter| record.decision == filter)
+            })
+            .take(limit)
+            .map(|record| {
+                let mut value = serde_json::to_value(record).unwrap_or(Value::Null);
+                redact_sensitive_values(&mut value);
+                value
+            })
+            .collect();
+        filtered.reverse();
+        Ok(json!({ "count": filtered.len(), "history": filtered }))
+    }
+}
+
+pub struct ApprovalPolicyRevokeTool;
+#[async_trait]
+impl Tool for ApprovalPolicyRevokeTool {
+    fn name(&self) -> &str {
+        "approval_policy_revoke"
+    }
+    fn description(&self) -> &str {
+        "Revoke one previously approved 'always allow' policy entry"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "key": { "type": "string", "description": "Exact policy key from approval_list or audit history" }
+            },
+            "required": ["key"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let key = args
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'key' parameter".to_string(),
+            })?;
+        let revoked = ctx.approval_engine.revoke_allowed(key).await;
+        if !revoked {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Approval policy key '{key}' was not found"),
+            });
+        }
+        Ok(json!({ "key": key, "revoked": true }))
+    }
+}
+
 pub struct SessionListTool;
 #[async_trait]
 impl Tool for SessionListTool {
@@ -205,6 +384,175 @@ impl Tool for SessionListTool {
             return Ok(json!({ "sessions": list }));
         }
         Ok(json!({ "sessions": [] }))
+    }
+}
+
+pub struct SessionGetTool;
+#[async_trait]
+impl Tool for SessionGetTool {
+    fn name(&self) -> &str {
+        "session_get"
+    }
+    fn description(&self) -> &str {
+        "Read metadata for one conversation session without exposing its transcript"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Defaults to the current session" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let session_id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&ctx.session_id);
+        let storage = ctx
+            .storage
+            .as_ref()
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Storage engine unavailable".to_string(),
+            })?;
+        let session = storage.get_session(session_id).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Session not found: {e}"),
+        })?;
+        Ok(serde_json::to_value(session).unwrap_or(Value::Null))
+    }
+}
+
+pub struct SessionMessagesTool;
+#[async_trait]
+impl Tool for SessionMessagesTool {
+    fn name(&self) -> &str {
+        "session_messages"
+    }
+    fn description(&self) -> &str {
+        "Read persisted messages from a conversation session with a bounded result"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Defaults to the current session" },
+                "limit": { "type": "integer", "description": "Maximum newest messages to return (default 50, max 500)" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let session_id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&ctx.session_id);
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50)
+            .clamp(1, 500) as usize;
+        let storage = ctx
+            .storage
+            .as_ref()
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Storage engine unavailable".to_string(),
+            })?;
+        let mut messages = storage.list_messages(session_id).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
+        let total = messages.len();
+        let start = messages.len().saturating_sub(limit);
+        let selected: Vec<Value> = messages
+            .drain(start..)
+            .filter_map(|message| serde_json::to_value(message).ok())
+            .collect();
+        Ok(json!({
+            "session_id": session_id,
+            "total": total,
+            "returned": selected.len(),
+            "messages": selected
+        }))
+    }
+}
+
+pub struct SessionDeleteTool;
+#[async_trait]
+impl Tool for SessionDeleteTool {
+    fn name(&self) -> &str {
+        "session_delete"
+    }
+    fn description(&self) -> &str {
+        "Delete a non-current conversation session and its persisted messages/artifacts"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string" },
+                "confirm": { "type": "boolean", "description": "Must be true" }
+            },
+            "required": ["session_id", "confirm"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let session_id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let confirmed = args
+            .get("confirm")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if session_id.trim().is_empty() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "session_id is required".to_string(),
+            });
+        }
+        if session_id == ctx.session_id {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "The current session cannot be deleted from inside itself".to_string(),
+            });
+        }
+        if !confirmed {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Set confirm=true to delete this session".to_string(),
+            });
+        }
+        let storage = ctx
+            .storage
+            .as_ref()
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Storage engine unavailable".to_string(),
+            })?;
+        let deleted = storage.delete_session(session_id).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
+        if !deleted {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Session '{session_id}' was not found"),
+            });
+        }
+        Ok(json!({ "session_id": session_id, "deleted": true }))
     }
 }
 
@@ -434,6 +782,228 @@ impl Tool for AutomationTriggerTool {
     }
 }
 
+pub(crate) async fn daemon_json(
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+    tool_name: &str,
+) -> Result<(u16, Value)> {
+    let url = format!(
+        "{}{}",
+        daemon_base_url().trim_end_matches('/'),
+        path
+    );
+    let mut request = reqwest::Client::new()
+        .request(method, &url)
+        .timeout(std::time::Duration::from_secs(10));
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.map_err(|e| OdonError::Tool {
+        tool: tool_name.to_string(),
+        message: format!("Could not reach the ODON daemon at {url}: {e}"),
+    })?;
+    let status = response.status().as_u16();
+    let value: Value = response.json().await.unwrap_or_else(|_| json!({}));
+    Ok((status, value))
+}
+
+pub struct AutomationLogsTool;
+#[async_trait]
+impl Tool for AutomationLogsTool {
+    fn name(&self) -> &str {
+        "automation_logs"
+    }
+    fn description(&self) -> &str {
+        "Read recent automation run history and outcomes from the ODON daemon"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "automation_id": { "type": "string", "description": "Optional automation ID filter" },
+                "limit": { "type": "integer", "description": "Maximum newest records (default 25, max 100)" }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let automation_id = args.get("automation_id").and_then(Value::as_str);
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(25)
+            .clamp(1, 100) as usize;
+        let (status, value) = daemon_json(reqwest::Method::GET, "/api/automations/logs", None, self.name()).await?;
+        let mut logs: Vec<Value> = value
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|log| {
+                automation_id.map_or(true, |filter| {
+                    log.get("automation_id").and_then(Value::as_str) == Some(filter)
+                })
+            })
+            .take(limit)
+            .collect();
+        logs.reverse();
+        Ok(json!({ "http_status": status, "count": logs.len(), "logs": logs }))
+    }
+}
+
+pub struct AutomationUpdateTool;
+#[async_trait]
+impl Tool for AutomationUpdateTool {
+    fn name(&self) -> &str {
+        "automation_update"
+    }
+    fn description(&self) -> &str {
+        "Update an existing automation's metadata, schedule, prompt, model, or enabled state"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "trigger_type": { "type": "string", "enum": ["interval", "cron", "on_commit", "manual"] },
+                "trigger_value": { "type": "string" },
+                "prompt": { "type": "string" },
+                "model": { "type": "string" },
+                "enabled": { "type": "boolean" },
+                "retry_count": { "type": "integer", "minimum": 0, "maximum": 10 },
+                "retry_delay_secs": { "type": "integer", "minimum": 0, "maximum": 3600 },
+                "depends_on": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'id' parameter".to_string(),
+            })?;
+        let (status, mut job) =
+            daemon_json(reqwest::Method::GET, "/api/automations", None, self.name()).await?;
+        if !(200..300).contains(&status) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Could not load automations: HTTP {status}"),
+            });
+        }
+        let mut updated = job
+            .as_array_mut()
+            .and_then(|items| {
+                items
+                    .iter_mut()
+                    .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+            })
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Automation '{id}' was not found"),
+            })?
+            .clone();
+        for key in [
+            "name",
+            "description",
+            "trigger_type",
+            "trigger_value",
+            "prompt",
+            "model",
+            "enabled",
+            "retry_count",
+            "retry_delay_secs",
+            "depends_on",
+        ] {
+            if let Some(value) = args.get(key) {
+                updated[key] = value.clone();
+            }
+        }
+        let (status, result) = daemon_json(
+            reqwest::Method::POST,
+            "/api/automations",
+            Some(updated),
+            self.name(),
+        )
+        .await?;
+        if !(200..300).contains(&status) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Could not save automation: HTTP {status}"),
+            });
+        }
+        Ok(json!({ "id": id, "http_status": status, "result": result }))
+    }
+}
+
+pub struct AutomationDeleteTool;
+#[async_trait]
+impl Tool for AutomationDeleteTool {
+    fn name(&self) -> &str {
+        "automation_delete"
+    }
+    fn description(&self) -> &str
+    {
+        "Delete an automation workflow by ID"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" },
+                "confirm": { "type": "boolean", "description": "Must be true" }
+            },
+            "required": ["id", "confirm"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'id' parameter".to_string(),
+            })?;
+        if !args
+            .get("confirm")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Set confirm=true to delete this automation".to_string(),
+            });
+        }
+        let (status, result) = daemon_json(
+            reqwest::Method::DELETE,
+            &format!("/api/automations/{}", id),
+            None,
+            self.name(),
+        )
+        .await?;
+        if !(200..300).contains(&status) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Could not delete automation: HTTP {status}"),
+            });
+        }
+        Ok(json!({ "id": id, "http_status": status, "result": result }))
+    }
+}
+
 // 7. MCP Management Tools
 pub struct McpAddServerTool;
 #[async_trait]
@@ -473,6 +1043,14 @@ impl Tool for McpAddServerTool {
             .and_then(|c| c.as_str())
             .map(String::from);
         let url = args.get("url").and_then(|u| u.as_str()).map(String::from);
+        if let Some(url) = &url {
+            crate::net_guard::validate_url(url).await.map_err(|error| {
+                OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Invalid or disallowed MCP SSE URL '{url}': {error}"),
+                }
+            })?;
+        }
         let server_args = args.get("args").and_then(|a| a.as_array()).map(|items| {
             items
                 .iter()
@@ -520,6 +1098,23 @@ impl Tool for McpListServersTool {
     }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let servers = crate::mcp::load_mcp_servers();
+        let servers: Vec<Value> = servers
+            .iter()
+            .map(|server| {
+                let mut value = serde_json::to_value(server).unwrap_or(Value::Null);
+                if let Some(env) = value.get_mut("env") {
+                    if let Some(env) = env.as_object_mut() {
+                        *env = env
+                            .iter()
+                            .map(|(key, _)| {
+                                (key.clone(), Value::String("[REDACTED]".to_string()))
+                            })
+                            .collect();
+                    }
+                }
+                value
+            })
+            .collect();
         Ok(json!({ "servers": servers }))
     }
 }
@@ -568,7 +1163,7 @@ impl Tool for SettingsSetTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let mode_str = args

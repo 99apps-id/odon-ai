@@ -2,9 +2,80 @@ use async_trait::async_trait;
 use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::registry::{Tool, ToolContext};
+
+const GIT_TIMEOUT: Duration = Duration::from_secs(30);
+const GIT_OUTPUT_LIMIT: usize = 256 * 1024;
+
+#[derive(Debug)]
+pub struct GitOutput {
+    pub success: bool,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_ms: u128,
+    pub truncated: bool,
+}
+
+impl GitOutput {
+    fn into_json(self, extra: Value) -> Value {
+        let mut value = extra;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("success".into(), json!(self.success));
+            object.insert("exit_code".into(), json!(self.exit_code));
+            object.insert("stdout".into(), json!(self.stdout));
+            object.insert("stderr".into(), json!(self.stderr));
+            object.insert("duration_ms".into(), json!(self.duration_ms));
+            object.insert("truncated".into(), json!(self.truncated));
+        }
+        value
+    }
+}
+
+fn clip_output(raw: &[u8]) -> (String, bool) {
+    if raw.len() <= GIT_OUTPUT_LIMIT {
+        (String::from_utf8_lossy(raw).to_string(), false)
+    } else {
+        (String::from_utf8_lossy(&raw[..GIT_OUTPUT_LIMIT]).to_string(), true)
+    }
+}
+
+fn valid_git_ref(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && !value.starts_with('-')
+        && !value.contains("..")
+        && !value.contains(char::is_whitespace)
+        && !value.contains(['\\', '<', '>', '|', '"', '\'', '`', '$', ';', '&'])
+}
+
+async fn run_git(ctx: &ToolContext, tool_name: &str, args: &[String]) -> Result<GitOutput> {
+    let started = std::time::Instant::now();
+    let output = timeout(GIT_TIMEOUT, Command::new("git").args(args).current_dir(&ctx.workspace_root).output())
+        .await
+        .map_err(|_| OdonError::Tool {
+            tool: tool_name.to_string(),
+            message: "git command timed out after 30 seconds".to_string(),
+        })?
+        .map_err(|e| OdonError::Tool {
+            tool: tool_name.to_string(),
+            message: format!("Failed to run git: {e}"),
+        })?;
+    let (stdout, stdout_truncated) = clip_output(&output.stdout);
+    let (stderr, stderr_truncated) = clip_output(&output.stderr);
+    Ok(GitOutput {
+        success: output.status.success(),
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout,
+        stderr,
+        duration_ms: started.elapsed().as_millis(),
+        truncated: stdout_truncated || stderr_truncated,
+    })
+}
 
 pub struct GitStatusTool;
 
@@ -26,19 +97,9 @@ impl Tool for GitStatusTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let output = Command::new("git")
-            .arg("status")
-            .arg("--short")
-            .current_dir(&ctx.workspace_root)
-            .output()
-            .await
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Failed to run git status: {}", e),
-            })?;
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(json!({ "status": text }))
+        let output = run_git(ctx, self.name(), &["status".into(), "--short".into()]).await?;
+        let status = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        Ok(output.into_json(json!({ "status": status })))
     }
 }
 
@@ -68,20 +129,13 @@ impl Tool for GitDiffTool {
             .get("cached")
             .and_then(|c| c.as_bool())
             .unwrap_or(false);
-        let mut cmd = Command::new("git");
-        cmd.arg("diff");
+        let mut args = vec!["diff".to_string()];
         if cached {
-            cmd.arg("--cached");
+            args.push("--cached".into());
         }
-        cmd.current_dir(&ctx.workspace_root);
-
-        let output = cmd.output().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to run git diff: {}", e),
-        })?;
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(json!({ "diff": text }))
+        let output = run_git(ctx, self.name(), &args).await?;
+        let diff = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        Ok(output.into_json(json!({ "diff": diff })))
     }
 }
 
@@ -122,33 +176,23 @@ impl Tool for GitCommitTool {
             .unwrap_or(true);
 
         if stage_all {
-            let _ = Command::new("git")
-                .arg("add")
-                .arg("-A")
-                .current_dir(&ctx.workspace_root)
-                .output()
-                .await;
+            let added = run_git(ctx, self.name(), &["add".into(), "-A".into()]).await?;
+            if !added.success {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("git add -A failed: {}", added.stderr.trim()),
+                });
+            }
         }
 
-        let output = Command::new("git")
-            .arg("commit")
-            .arg("-m")
-            .arg(msg)
-            .current_dir(&ctx.workspace_root)
-            .output()
-            .await
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Failed to create git commit: {}", e),
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        Ok(json!({
-            "success": output.status.success(),
-            "output": if output.status.success() { stdout } else { stderr }
-        }))
+        let output = run_git(
+            ctx,
+            self.name(),
+            &["commit".into(), "-m".into(), msg.to_string()],
+        )
+        .await?;
+        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        Ok(output.into_json(json!({ "output": text })))
     }
 }
 
@@ -174,25 +218,19 @@ impl Tool for GitLogTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10);
-        let output = Command::new("git")
-            .arg("log")
-            .arg(format!("-n{}", limit))
-            .arg("--oneline")
-            .current_dir(&ctx.workspace_root)
-            .output()
-            .await
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Failed to run git log: {}", e),
-            })?;
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10).clamp(1, 100);
+        let output = run_git(
+            ctx,
+            self.name(),
+            &["log".into(), format!("-n{limit}"), "--oneline".into()],
+        )
+        .await?;
+        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
         let commits: Vec<String> = text.lines().map(|s| s.to_string()).collect();
-        Ok(json!({
+        Ok(output.into_json(json!({
             "commits_count": commits.len(),
             "commits": commits
-        }))
+        })))
     }
 }
 
@@ -219,42 +257,37 @@ impl Tool for GitBranchTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         if let Some(new_branch) = args.get("create").and_then(|b| b.as_str()) {
-            let output = Command::new("git")
-                .arg("checkout")
-                .arg("-b")
-                .arg(new_branch)
-                .current_dir(&ctx.workspace_root)
-                .output()
-                .await
-                .map_err(|e| OdonError::Tool {
+            if !valid_git_ref(new_branch) {
+                return Err(OdonError::Tool {
                     tool: self.name().to_string(),
-                    message: format!("Failed to create git branch {}: {}", new_branch, e),
-                })?;
-
-            Ok(json!({
+                    message: "invalid branch name".to_string(),
+                });
+            }
+            let output = run_git(
+                ctx,
+                self.name(),
+                &[
+                    "checkout".into(),
+                    "-b".into(),
+                    new_branch.to_string(),
+                ],
+            )
+            .await?;
+            let message = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+            return Ok(output.into_json(json!({
                 "action": "create",
                 "branch": new_branch,
-                "success": output.status.success()
-            }))
-        } else {
-            let output = Command::new("git")
-                .arg("branch")
-                .arg("-a")
-                .current_dir(&ctx.workspace_root)
-                .output()
-                .await
-                .map_err(|e| OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: format!("Failed to list git branches: {}", e),
-                })?;
-
-            let text = String::from_utf8_lossy(&output.stdout).to_string();
-            let branches: Vec<String> = text.lines().map(|s| s.trim().to_string()).collect();
-            Ok(json!({
-                "action": "list",
-                "branches": branches
-            }))
+                "message": message
+            })));
         }
+
+        let output = run_git(ctx, self.name(), &["branch".into(), "-a".into()]).await?;
+        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let branches: Vec<String> = text.lines().map(|s| s.trim().to_string()).collect();
+        Ok(output.into_json(json!({
+            "action": "list",
+            "branches": branches
+        })))
     }
 }
 
@@ -280,25 +313,28 @@ impl Tool for GitAddTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let mut cmd = Command::new("git");
-        cmd.arg("add");
-        if let Some(paths) = args.get("paths").and_then(|p| p.as_array()) {
-            for p in paths {
-                if let Some(s) = p.as_str() {
-                    cmd.arg(s);
+        let mut paths = Vec::new();
+        if let Some(values) = args.get("paths").and_then(|p| p.as_array()) {
+            for value in values {
+                let path = value.as_str().unwrap_or("");
+                if path.is_empty() || path.starts_with('-') {
+                    return Err(OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: "git_add paths must be non-empty and must not start with '-'"
+                            .to_string(),
+                    });
                 }
+                crate::workspace_path::resolve_existing(&ctx.workspace_root, path)?;
+                paths.push(path.to_string());
             }
-        } else {
-            cmd.arg(".");
         }
-        cmd.current_dir(&ctx.workspace_root);
-
-        let output = cmd.output().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to run git add: {}", e),
-        })?;
-
-        Ok(json!({ "success": output.status.success() }))
+        let mut git_args = vec!["add".to_string()];
+        git_args.extend(paths);
+        if git_args.len() == 1 {
+            git_args.push(".".into());
+        }
+        let output = run_git(ctx, self.name(), &git_args).await?;
+        Ok(output.into_json(json!({})))
     }
 }
 
@@ -329,19 +365,15 @@ impl Tool for GitCheckoutTool {
             .get("target")
             .and_then(|t| t.as_str())
             .unwrap_or("HEAD");
-        let output = Command::new("git")
-            .arg("checkout")
-            .arg(target)
-            .current_dir(&ctx.workspace_root)
-            .output()
-            .await
-            .map_err(|e| OdonError::Tool {
+        if !valid_git_ref(target) {
+            return Err(OdonError::Tool {
                 tool: self.name().to_string(),
-                message: format!("Failed to run git checkout {}: {}", target, e),
-            })?;
-
-        let text = String::from_utf8_lossy(&output.stderr).to_string();
-        Ok(json!({ "target": target, "success": output.status.success(), "message": text }))
+                message: "invalid checkout target".to_string(),
+            });
+        }
+        let output = run_git(ctx, self.name(), &["checkout".into(), target.into()]).await?;
+        let message = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        Ok(output.into_json(json!({ "target": target, "message": message })))
     }
 }
 
@@ -371,20 +403,20 @@ impl Tool for GitShowTool {
             .get("object")
             .and_then(|o| o.as_str())
             .unwrap_or("HEAD");
-        let output = Command::new("git")
-            .arg("show")
-            .arg("--stat")
-            .arg(object)
-            .current_dir(&ctx.workspace_root)
-            .output()
-            .await
-            .map_err(|e| OdonError::Tool {
+        if !valid_git_ref(object) {
+            return Err(OdonError::Tool {
                 tool: self.name().to_string(),
-                message: format!("Failed to run git show {}: {}", object, e),
-            })?;
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(json!({ "object": object, "output": text }))
+                message: "invalid git object or ref".to_string(),
+            });
+        }
+        let output = run_git(
+            ctx,
+            self.name(),
+            &["show".into(), "--stat".into(), object.into()],
+        )
+        .await?;
+        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        Ok(output.into_json(json!({ "object": object, "output": text })))
     }
 }
 
@@ -410,20 +442,20 @@ impl Tool for GitStashTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let mut cmd = Command::new("git");
-        cmd.arg("stash").arg("push");
+        let mut git_args = vec!["stash".into(), "push".into()];
         if let Some(msg) = args.get("message").and_then(|m| m.as_str()) {
-            cmd.arg("-m").arg(msg);
+            if msg.len() > 500 {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "stash message is too long".to_string(),
+                });
+            }
+            git_args.push("-m".into());
+            git_args.push(msg.to_string());
         }
-        cmd.current_dir(&ctx.workspace_root);
-
-        let output = cmd.output().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to run git stash: {}", e),
-        })?;
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(json!({ "output": text, "success": output.status.success() }))
+        let output = run_git(ctx, self.name(), &git_args).await?;
+        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        Ok(output.into_json(json!({ "output": text })))
     }
 }
 
