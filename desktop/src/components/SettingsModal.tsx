@@ -613,6 +613,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>Providers</span>
               </button>
               <button
+                onClick={() => setActiveTab('endpoints')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'endpoints'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Server className="w-3.5 h-3.5" />
+                <span>Endpoints</span>
+              </button>
+              <button
                 onClick={() => setActiveTab('agents')}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
                   activeTab === 'agents'
@@ -700,7 +711,196 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        {activeTab === 'providers' ? (
+        {activeTab === 'endpoints' ? (
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-white dark:bg-neutral-900">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-neutral-900 dark:text-white">
+                  OpenAI-Compatible Endpoints
+                </h3>
+                <p className="text-[12.5px] text-neutral-500 dark:text-neutral-400 mt-1 max-w-2xl">
+                  Tambahkan beberapa provider OpenAI-compatible sekaligus. Setiap endpoint punya
+                  API key, Base URL, model list, dan provider id sendiri, sehingga bisa dipilih
+                  terpisah dari halaman utama.
+                </p>
+              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 shrink-0">
+                {customEndpoints.length} endpoint
+              </span>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-850/40 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
+                  <Plus className="w-3.5 h-3.5" />
+                  {editingEndpointId ? 'Edit Endpoint' : 'Tambah Endpoint Baru'}
+                </h4>
+                {editingEndpointId && (
+                  <button
+                    onClick={resetEndpointForm}
+                    className="text-[11px] font-medium text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                  >
+                    Batal edit
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
+                    Nama Provider
+                  </span>
+                  <input
+                    value={endpointName}
+                    onChange={(e) => setEndpointName(e.target.value)}
+                    placeholder="OpenRouter / LiteLLM / vLLM"
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
+                    Base URL
+                  </span>
+                  <input
+                    value={endpointBaseUrl}
+                    onChange={(e) => setEndpointBaseUrl(e.target.value)}
+                    placeholder="https://api.openai.com/v1"
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
+                    API Key
+                  </span>
+                  <input
+                    type="password"
+                    value={endpointKey}
+                    onChange={(e) => setEndpointKey(e.target.value)}
+                    placeholder={
+                      editingEndpointId
+                        ? 'Kosongkan untuk mempertahankan key tersimpan'
+                        : 'sk-...'
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
+                    Model IDs (pisahkan dengan koma atau baris baru)
+                  </span>
+                  <textarea
+                    value={endpointModels}
+                    onChange={(e) => setEndpointModels(e.target.value)}
+                    rows={2}
+                    placeholder={'gpt-4o-mini\ngemini-2.5-flash'}
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500 resize-y"
+                  />
+                </label>
+              </div>
+
+              {endpointError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{endpointError}</span>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={resetEndpointForm}
+                  className="px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  Reset
+                </button>
+                <button
+                  onClick={handleSaveEndpoint}
+                  disabled={endpointBusy}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold shadow-xs"
+                >
+                  {endpointBusy
+                    ? 'Menyimpan...'
+                    : editingEndpointId
+                    ? 'Simpan Perubahan'
+                    : 'Tambah Endpoint'}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {customEndpoints.length === 0 ? (
+                <div className="p-8 rounded-2xl border border-dashed border-neutral-300 dark:border-neutral-700 text-center">
+                  <Server className="w-6 h-6 text-neutral-300 dark:text-neutral-600 mx-auto mb-2" />
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    Belum ada endpoint tambahan. Tambahkan satu di atas; endpoint akan muncul
+                    sebagai provider terpisah di daftar model.
+                  </p>
+                </div>
+              ) : (
+                customEndpoints.map((c) => (
+                  <div
+                    key={c.provider_id}
+                    className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 flex items-start justify-between gap-4"
+                  >
+                    <div className="min-w-0 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Server className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span className="font-bold text-sm text-neutral-900 dark:text-white">
+                          {c.name || c.provider_id}
+                        </span>
+                        <code className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400">
+                          {c.provider_id}
+                        </code>
+                      </div>
+                      <div className="text-[11.5px] font-mono text-neutral-500 dark:text-neutral-400 truncate">
+                        {c.base_url || 'Base URL belum diisi'}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {(c.models || []).length === 0 ? (
+                          <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                            Belum ada model — edit untuk menambahkan.
+                          </span>
+                        ) : (
+                          (c.models || []).map((m) => (
+                            <span
+                              key={m}
+                              className="text-[10.5px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
+                            >
+                              {m}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                      <div className="text-[10.5px] text-neutral-400">
+                        Key: {c.masked_key}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => handleUseEndpoint(c)}
+                        className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold"
+                      >
+                        Gunakan
+                      </button>
+                      <button
+                        onClick={() => handleEditEndpoint(c)}
+                        className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteEndpoint(c.provider_id)}
+                        className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                        title="Hapus endpoint"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ) : activeTab === 'providers' ? (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: Providers List */}
             <div className="w-64 border-r border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-900/30 overflow-y-auto p-3 space-y-4">

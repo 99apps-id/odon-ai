@@ -712,3 +712,70 @@ pub struct MemoryItem {
     pub category: String,
     pub updated_at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multiple_openai_compatible_endpoints_roundtrip() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        storage
+            .save_provider_config(
+                "compat-first",
+                "sk-first",
+                Some("https://first.example/v1"),
+                true,
+                Some("First Gateway"),
+                r#"["model-a","model-b"]"#,
+            )
+            .unwrap();
+        storage
+            .save_provider_config(
+                "compat-second",
+                "sk-second",
+                Some("https://second.example/v1"),
+                false,
+                Some("Second Gateway"),
+                r#"["model-c"]"#,
+            )
+            .unwrap();
+
+        let configs = storage.list_provider_configs().unwrap();
+        assert_eq!(configs.len(), 2);
+        let first = configs
+            .iter()
+            .find(|c| c.provider_id == "compat-first")
+            .unwrap();
+        assert_eq!(first.name.as_deref(), Some("First Gateway"));
+        assert_eq!(first.models_json, r#"["model-a","model-b"]"#);
+        assert!(first.is_default);
+        assert!(!configs
+            .iter()
+            .find(|c| c.provider_id == "compat-second")
+            .unwrap()
+            .is_default);
+
+        storage
+            .save_provider_config(
+                "compat-second",
+                "sk-second",
+                Some("https://second.example/v1"),
+                true,
+                Some("Second Gateway"),
+                r#"["model-c"]"#,
+            )
+            .unwrap();
+        let configs = storage.list_provider_configs().unwrap();
+        assert!(!configs
+            .iter()
+            .find(|c| c.provider_id == "compat-first")
+            .unwrap()
+            .is_default);
+        assert!(configs
+            .iter()
+            .find(|c| c.provider_id == "compat-second")
+            .unwrap()
+            .is_default);
+    }
+}

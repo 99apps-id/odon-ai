@@ -71,7 +71,7 @@ fn decode_ddg_url(raw: &str) -> String {
     raw.to_string()
 }
 
-fn clean_html_snippet(raw: &str) -> String {
+pub fn clean_html_snippet(raw: &str) -> String {
     let re = regex::Regex::new(r"<[^>]+>").ok();
     let text = if let Some(r) = re {
         r.replace_all(raw, " ").to_string()

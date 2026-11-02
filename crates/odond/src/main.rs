@@ -2749,7 +2749,7 @@ struct SaveProviderConfigRequest {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
-    models: Vec<String>,
+    models: Option<Vec<String>>,
 }
 
 async fn get_provider_configs(State(state): State<AppState>) -> impl IntoResponse {
@@ -2783,27 +2783,37 @@ async fn save_provider_config(
     let is_def = req.is_default.unwrap_or(false);
     let base_url = req.base_url.clone().unwrap_or_else(|| default_base_url_for(&pid));
 
+    let existing = state.storage.get_provider_config(&pid).ok().flatten();
+
     // Leaving the key field blank in the UI means "keep the stored key"; it
     // must never wipe or replace a configured credential with an empty string.
+    // The same applies to name/models: older Save Key callers omit them.
     let api_key = if req.api_key.trim().is_empty() {
-        state
-            .storage
-            .get_provider_config(&pid)
-            .ok()
-            .flatten()
-            .map(|c| c.api_key)
+        existing
+            .as_ref()
+            .map(|c| c.api_key.clone())
             .unwrap_or_default()
     } else {
         req.api_key.clone()
     };
+    let name = req
+        .name
+        .clone()
+        .or_else(|| existing.as_ref().and_then(|c| c.name.clone()));
+    let models_json = match &req.models {
+        Some(models) => serde_json::to_string(models).unwrap_or_else(|_| "[]".to_string()),
+        None => existing
+            .as_ref()
+            .map(|c| c.models_json.clone())
+            .unwrap_or_else(|| "[]".to_string()),
+    };
 
-    let models_json = serde_json::to_string(&req.models).unwrap_or_else(|_| "[]".to_string());
     if let Err(e) = state.storage.save_provider_config(
         &pid,
         &api_key,
         Some(&base_url),
         is_def,
-        req.name.as_deref(),
+        name.as_deref(),
         &models_json,
     ) {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
