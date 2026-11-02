@@ -28,6 +28,7 @@ import {
   Sparkles,
   Layers,
   ArrowLeft,
+  Zap,
   CheckCircle2,
   Check,
   Download,
@@ -56,7 +57,7 @@ import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
 import { api } from './api';
-import { Session, Message, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
+import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
 interface ChatMessage {
   id: string;
@@ -66,6 +67,7 @@ interface ChatMessage {
   showAppCard?: boolean;
   thought?: string;
   toolCalls?: string[];
+  attachments?: MessageAttachment[];
 }
 
 // Model lists are now dynamically populated from the active provider chosen in Settings.
@@ -164,6 +166,38 @@ const REGISTERED_TOOLS = [
   { name: 'artifact_update', category: 'Artifacts', tier: 'Tier 1', desc: 'Update existing artifact content' },
 ];
 
+const TEXT_FILE_EXTENSIONS =
+  /\.(txt|md|markdown|json|jsonc|csv|tsv|ya?ml|toml|ini|cfg|conf|env|log|py|rs|ts|tsx|js|jsx|mjs|cjs|html?|css|scss|less|sh|bash|zsh|ps1|bat|cmd|sql|go|java|c|h|cc|cpp|hpp|cs|rb|php|swift|kt|kts|xml|gradle)$/i;
+
+function guessMimeType(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.json')) return 'application/json';
+  if (lower.endsWith('.csv')) return 'text/csv';
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'text/markdown';
+  return 'text/plain';
+}
+
+function isTextFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  if (name === 'dockerfile' || name === '.gitignore' || name === '.env') return true;
+  return (
+    file.type.startsWith('text/') ||
+    [
+      'application/json',
+      'application/xml',
+      'application/javascript',
+      'application/x-yaml',
+      'application/x-sh',
+    ].includes(file.type) ||
+    TEXT_FILE_EXTENSIONS.test(name)
+  );
+}
+
 export default function App() {
   // Navigation & View States
   const [activeNav, setActiveNav] = useState('chat');
@@ -171,6 +205,20 @@ export default function App() {
   const [dynamicTools, setDynamicTools] = useState<any[]>([]);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
+  // Composer Execution Mode (unified UX: one composer, multiple modes)
+  const [executionMode, setExecutionMode] = useState<'chat' | 'auto' | 'agent' | 'plan'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('odon_execution_mode') as any) || 'chat';
+    }
+    return 'chat';
+  });
+  // Persist execution mode
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('odon_execution_mode', executionMode);
+    }
+  }, [executionMode]);
+
   // Provider & Model States (Synchronized with Settings)
   const [providers, setProviders] = useState<ProviderItem[]>(FALLBACK_PROVIDERS);
   const [activeProviderId, setActiveProviderId] = useState<string>(() => {
@@ -203,10 +251,12 @@ export default function App() {
     type: string;
     size: number;
     dataUrl?: string;
+    dataBase64?: string;
     textContent?: string;
     isImage: boolean;
   }
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const activeSessionRef = useRef<string | null>(null);
 
   const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
   const [quickModelInput, setQuickModelInput] = useState('');
@@ -284,6 +334,25 @@ export default function App() {
     }
     setIsModelMenuOpen(false);
   };
+
+  // Keep the selected model valid when the catalog changes (e.g. a stored
+  // legacy/placeholder model id that no provider serves any more).
+  useEffect(() => {
+    if (activeModels.length === 0) return;
+    const exists = activeModels.some(
+      (m) =>
+        m.id === selectedModel ||
+        `${activeProvider?.id}::${m.id}` === selectedModel ||
+        m.name === selectedModel,
+    );
+    if (!exists) {
+      const rec = activeModels.find((m) => m.recommended) || activeModels[0];
+      setSelectedModel(rec.id);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('odon_selected_model', rec.id);
+      }
+    }
+  }, [providers, activeProviderId, customOpenAiModels]);
 
   // Resizable Right Panel State
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
@@ -422,6 +491,10 @@ export default function App() {
     const statusInterval = setInterval(checkDaemonStatus, 5000);
 
     const unsubscribe = api.subscribeEvents((event) => {
+      const eventSession = 'session_id' in event.payload ? event.payload.session_id : null;
+      if (eventSession && activeSessionRef.current && eventSession !== activeSessionRef.current) {
+        return;
+      }
       if (event.type === 'text_delta') {
         setStreamingText((prev) => prev + event.payload.delta);
       } else if (event.type === 'thought_delta') {
@@ -529,6 +602,7 @@ export default function App() {
   // Select an existing session from recent history
   const loadSessionChat = async (id: string, title: string) => {
     setCurrentSessionId(id);
+    activeSessionRef.current = id;
     setInChatMode(true);
     setStreamingText('');
     setStreamingThought('');
@@ -544,60 +618,71 @@ export default function App() {
             showAppCard: m.content.artifact_ids?.length > 0 || m.content.text.includes('```'),
             thought: m.content.thought,
             toolCalls: m.content.tool_calls?.map((t) => t.tool_name),
+            attachments: m.content.attachments || [],
           }))
         );
       } else {
-        setMessages([
-          {
-            id: 'init-ast',
-            role: 'assistant',
-            content: `Session "${title}" loaded. How can I help you continue this work?`,
-            timestamp: 'Just now',
-          },
-        ]);
+        setMessages([]);
       }
       if (data.artifacts && data.artifacts.length > 0) {
         setArtifacts(data.artifacts);
       }
-    } catch {
+    } catch (err: any) {
       setMessages([
         {
-          id: 'fb-user',
-          role: 'user',
-          content: title,
-          timestamp: 'Just now',
-        },
-        {
-          id: 'fb-ast',
+          id: 'load-error',
           role: 'assistant',
-          content: `Here is the progress and artifacts generated for "${title}". All components are compiled and verified.`,
+          content: `⚠️ **Gagal memuat percakapan**: ${err?.message || 'Daemon tidak merespons.'}\n\nPastikan daemon ODON aktif di \`http://127.0.0.1:4096\`.`,
           timestamp: 'Just now',
-          showAppCard: true,
         },
       ]);
     }
   };
 
-  // Submit prompt from input box or action cards
-  const handleSendMessage = async (customText?: string, mode: string = 'general') => {
+  // Submit prompt from unified composer
+  const handleSendMessage = async (customText?: string) => {
     let textToSend = (customText || inputMessage).trim();
     if (!textToSend && attachedFiles.length === 0) return;
     if (isGenerating) return;
 
-    if (attachedFiles.length > 0) {
-      const parts: string[] = [];
-      for (const file of attachedFiles) {
-        if (file.isImage && file.dataUrl) {
-          parts.push(`![${file.name}](${file.dataUrl})`);
-        } else if (file.textContent) {
-          const preview = file.textContent.length > 4000 ? file.textContent.slice(0, 4000) + '\n... (truncated)' : file.textContent;
-          parts.push(`[Attached Document: ${file.name}]\n\`\`\`\n${preview}\n\`\`\``);
-        }
+    if (isOpenAiCompatible && !selectedModel.trim()) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `cfg_err_${Date.now()}`,
+          role: 'assistant',
+          content: `⚠️ **Belum ada model yang dipilih.**\n\nBuka **Settings → Providers → OpenAI Compatible**, tambahkan Model ID yang tersedia di gateway Anda, lalu pilih model tersebut sebelum mengirim pesan.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+      return;
+    }
+
+    // Binary media (images / PDFs) goes to the provider as native multimodal
+    // content. Text documents are inlined so every provider can read them.
+    const outgoingAttachments: MessageAttachment[] = [];
+    const textParts: string[] = [];
+    for (const file of attachedFiles) {
+      if (file.dataBase64) {
+        outgoingAttachments.push({
+          name: file.name,
+          mime_type: file.type || guessMimeType(file.name),
+          data_base64: file.dataBase64,
+        });
+      } else if (file.textContent !== undefined) {
+        const limit = 200_000;
+        const body =
+          file.textContent.length > limit
+            ? `${file.textContent.slice(0, limit)}\n...(truncated ${file.textContent.length - limit} characters)`
+            : file.textContent;
+        textParts.push(`[Attached document: ${file.name}]\n\`\`\`\n${body}\n\`\`\``);
       }
-      if (parts.length > 0) {
-        textToSend = `${textToSend ? textToSend + '\n\n' : ''}${parts.join('\n\n')}`;
-      }
-      setAttachedFiles([]);
+    }
+    if (textParts.length > 0) {
+      textToSend = `${textToSend ? `${textToSend}\n\n` : ''}${textParts.join('\n\n')}`;
+    }
+    if (!textToSend && outgoingAttachments.length > 0) {
+      textToSend = 'Please analyze the attached file(s) and summarize what you find.';
     }
 
     const userMsg: ChatMessage = {
@@ -605,9 +690,11 @@ export default function App() {
       role: 'user',
       content: textToSend,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      attachments: outgoingAttachments,
     };
 
     setMessages((prev) => [...prev, userMsg]);
+    setAttachedFiles([]);
     setInputMessage('');
     setInChatMode(true);
     setIsGenerating(true);
@@ -621,14 +708,18 @@ export default function App() {
       try {
         if (!sid) {
           const title = textToSend.slice(0, 32) + (textToSend.length > 32 ? '...' : '');
-          const newSession = await api.createSession(title, mode, selectedModel);
+          const newSession = await api.createSession(title, executionMode, selectedModel);
           sid = newSession.id;
+          activeSessionRef.current = sid;
           setCurrentSessionId(sid);
           setSessions((prev) => [newSession, ...prev]);
+        } else {
+          activeSessionRef.current = sid;
         }
 
         const modelPayload = selectedModel.includes('::') ? selectedModel : `${activeProviderId}::${selectedModel}`;
-        const resMsg = await api.sendMessage(sid, textToSend, modelPayload);
+        const effort = (typeof window !== 'undefined' && localStorage.getItem('odon_effort_level')) || 'high';
+        const resMsg = await api.sendMessage(sid, textToSend, modelPayload, effort, outgoingAttachments);
 
         const assistantMsg: ChatMessage = {
           id: resMsg.id,
@@ -645,12 +736,18 @@ export default function App() {
         loadSessions();
       } catch (err: any) {
         console.error('Daemon message send error:', err);
+        const detail = err.message || 'Terjadi kesalahan saat memproses jawaban.';
+        const hint = /502|503|504/.test(detail)
+          ? 'Gateway/model upstream sedang tidak tersedia. Periksa Model ID, Base URL, dan status gateway di **Settings → Providers**, lalu gunakan tombol **Test Connection**.'
+          : /401|403/.test(detail)
+            ? 'API key ditolak. Periksa kembali kredensial provider di **Settings → Providers**.'
+            : /404/.test(detail)
+              ? 'Model atau endpoint tidak ditemukan. Periksa Model ID dan Base URL di **Settings → Providers**.'
+              : 'Periksa konfigurasi API key, Base URL, dan koneksi akun provider pada menu **Settings**.';
         const errorMsg: ChatMessage = {
           id: `ast_err_${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ **Gagal menghubungi model AI**: ${err.message || 'Terjadi kesalahan saat memproses jawaban.'}
-
-Periksa konfigurasi API key atau koneksi akun provider pada menu **Settings**.`,
+          content: `⚠️ **Gagal menghubungi model AI**: ${detail}\n\n${hint}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
         setMessages((prev) => [...prev, errorMsg]);
@@ -676,8 +773,9 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
   // Trigger prompt from hero action cards
   const handleActionCard = (title: string, promptText: string, mode: string) => {
-    setActiveNav(mode);
-    handleSendMessage(promptText, mode);
+    setExecutionMode(mode as any);
+    setActiveNav('chat');
+    handleSendMessage(promptText);
   };
 
   // File attachment handler (supports images and documents)
@@ -686,30 +784,16 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
     if (!files || files.length === 0) return;
 
     Array.from(files).forEach((file) => {
-      const isImg = file.type.startsWith('image/');
+      const mime = file.type || guessMimeType(file.name);
       const reader = new FileReader();
-      if (isImg) {
-        reader.onload = () => {
-          setAttachedFiles((prev) => [
-            ...prev,
-            {
-              name: file.name,
-              type: file.type,
-              size: file.size,
-              dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
-              isImage: true,
-            },
-          ]);
-        };
-        reader.readAsDataURL(file);
-      } else {
+      if (isTextFile(file)) {
         reader.onload = () => {
           const text = typeof reader.result === 'string' ? reader.result : '';
           setAttachedFiles((prev) => [
             ...prev,
             {
               name: file.name,
-              type: file.type,
+              type: mime,
               size: file.size,
               textContent: text,
               isImage: false,
@@ -717,6 +801,23 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
           ]);
         };
         reader.readAsText(file);
+      } else {
+        reader.onload = () => {
+          const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+          const base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '';
+          setAttachedFiles((prev) => [
+            ...prev,
+            {
+              name: file.name,
+              type: mime,
+              size: file.size,
+              dataUrl,
+              dataBase64: base64,
+              isImage: mime.startsWith('image/'),
+            },
+          ]);
+        };
+        reader.readAsDataURL(file);
       }
     });
 
@@ -727,23 +828,15 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Dynamic input placeholder based on active navigation tab
+  // Composer placeholder follows execution mode, not navigation tab
   const getPlaceholder = () => {
-    switch (activeNav) {
-      case 'code':
-        return 'Describe code to generate, refactor, or test...';
-      case 'create':
-        return 'Describe an image or visual creative asset to generate...';
-      case 'documents':
-        return 'Draft a PRD, technical specification, or document...';
-      case 'files':
-        return 'Ask ODON to search, inspect, or edit workspace files...';
-      case 'agents':
-        return 'Define an autonomous multi-step agent mission...';
-      case 'automations':
-        return 'Configure a background automation or scheduled workflow...';
-      case 'terminal':
-        return 'Ask ODON to run terminal commands or script in workspace...';
+    switch (executionMode) {
+      case 'auto':
+        return 'Auto: describe the task, ODON will route to the right tools/models...';
+      case 'agent':
+        return 'Agent: define a multi-step autonomous mission...';
+      case 'plan':
+        return 'Plan: describe the task, ODON will draft a plan first...';
       default:
         return 'Ask ODON anything...';
     }
@@ -778,18 +871,11 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
     : undefined;
 
   // Session list to render
-  const recentItems = sessions.length > 0
-    ? (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
-      id: s.id,
-      title: s.title,
-      time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    }))
-    : [
-      { id: 'mock-1', title: 'Rencana arsitektur ODON', time: '2h ago' },
-      { id: 'mock-2', title: 'Refactor modul agent (Rust)', time: '4h ago' },
-      { id: 'mock-3', title: 'Buat gambar ilustrasi produk', time: 'Yesterday' },
-      { id: 'mock-4', title: 'Konversi PDF ke DOCX', time: 'Yesterday' },
-    ];
+  const recentItems = (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
+    id: s.id,
+    title: s.title,
+    time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  }));
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans">
@@ -1024,6 +1110,9 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
             <div className="mt-5 pt-3 border-t border-neutral-100">
               <div className="text-[11px] font-medium text-neutral-400 px-1 mb-2">Recent</div>
               <div className="space-y-1">
+                {recentItems.length === 0 && (
+                  <div className="px-2 py-1.5 text-[11px] text-neutral-400">Belum ada percakapan.</div>
+                )}
                 {recentItems.map((item) => (
                   <button
                     key={item.id}
@@ -1180,8 +1269,9 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
             <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
               <GitHubView
                 onSendMessage={(prompt) => {
+                  setExecutionMode('chat');
                   setActiveNav('chat');
-                  handleSendMessage(prompt, 'chat');
+                  handleSendMessage(prompt);
                 }}
                 onOpenTerminal={() => {
                   setActiveNav('terminal');
@@ -1448,6 +1538,31 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                               )}
                               <span>{tc}</span>
                             </span>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="ml-7 flex flex-wrap gap-2">
+                        {msg.attachments.map((att, idx) => {
+                          const src = `data:${att.mime_type};base64,${att.data_base64}`;
+                          return att.mime_type.startsWith('image/') ? (
+                            <img
+                              key={`${msg.id}-att-${idx}`}
+                              src={src}
+                              alt={att.name}
+                              className="max-h-52 max-w-xs rounded-xl border border-neutral-200 bg-white object-contain shadow-2xs"
+                            />
+                          ) : (
+                            <div
+                              key={`${msg.id}-att-${idx}`}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-[11px] text-neutral-700"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-blue-500" />
+                              <span className="truncate max-w-[180px]">{att.name}</span>
+                              <span className="text-neutral-400">{att.mime_type}</span>
+                            </div>
                           );
                         })}
                       </div>
@@ -1736,6 +1851,33 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
                 {/* Right Tools */}
                 <div className="flex items-center gap-2">
+                  {/* Execution Mode Selector */}
+                  <div className="flex items-center gap-0.5 p-0.5 bg-neutral-100/80 rounded-lg">
+                    {[
+                      { key: 'chat', label: 'Chat', Icon: MessageSquare },
+                      { key: 'auto', label: 'Auto', Icon: Zap },
+                      { key: 'agent', label: 'Agent', Icon: Bot },
+                      { key: 'plan', label: 'Plan', Icon: FileText },
+                    ].map((m) => {
+                      const active = executionMode === m.key;
+                      return (
+                        <button
+                          key={m.key}
+                          onClick={() => setExecutionMode(m.key as any)}
+                          title={m.label}
+                          className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium transition-all ${
+                            active
+                              ? 'bg-white text-neutral-900 shadow-2xs'
+                              : 'text-neutral-500 hover:text-neutral-700'
+                          }`}
+                        >
+                          <m.Icon className={`w-3 h-3 ${active ? 'text-neutral-900' : 'text-neutral-500'}`} />
+                          <span className="hidden sm:inline">{m.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {/* Model Selector Pill */}
                   <div className="relative">
                     <button

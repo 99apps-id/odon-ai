@@ -18,12 +18,19 @@ export interface ToolCallInfo {
   is_approved?: boolean;
 }
 
+export interface MessageAttachment {
+  name: string;
+  mime_type: string;
+  data_base64: string;
+}
+
 export interface MessageContent {
   text: string;
   thought?: string;
   tool_calls: ToolCallInfo[];
   artifact_ids: string[];
   action_chips: OutputActionChip[];
+  attachments?: MessageAttachment[];
 }
 
 export interface Message {
@@ -136,12 +143,12 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'GitHub Copilot',
     category: 'oauth',
     auth_type: 'oauth',
-    description: 'Active GitHub Copilot session with frontier GPT-6 Astra and Claude 5.5 models',
+    description: 'GitHub Copilot subscription models via the Copilot API',
     models: [
-      { id: 'gpt-6-astra', name: 'GPT-6 Astra (GitHub Copilot)', context: 1050000, recommended: true },
-      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (GitHub Copilot)', context: 1000000, recommended: true },
-      { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol (GitHub Copilot)', context: 1050000 },
-      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5 (GitHub Copilot)', context: 1000000 },
+      { id: 'gpt-4o', name: 'GPT-4o (GitHub Copilot)', context: 128000, recommended: true },
+      { id: 'gpt-4.1', name: 'GPT-4.1 (GitHub Copilot)', context: 1047576, recommended: true },
+      { id: 'claude-3.7-sonnet', name: 'Claude 3.7 Sonnet (GitHub Copilot)', context: 200000 },
+      { id: 'o3-mini', name: 'o3-mini (GitHub Copilot)', context: 200000 },
     ],
   },
   {
@@ -149,13 +156,12 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'Google Antigravity',
     category: 'oauth',
     auth_type: 'oauth',
-    description: 'Google Cloud Code Assist & Antigravity OAuth with Gemini 4 and Claude 5.5 reasoning',
+    description: 'Google Cloud Code Assist & Antigravity OAuth (Gemini and Claude)',
     models: [
-      { id: 'gemini-4-argon', name: 'Gemini 4 Argon (Flagship)', context: 1000000, recommended: true },
-      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Agentic & Coding)', context: 1000000, recommended: true },
-      { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', context: 1000000 },
-      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (Antigravity)', context: 1000000, recommended: true },
-      { id: 'gemini-3.8-live', name: 'Gemini 3.8 Live (Real-Time)', context: 128000 },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', context: 1048576, recommended: true },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', context: 1048576, recommended: true },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1048576 },
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4 (Antigravity)', context: 200000 },
     ],
   },
   {
@@ -163,12 +169,12 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'ChatGPT / OpenAI Codex',
     category: 'oauth',
     auth_type: 'oauth',
-    description: 'Official OpenAI OAuth authorization with GPT-6 frontier reasoning models',
+    description: 'Official ChatGPT account authorization through the Codex backend',
     models: [
-      { id: 'gpt-6-astra', name: 'GPT-6 Astra (Flagship Frontier)', context: 1050000, recommended: true },
-      { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol (Production Reasoning)', context: 1050000, recommended: true },
-      { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra (Visual & Agentic)', context: 1050000 },
-      { id: 'gpt-6-luna', name: 'GPT-6 Luna (Fast & High Throughput)', context: 1050000 },
+      { id: 'gpt-5-codex', name: 'GPT-5 Codex', context: 400000, recommended: true },
+      { id: 'gpt-5', name: 'GPT-5', context: 400000, recommended: true },
+      { id: 'gpt-5-mini', name: 'GPT-5 mini', context: 400000 },
+      { id: 'gpt-4.1', name: 'GPT-4.1', context: 1047576 },
     ],
   },
   {
@@ -176,12 +182,12 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'Claude (Anthropic OAuth)',
     category: 'oauth',
     auth_type: 'oauth',
-    description: 'Direct Anthropic Claude account authorization with Claude 5.5 architecture',
+    description: 'Direct Anthropic Claude account authorization',
     models: [
-      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (Flagship Balance)', context: 1000000, recommended: true },
-      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5 (Deep Agentic Coding)', context: 1000000, recommended: true },
-      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5 (Low Latency)', context: 1000000 },
-      { id: 'claude-fable-5-1', name: 'Claude Fable 5.1 (Complex Reasoning)', context: 1000000 },
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', context: 200000, recommended: true },
+      { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', context: 200000, recommended: true },
+      { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', context: 200000 },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', context: 200000 },
     ],
   },
   {
@@ -189,11 +195,11 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'xAI Grok',
     category: 'oauth',
     auth_type: 'oauth',
-    description: 'xAI Grok device authorization with Grok 4.7 frontier reasoning',
+    description: 'xAI Grok device authorization',
     models: [
-      { id: 'grok-4.7', name: 'Grok 4.7 (Flagship Frontier)', context: 500000, recommended: true },
-      { id: 'grok-4.6', name: 'Grok 4.6 (High Context)', context: 500000 },
-      { id: 'grok-4.20-reasoning', name: 'Grok 4.20 Reasoning (Deep Math & Logic)', context: 256000, recommended: true },
+      { id: 'grok-4', name: 'Grok 4', context: 256000, recommended: true },
+      { id: 'grok-3', name: 'Grok 3', context: 131072 },
+      { id: 'grok-3-mini', name: 'Grok 3 mini', context: 131072 },
     ],
   },
   {
@@ -212,13 +218,14 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'OpenAI (Official BYOK)',
     category: 'byok',
     auth_type: 'api_key',
-    description: 'Official OpenAI platform with GPT-6 Astra, Sol, Terra, and Luna models',
+    description: 'Official OpenAI API models',
     default_base_url: 'https://api.openai.com/v1',
     models: [
-      { id: 'gpt-6-astra', name: 'GPT-6 Astra (Flagship Frontier)', context: 1050000, recommended: true },
-      { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol (Production Reasoning)', context: 1050000, recommended: true },
-      { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra (Visual & Agentic)', context: 1050000 },
-      { id: 'gpt-6-luna', name: 'GPT-6 Luna (Fast & High Throughput)', context: 1050000 },
+      { id: 'gpt-4o', name: 'GPT-4o', context: 128000, recommended: true },
+      { id: 'gpt-4.1', name: 'GPT-4.1', context: 1047576, recommended: true },
+      { id: 'gpt-4o-mini', name: 'GPT-4o mini', context: 128000 },
+      { id: 'o3', name: 'o3 (Reasoning)', context: 200000 },
+      { id: 'o4-mini', name: 'o4-mini (Reasoning)', context: 200000 },
     ],
   },
   {
@@ -226,13 +233,13 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'Anthropic (Official BYOK)',
     category: 'byok',
     auth_type: 'api_key',
-    description: 'Official Anthropic API with Claude 5.5 adaptive thinking models',
+    description: 'Official Anthropic API with Claude models',
     default_base_url: 'https://api.anthropic.com/v1',
     models: [
-      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (Flagship Balance)', context: 1000000, recommended: true },
-      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5 (Deep Agentic Coding)', context: 1000000, recommended: true },
-      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5 (Low Latency)', context: 1000000 },
-      { id: 'claude-fable-5-1', name: 'Claude Fable 5.1 (Complex Reasoning)', context: 1000000 },
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', context: 200000, recommended: true },
+      { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', context: 200000, recommended: true },
+      { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', context: 200000 },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', context: 200000 },
     ],
   },
   {
@@ -243,10 +250,10 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     description: 'Google Gemini API with 1M context and native multimodal reasoning',
     default_base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
     models: [
-      { id: 'gemini-4-argon', name: 'Gemini 4 Argon (Flagship)', context: 1000000, recommended: true },
-      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Agentic & Coding)', context: 1000000, recommended: true },
-      { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', context: 1000000 },
-      { id: 'gemini-3.8-live', name: 'Gemini 3.8 Live (Real-Time)', context: 128000 },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', context: 1048576, recommended: true },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', context: 1048576, recommended: true },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1048576 },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', context: 1048576 },
     ],
   },
   {
@@ -254,11 +261,11 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'DeepSeek (BYOK)',
     category: 'byok',
     auth_type: 'api_key',
-    description: 'DeepSeek V4.1 Flash and Pro reasoning models with 1M context',
+    description: 'DeepSeek chat and reasoning models',
     default_base_url: 'https://api.deepseek.com/v1',
     models: [
-      { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash (General & Agent)', context: 1000000, recommended: true },
-      { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro (Deep Reasoning & Coding)', context: 1000000, recommended: true },
+      { id: 'deepseek-chat', name: 'DeepSeek Chat', context: 128000, recommended: true },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', context: 128000, recommended: true },
     ],
   },
   {
@@ -266,13 +273,13 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'Qwen Plan / DashScope Global',
     category: 'byok',
     auth_type: 'api_key',
-    description: 'Alibaba Cloud international AI gateway: Qwen 3.5, Qwen Max, and Qwen 2.5 Coder',
+    description: 'Alibaba Cloud international AI gateway (Qwen Max, Qwen Plus, Qwen Coder)',
     default_base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     models: [
-      { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus (Flagship)', context: 1000000, recommended: true },
-      { id: 'qwen-max', name: 'Qwen Max (Complex Reasoning)', context: 131072, recommended: true },
-      { id: 'qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', context: 131072, recommended: true },
-      { id: 'qwq-32b-preview', name: 'QwQ 32B Reasoning Preview', context: 32768 },
+      { id: 'qwen-max', name: 'Qwen Max', context: 131072, recommended: true },
+      { id: 'qwen-plus', name: 'Qwen Plus', context: 131072, recommended: true },
+      { id: 'qwen2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B', context: 131072, recommended: true },
+      { id: 'qwq-32b', name: 'QwQ 32B Reasoning', context: 32768 },
     ],
   },
   {
@@ -280,14 +287,14 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'Mistral AI',
     category: 'byok',
     auth_type: 'api_key',
-    description: 'Mistral AI models including Mistral Large 4, Medium 3.5, and Codestral',
+    description: 'Mistral AI models including Large, Medium, and Codestral',
     default_base_url: 'https://api.mistral.ai/v1',
     models: [
-      { id: 'mistral-large-4', name: 'Mistral Large 4 (Multimodal Flagship)', context: 128000, recommended: true },
-      { id: 'mistral-medium-3.5', name: 'Mistral Medium 3.5 (Agentic & Coding)', context: 128000, recommended: true },
-      { id: 'mistral-small-4', name: 'Mistral Small 4', context: 128000 },
-      { id: 'codestral-latest', name: 'Codestral Latest (Code Specialist)', context: 256000, recommended: true },
-      { id: 'ministral-8b', name: 'Ministral 8B (Fast & Light)', context: 128000 },
+      { id: 'mistral-large-latest', name: 'Mistral Large', context: 128000, recommended: true },
+      { id: 'mistral-medium-latest', name: 'Mistral Medium', context: 128000, recommended: true },
+      { id: 'mistral-small-latest', name: 'Mistral Small', context: 128000 },
+      { id: 'codestral-latest', name: 'Codestral', context: 256000, recommended: true },
+      { id: 'ministral-8b-latest', name: 'Ministral 8B', context: 128000 },
     ],
   },
   {
@@ -295,12 +302,13 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'Groq (Fast Inference)',
     category: 'byok',
     auth_type: 'api_key',
-    description: 'Ultra high-speed LPU inference engine for open-weights Llama 4 models',
+    description: 'Ultra high-speed LPU inference for open-weights models',
     default_base_url: 'https://api.groq.com/openai/v1',
     models: [
-      { id: 'llama-4-scout', name: 'Llama 4 Scout (10M Context)', context: 10000000, recommended: true },
       { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', context: 131072, recommended: true },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', context: 131072 },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', context: 131072, recommended: true },
+      { id: 'qwen/qwen3-32b', name: 'Qwen 3 32B', context: 131072 },
+      { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill 70B', context: 131072 },
     ],
   },
   {
@@ -311,10 +319,10 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     description: 'Unified gateway across all frontier models and providers',
     default_base_url: 'https://openrouter.ai/api/v1',
     models: [
-      { id: 'openai/gpt-6-astra', name: 'GPT-6 Astra (OpenRouter)', context: 1050000, recommended: true },
-      { id: 'anthropic/claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (OpenRouter)', context: 1000000, recommended: true },
-      { id: 'deepseek/deepseek-flash', name: 'DeepSeek Flash (OpenRouter)', context: 1000000, recommended: true },
-      { id: 'google/gemini-4-argon', name: 'Gemini 4 Argon (OpenRouter)', context: 1000000 },
+      { id: 'openai/gpt-4o', name: 'GPT-4o (OpenRouter)', context: 128000, recommended: true },
+      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4 (OpenRouter)', context: 200000, recommended: true },
+      { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro (OpenRouter)', context: 1048576, recommended: true },
+      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat (OpenRouter)', context: 128000 },
     ],
   },
   {
@@ -325,10 +333,10 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     description: 'Run open models entirely locally on your hardware without internet',
     default_base_url: 'http://localhost:11434/v1',
     models: [
-      { id: 'llama4:scout', name: 'Llama 4 Scout Local (10M Context)', context: 10000000, recommended: true },
-      { id: 'llama4:maverick', name: 'Llama 4 Maverick Local', context: 1000000, recommended: true },
-      { id: 'llama3.3', name: 'Llama 3.3 70B Local', context: 32768 },
-      { id: 'deepseek-flash', name: 'DeepSeek-V4.1 Local', context: 64000 },
+      { id: 'llama3.3', name: 'Llama 3.3 70B', context: 131072, recommended: true },
+      { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder 32B', context: 131072, recommended: true },
+      { id: 'deepseek-r1:32b', name: 'DeepSeek R1 32B', context: 131072 },
+      { id: 'llama3.1:8b', name: 'Llama 3.1 8B', context: 131072 },
     ],
   },
   {

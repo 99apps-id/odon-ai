@@ -76,6 +76,28 @@ export interface SkillItemInfo {
   content: string;
 }
 
+export interface GitHubUser {
+  login: string;
+  name: string;
+  avatar_url: string;
+  bio?: string;
+}
+
+export interface GitHubStatusResponse {
+  authenticated: boolean;
+  auth_source?: string;
+  user?: GitHubUser;
+  workspace_repo?: { owner: string; repo: string };
+}
+
+export interface GitHubRepoItem {
+  name: string;
+  owner: string;
+  full_name: string;
+  is_private: boolean;
+  description: string;
+}
+
 export const api = {
   getBaseUrl(): string {
     if (typeof window !== 'undefined') {
@@ -141,11 +163,17 @@ export const api = {
     return res.json();
   },
 
-  async sendMessage(sessionId: string, text: string, model?: string, effort?: string): Promise<Message> {
+  async sendMessage(
+    sessionId: string,
+    text: string,
+    model?: string,
+    effort?: string,
+    attachments?: Array<{ name: string; mime_type: string; data_base64: string }>,
+  ): Promise<Message> {
     const res = await fetch(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model, effort }),
+      body: JSON.stringify({ text, model, effort, attachments: attachments || [] }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -153,6 +181,32 @@ export const api = {
     }
     const data = await res.json();
     return data.message;
+  },
+
+  async testProvider(providerId: string, model?: string): Promise<{
+    ok: boolean;
+    provider: string;
+    model?: string;
+    latency_ms?: number;
+    sample?: string;
+    error?: string;
+  }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/providers/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider_id: providerId, model }),
+    });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = await res.json();
+        detail = body.error || JSON.stringify(body);
+      } catch {
+        detail = await res.text().catch(() => '');
+      }
+      return { ok: false, provider: providerId, error: detail || `HTTP ${res.status}` };
+    }
+    return res.json();
   },
 
   async listArtifacts(sessionId: string): Promise<Artifact[]> {
@@ -341,14 +395,33 @@ export const api = {
   },
 
   // GitHub
-  async getGitHubPrs(owner: string = '99apps-id', repo: string = 'odon-ai'): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/github/prs?owner=${owner}&repo=${repo}`);
+  async getGitHubStatus(): Promise<GitHubStatusResponse> {
+    const res = await fetch(`${this.getBaseUrl()}/api/github/status`);
+    if (!res.ok) return { authenticated: false };
+    return res.json();
+  },
+
+  async getGitHubUserRepos(): Promise<{ repos: GitHubRepoItem[] }> {
+    const res = await fetch(`${this.getBaseUrl()}/api/github/user-repos`);
+    if (!res.ok) return { repos: [] };
+    return res.json();
+  },
+
+  async getGitHubPrs(owner?: string, repo?: string): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (owner) params.append('owner', owner);
+    if (repo) params.append('repo', repo);
+    const res = await fetch(`${this.getBaseUrl()}/api/github/prs?${params.toString()}`);
     if (!res.ok) return [];
     return res.json();
   },
 
-  async getGitHubIssues(owner: string = '99apps-id', repo: string = 'odon-ai', state: string = 'open'): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/github/issues?owner=${owner}&repo=${repo}&state=${state}`);
+  async getGitHubIssues(owner?: string, repo?: string, state: string = 'open'): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (owner) params.append('owner', owner);
+    if (repo) params.append('repo', repo);
+    params.append('state', state);
+    const res = await fetch(`${this.getBaseUrl()}/api/github/issues?${params.toString()}`);
     if (!res.ok) return [];
     return res.json();
   },
