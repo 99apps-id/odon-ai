@@ -1,0 +1,5 @@
+
+pub struct BrowserSessionListTool;
+#[async_trait] impl Tool for BrowserSessionListTool { fn name(&self)->&str{"browser_session_list"} fn description(&self)->&str{"List live persistent browser sessions"} fn parameters_schema(&self)->Value{schema(json!({}),json!([]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier0ReadOnly} async fn execute(&self,_:&ToolContext,_:Value)->Result<Value>{ let s=store().lock().await; let mut v=Vec::new(); for x in s.values(){v.push(x.lock().await.meta.clone());} Ok(json!(v)) } }
+
+pub struct BrowserSessionResumeTool;

@@ -37,7 +37,7 @@ use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_channel::{ChannelAdapter, IncomingChannelMessage, TelegramRelay, WhatsAppChannel};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
-use odon_core::AgentEvent;
+use odon_core::{AgentEvent, ArtifactPayload, Message, OdonError};
 use odon_provider::{
     anthropic::AnthropicProvider,
     host_creds::{discover_antigravity, discover_github_copilot},
@@ -1166,6 +1166,515 @@ async fn run_automation_job(state: AppState, job: AutomationJob) {
     }
 }
 
+fn relay_mime_for_path(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "pdf" => "application/pdf",
+        "md" | "markdown" => "text/markdown",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "application/octet-stream",
+    }
+}
+
+fn sanitize_relay_file_name(value: &str, fallback_extension: &str) -> String {
+    let mut name: String = value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.' | '(' | ')'))
+        .collect();
+    if name.trim().is_empty() {
+        name = "odon-output".to_string();
+    }
+    if !name.contains('.') {
+        name.push_str(fallback_extension);
+    }
+    name
+}
+
+fn workspace_artifact_path(state: &AppState, candidate: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(candidate);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        PathBuf::from(&state.workspace_root).join(candidate.trim_start_matches('/'))
+    };
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+async fn relay_artifact_file(state: &AppState, artifact_id: &str) -> Option<(String, String, Vec<u8>)> {
+    let artifact = state.storage.get_artifact(artifact_id).ok()?;
+    match artifact.payload {
+        ArtifactPayload::Image {
+            file_path,
+            preview_url,
+            ..
+        } => {
+            let path = file_path
+                .as_deref()
+                .and_then(|candidate| workspace_artifact_path(state, candidate))
+                .or_else(|| {
+                    preview_url
+                        .as_deref()
+                        .and_then(|url| url.strip_prefix("/api/files/"))
+                        .and_then(|candidate| workspace_artifact_path(state, candidate))
+                })?;
+            let bytes = tokio::fs::read(&path).await.ok()?;
+            let mime = relay_mime_for_path(&path);
+            Some((
+                sanitize_relay_file_name(&artifact.title, ".png"),
+                mime.to_string(),
+                bytes,
+            ))
+        }
+        ArtifactPayload::Document { markdown, .. } => Some((
+            sanitize_relay_file_name(&artifact.title, ".md"),
+            "text/markdown".to_string(),
+            markdown.into_bytes(),
+        )),
+        _ => None,
+    }
+}
+
+async fn collect_relay_attachments(state: &AppState, turn: &Message) -> Vec<(String, String, Vec<u8>)> {
+    let mut files = Vec::new();
+    for attachment in turn.content.attachments.iter() {
+        if let Ok(bytes) = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &attachment.data_base64,
+        ) {
+            files.push((
+                sanitize_relay_file_name(&attachment.name, ".bin"),
+                attachment.mime_type.clone(),
+                bytes,
+            ));
+        }
+    }
+    for artifact_id in turn.content.artifact_ids.iter().take(4) {
+        if let Some(file) = relay_artifact_file(state, artifact_id).await {
+            files.push(file);
+        }
+    }
+    files
+}
+
+async fn send_relay_attachments(
+    state: &AppState,
+    channel: &str,
+    sender: &str,
+    caption: &str,
+    files: &[(String, String, Vec<u8>)],
+) {
+    for (file_name, mime_type, bytes) in files.iter().take(4) {
+        let result = match channel {
+            "telegram" => {
+                let relay = state.telegram.read().await.clone();
+                match relay {
+                    Some(relay) => {
+                        relay
+                            .send_relay_file(sender, file_name, mime_type, bytes.clone(), Some(caption))
+                            .await
+                    }
+                    None => Ok(()),
+                }
+            }
+            "whatsapp" => {
+                let cloud = state.whatsapp_cloud.read().await.clone();
+                match cloud {
+                    Some(cloud) => {
+                        cloud
+                            .send_relay_file(sender, file_name, mime_type, bytes.clone(), Some(caption))
+                            .await
+                    }
+                    None => Err(OdonError::Channel(
+                        "WhatsApp Web bridge does not support outbound media yet".to_string(),
+                    )),
+                }
+            }
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            tracing::warn!("Failed to send relay attachment {file_name}: {error}");
+        }
+    }
+}
+
+fn relay_session_key(channel: &str, sender: &str) -> String {
+    format!("{channel}:{sender}")
+}
+
+fn relay_channel_for_session(session_id: &str) -> Option<(String, String)> {
+    if let Some(sender) = session_id.strip_prefix("tg_") {
+        return Some(("telegram".to_string(), sender.to_string()));
+    }
+    if let Some(sender) = session_id.strip_prefix("wa_") {
+        return Some(("whatsapp".to_string(), sender.to_string()));
+    }
+    None
+}
+
+async fn send_relay_text(
+    state: &AppState,
+    channel: &str,
+    sender: &str,
+    text: &str,
+) -> odon_core::Result<()> {
+    match channel {
+        "telegram" => {
+            let relay = state.telegram.read().await.clone();
+            match relay {
+                Some(relay) => relay.send_direct_message(sender, text).await,
+                None => Ok(()),
+            }
+        }
+        "whatsapp" => {
+            let cloud = state.whatsapp_cloud.read().await.clone();
+            if let Some(cloud) = cloud {
+                cloud.send_direct_message(sender, text).await
+            } else {
+                state
+                    .whatsapp_bridge
+                    .send(sender, text)
+                    .await
+                    .map_err(OdonError::Channel)
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+fn format_pending_approvals(requests: &[odon_security::ApprovalRequest]) -> String {
+    if requests.is_empty() {
+        return "✅ No pending approvals.".to_string();
+    }
+    let mut lines = vec!["🔒 Pending approvals:".to_string()];
+    for request in requests {
+        lines.push(format!(
+            "- `{}` `{}` (Tier {})\n  {}",
+            request.id,
+            request.tool_name,
+            request.risk_tier as u8,
+            request.description
+        ));
+    }
+    lines.push("Use `/approve <id-prefix>` or `/deny <id-prefix>`.".to_string());
+    lines.join("\n")
+}
+
+async fn resolve_relay_approval(
+    state: &AppState,
+    session_id: &str,
+    id_prefix: &str,
+    approved: bool,
+) -> String {
+    let pending = state.approval.list_pending().await;
+    let matches: Vec<_> = pending
+        .iter()
+        .filter(|request| request.session_id == session_id || session_id.is_empty())
+        .filter(|request| request.id.starts_with(id_prefix))
+        .collect();
+    match matches.len() {
+        0 => format!(
+            "No matching pending approval for `{id_prefix}`. Use /approvals."
+        ),
+        1 => {
+            let request = matches[0];
+            let decision = if approved {
+                ApprovalDecision::Approved
+            } else {
+                ApprovalDecision::Rejected {
+                    reason: "Rejected from relay".to_string(),
+                }
+            };
+            let resolved = state
+                .approval
+                .submit_decision(&request.id, decision)
+                .await;
+            if resolved {
+                format!(
+                    "{} approval `{}` for `{}`.",
+                    if approved { "✅ Approved" } else { "❌ Denied" },
+                    request.id,
+                    request.tool_name
+                )
+            } else {
+                "Approval was already resolved.".to_string()
+            }
+        }
+        _ => "Multiple approvals match that prefix; use a longer ID prefix.".to_string(),
+    }
+}
+
+async fn relay_models_text(state: &AppState, session_id: &str) -> String {
+    let current = state.relay_model.read().await.clone();
+    let mut lines = vec![format!(
+        "Current relay model: `{}`",
+        current.as_deref().unwrap_or("provider default")
+    )];
+    let configs = state.storage.list_provider_configs().unwrap_or_default();
+    for config in configs {
+        let models =
+            serde_json::from_str::<Vec<String>>(&config.models_json).unwrap_or_default();
+        if models.is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "- `{}`: {}",
+            config.provider_id,
+            models.join(", ")
+        ));
+    }
+    lines.push("Use `/model provider::model-id` to switch this relay session.".to_string());
+    let _ = session_id;
+    lines.join("\n")
+}
+
+async fn relay_status_text(state: &AppState, session_id: &str) -> String {
+    let active = state.active_turns.read().await.contains_key(session_id);
+    let pending = state.approval.list_pending().await.len();
+    let telegram = state.telegram_online.load(std::sync::atomic::Ordering::SeqCst);
+    let whatsapp = state.whatsapp_online.load(std::sync::atomic::Ordering::SeqCst);
+    format!(
+        "✅ ODON online\nSession: `{session_id}`\nActive turn: {}\nPending approvals: {pending}\nTelegram: {}\nWhatsApp: {}",
+        if active { "running" } else { "idle" },
+        if telegram { "online" } else { "offline" },
+        if whatsapp { "online" } else { "offline" }
+    )
+}
+
+async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) {
+    let key = relay_session_key(&message.channel, &message.sender_id);
+    let session_id = {
+        let overrides = state.relay_sessions.read().await;
+        overrides
+            .get(&key)
+            .cloned()
+            .or_else(|| message.session_id.clone())
+            .unwrap_or_else(|| format!("{}_{}", message.channel, message.sender_id))
+    };
+    info!(
+        "Relay message from {} [{}] in session {}",
+        message.channel, message.sender_id, session_id
+    );
+
+    let trimmed = message.text.trim();
+    if trimmed.starts_with('/') {
+        let mut parts = trimmed.split_whitespace();
+        let raw_command = parts.next().unwrap_or_default();
+        let command = raw_command
+            .split('@')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let argument = trimmed
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim().to_string())
+            .unwrap_or_default();
+
+        let reply = match command.as_str() {
+            "/start" | "/help" => {
+                "🤖 *ODON relay commands*\n\n\
+                 /new — new session\n\
+                 /models — list configured models\n\
+                 /model provider::model — switch model\n\
+                 /stop — stop the active turn\n\
+                 /steer <text> — steer the active turn\n\
+                 /approvals — list pending approvals\n\
+                 /approve <id-prefix> — approve\n\
+                 /deny <id-prefix> — deny\n\
+                 /status — relay status"
+                    .to_string()
+            }
+            "/new" | "/reset" => {
+                let model = state.relay_model.read().await.clone();
+                let session = Session::new(
+                    "Relay session",
+                    SessionMode::General,
+                    model.as_deref().unwrap_or("odon-auto"),
+                );
+                let _ = state.storage.save_session(&session);
+                state
+                    .relay_sessions
+                    .write()
+                    .await
+                    .insert(key, session.id.clone());
+                format!("🆕 New ODON session: `{}`", session.id)
+            }
+            "/models" => relay_models_text(&state, &session_id).await,
+            "/model" => {
+                if argument.is_empty() {
+                    let current = state.relay_model.read().await.clone();
+                    format!(
+                        "Current relay model: `{}`",
+                        current.as_deref().unwrap_or("provider default")
+                    )
+                } else {
+                    *state.relay_model.write().await = Some(argument.clone());
+                    format!("Model switched to `{argument}` for this relay.")
+                }
+            }
+            "/status" => relay_status_text(&state, &session_id).await,
+            "/stop" => {
+                let active = state.active_turns.read().await;
+                match active.get(&session_id) {
+                    Some(handle) => {
+                        handle.cancel.cancel();
+                        "🛑 Stop requested.".to_string()
+                    }
+                    None => "No active turn in this session.".to_string(),
+                }
+            }
+            "/steer" => {
+                if argument.is_empty() {
+                    "Usage: /steer <guidance>".to_string()
+                } else {
+                    let active = state.active_turns.read().await;
+                    match active.get(&session_id) {
+                        Some(handle) => {
+                            handle.steer.push(SteerMessage {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                text: argument.clone(),
+                                attachments: message.attachments.clone(),
+                                priority: false,
+                            });
+                            "🧭 Steer queued.".to_string()
+                        }
+                        None => "No active turn; send the message normally.".to_string(),
+                    }
+                }
+            }
+            "/approvals" => {
+                let pending = state.approval.list_pending().await;
+                let session_pending: Vec<_> = pending
+                    .into_iter()
+                    .filter(|request| request.session_id == session_id)
+                    .collect();
+                format_pending_approvals(&session_pending)
+            }
+            "/approve" | "/deny" => {
+                if argument.is_empty() {
+                    "Usage: /approve <id-prefix> or /deny <id-prefix>".to_string()
+                } else {
+                    resolve_relay_approval(&state, &session_id, &argument, command == "/approve")
+                        .await
+                }
+            }
+            _ => {
+                return;
+            }
+        };
+
+        let _ = send_relay_text(&state, &message.channel, &message.sender_id, &reply).await;
+        return;
+    }
+
+    // If a relay turn is already running, ordinary messages become steering
+    // guidance instead of preempting the turn.
+    {
+        let active = state.active_turns.read().await;
+        if let Some(handle) = active.get(&session_id) {
+            handle.steer.push(SteerMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                text: message.text.clone(),
+                attachments: message.attachments.clone(),
+                priority: false,
+            });
+            drop(active);
+            let _ = send_relay_text(
+                &state,
+                &message.channel,
+                &message.sender_id,
+                "🧭 Steer queued for the active turn.",
+            )
+            .await;
+            return;
+        }
+    }
+
+    let model = state.relay_model.read().await.clone();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let steer = SteerQueue::new();
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut turns = state.active_turns.write().await;
+        if let Some(previous) = turns.get(&session_id) {
+            previous.cancel.cancel();
+        }
+        turns.insert(
+            session_id.clone(),
+            TurnHandle {
+                turn_id: turn_id.clone(),
+                cancel: cancel.clone(),
+                steer: steer.clone(),
+            },
+        );
+    }
+
+    let result = state
+        .runtime
+        .execute_turn_controlled(
+            &session_id,
+            &message.text,
+            message.attachments.clone(),
+            model.as_deref(),
+            None,
+            cancel,
+            Some(steer),
+            None,
+        )
+        .await;
+    state.active_turns.write().await.remove(&session_id);
+
+    let (reply, attachments) = match result {
+        Ok(turn) => {
+            let files = collect_relay_attachments(&state, &turn).await;
+            let text = if turn.content.text.trim().is_empty() {
+                "✅ Done.".to_string()
+            } else {
+                turn.content.text
+            };
+            (text, files)
+        }
+        Err(error) => {
+            let text = if error.to_string().contains("cancelled") {
+                "🛑 Turn stopped.".to_string()
+            } else {
+                format!("⚠️ ODON error: {error}")
+            };
+            (text, Vec::new())
+        }
+    };
+    if let Err(error) = send_relay_text(&state, &message.channel, &message.sender_id, &reply).await {
+        tracing::error!("Failed to deliver {} reply: {error}", message.channel);
+    }
+    if !attachments.is_empty() {
+        send_relay_attachments(
+            &state,
+            &message.channel,
+            &message.sender_id,
+            "Generated by ODON",
+            &attachments,
+        )
+        .await;
+    }
+}
+
 async fn send_automation_failure_alert(state: &AppState, job: &AutomationJob, error: &str) {
     if std::env::var("ODON_AUTOMATION_ALERTS")
         .map(|value| value == "0")
@@ -1252,6 +1761,8 @@ struct AppState {
     workspaces: Arc<tokio::sync::RwLock<WorkspaceConfig>>,
     api_token: Option<String>,
     active_turns: Arc<tokio::sync::RwLock<HashMap<String, TurnHandle>>>,
+    relay_sessions: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    relay_model: Arc<tokio::sync::RwLock<Option<String>>>,
     started_at: std::time::Instant,
 }
 
@@ -1511,76 +2022,8 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
 
-            // Single dispatcher shared by every inbound channel: run one agent
-            // turn and deliver the final answer back on the originating channel.
-            {
-                let rt_relay = runtime.clone();
-                let tg_handle = telegram_handle.clone();
-                let wa_cloud_handle = whatsapp_cloud_handle.clone();
-                let bridge = whatsapp_bridge.clone();
-                let relay_model = std::env::var("ODON_RELAY_MODEL").ok();
-                tokio::spawn(async move {
-                    while let Some(msg) = relay_rx.recv().await {
-                        let session_id = msg
-                            .session_id
-                            .clone()
-                            .unwrap_or_else(|| format!("{}_{}", msg.channel, msg.sender_id));
-                        info!(
-                            "Relay turn from {} [{}] in session {}",
-                            msg.channel, msg.sender_id, session_id
-                        );
-                        let cancel = tokio_util::sync::CancellationToken::new();
-                        let result = rt_relay
-                            .execute_turn_with_attachments(
-                                &session_id,
-                                &msg.text,
-                                msg.attachments.clone(),
-                                relay_model.as_deref(),
-                                None,
-                                cancel,
-                            )
-                            .await;
-                        let reply = match result {
-                            Ok(turn) => {
-                                if turn.content.text.trim().is_empty() {
-                                    "✅ Done.".to_string()
-                                } else {
-                                    turn.content.text
-                                }
-                            }
-                            Err(e) => format!("⚠️ ODON error: {e}"),
-                        };
-                        let delivered: std::result::Result<(), String> = match msg.channel.as_str()
-                        {
-                            "telegram" => {
-                                let relay = tg_handle.read().await.clone();
-                                match relay {
-                                    Some(relay) => relay
-                                        .send_direct_message(&msg.sender_id, &reply)
-                                        .await
-                                        .map_err(|e| e.to_string()),
-                                    None => Ok(()),
-                                }
-                            }
-                            "whatsapp" => {
-                                let cloud = wa_cloud_handle.read().await.clone();
-                                if let Some(cloud) = cloud {
-                                    cloud
-                                        .send_direct_message(&msg.sender_id, &reply)
-                                        .await
-                                        .map_err(|e| e.to_string())
-                                } else {
-                                    bridge.send(&msg.sender_id, &reply).await
-                                }
-                            }
-                            _ => Ok(()),
-                        };
-                        if let Err(e) = delivered {
-                            tracing::error!("Failed to deliver {} reply: {e}", msg.channel);
-                        }
-                    }
-                });
-            }
+            // Relay turn execution is installed after AppState exists so slash
+            // commands can use active-turn, approval, model, and session state.
 
             let mut loaded_automations = load_automations_from_disk();
             for job in &mut loaded_automations {
@@ -1632,6 +2075,13 @@ async fn main() -> anyhow::Result<()> {
                 workspaces: Arc::new(tokio::sync::RwLock::new(workspace_config)),
                 api_token: api_token.clone(),
                 active_turns: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                relay_sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                relay_model: Arc::new(tokio::sync::RwLock::new(
+                    std::env::var("ODON_RELAY_MODEL")
+                        .ok()
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
+                )),
                 started_at: std::time::Instant::now(),
             };
 
@@ -1641,6 +2091,41 @@ async fn main() -> anyhow::Result<()> {
                     loop {
                         automation_scheduler_tick(&scheduler_state).await;
                         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    }
+                });
+            }
+
+            {
+                let relay_state = state.clone();
+                tokio::spawn(async move {
+                    while let Some(message) = relay_rx.recv().await {
+                        handle_relay_message(relay_state.clone(), message).await;
+                    }
+                });
+            }
+
+            {
+                let approval_state = state.clone();
+                tokio::spawn(async move {
+                    let mut events = approval_state.event_tx.subscribe();
+                    while let Ok(event) = events.recv().await {
+                        if let AgentEvent::ApprovalRequested {
+                            session_id,
+                            approval_id,
+                            tool_name,
+                            risk_tier,
+                            description,
+                        } = event
+                        {
+                            let Some((channel, sender)) = relay_channel_for_session(&session_id)
+                            else {
+                                continue;
+                            };
+                            let text = format!(
+                                "🔒 *Approval required*\n\nID: `{approval_id}`\nTool: `{tool_name}`\nRisk: Tier {risk_tier}\n\n{description}\n\nReply:\n/approve {approval_id}\n/deny {approval_id}"
+                            );
+                            let _ = send_relay_text(&approval_state, &channel, &sender, &text).await;
+                        }
                     }
                 });
             }

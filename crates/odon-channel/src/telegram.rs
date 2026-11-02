@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::adapter::{ChannelAdapter, IncomingChannelMessage};
+use crate::adapter::{ChannelAdapter, IncomingChannelMessage, extract_document_text, is_extractable_document};
 
 /// Telegram Bot API rejects messages longer than 4096 UTF-16 code units.
 const TELEGRAM_MAX_MESSAGE: usize = 4000;
@@ -219,6 +219,103 @@ impl TelegramRelay {
         Ok(())
     }
 
+    async fn send_document(
+        &self,
+        chat_id: &str,
+        file_name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+        caption: Option<&str>,
+    ) -> Result<()> {
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file_name.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| OdonError::Channel(format!("Invalid Telegram document MIME: {e}")))?;
+        let mut form = reqwest::multipart::Form::new().text("chat_id", chat_id.to_string());
+        if let Some(caption) = caption.filter(|value| !value.trim().is_empty()) {
+            form = form.text("caption", caption.chars().take(900).collect::<String>());
+        }
+        form = form.part("document", part);
+        let resp = self
+            .client
+            .post(format!(
+                "https://api.telegram.org/bot{}/sendDocument",
+                self.token.as_ref().ok_or_else(|| OdonError::Channel(
+                    "Telegram bot token not configured".to_string()
+                ))?
+            ))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| OdonError::Channel(format!("Telegram sendDocument failed: {e}")))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(OdonError::Channel(format!(
+                "Telegram sendDocument HTTP {}: {body}",
+                status.as_u16()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn send_photo(
+        &self,
+        chat_id: &str,
+        file_name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+        caption: Option<&str>,
+    ) -> Result<()> {
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file_name.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| OdonError::Channel(format!("Invalid Telegram photo MIME: {e}")))?;
+        let mut form = reqwest::multipart::Form::new().text("chat_id", chat_id.to_string());
+        if let Some(caption) = caption.filter(|value| !value.trim().is_empty()) {
+            form = form.text("caption", caption.chars().take(900).collect::<String>());
+        }
+        form = form.part("photo", part);
+        let resp = self
+            .client
+            .post(format!(
+                "https://api.telegram.org/bot{}/sendPhoto",
+                self.token.as_ref().ok_or_else(|| OdonError::Channel(
+                    "Telegram bot token not configured".to_string()
+                ))?
+            ))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| OdonError::Channel(format!("Telegram sendPhoto failed: {e}")))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(OdonError::Channel(format!(
+                "Telegram sendPhoto HTTP {}: {body}",
+                status.as_u16()
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn send_relay_file(
+        &self,
+        chat_id: &str,
+        file_name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+        caption: Option<&str>,
+    ) -> Result<()> {
+        if mime_type.starts_with("image/") {
+            self.send_photo(chat_id, file_name, mime_type, bytes, caption)
+                .await
+        } else {
+            self.send_document(chat_id, file_name, mime_type, bytes, caption)
+                .await
+        }
+    }
+
     async fn download_file(&self, file_id: &str) -> Option<Vec<u8>> {
         let token = self.token.as_ref()?;
         let info = self
@@ -254,7 +351,7 @@ impl TelegramRelay {
                         attachments.push(MessageAttachment {
                             name: format!("telegram-photo-{}.jpg", chrono::Utc::now().timestamp()),
                             mime_type: "image/jpeg".to_string(),
-                            data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+                            data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
                         });
                     }
                 }
@@ -276,8 +373,33 @@ impl TelegramRelay {
                         attachments.push(MessageAttachment {
                             name: file_name.to_string(),
                             mime_type: mime.to_string(),
-                            data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+                            data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
                         });
+                        if mime == "application/pdf" {
+                            if let Some((text, extractor)) =
+                                extract_document_text(file_name, mime, &bytes).await
+                            {
+                                extra_text.push_str(&format!(
+                                    "\n\n[PDF text extracted from {} using {extractor}]\n{}",
+                                    file_name, text
+                                ));
+                            }
+                        }
+                    } else if is_extractable_document(file_name, mime) {
+                        match extract_document_text(file_name, mime, &bytes).await {
+                            Some((text, extractor)) => {
+                                extra_text.push_str(&format!(
+                                    "\n\n[Document text extracted from {} using {extractor}]\n{}",
+                                    file_name, text
+                                ));
+                            }
+                            None => {
+                                extra_text.push_str(&format!(
+                                    "\n\n[Attached office document: {} ({}, {} bytes). Install pdftotext/pandoc/LibreOffice to extract text.]",
+                                    file_name, mime, bytes.len()
+                                ));
+                            }
+                        }
                     } else if looks_like_text_file(file_name, mime) {
                         let text = String::from_utf8_lossy(&bytes);
                         let text = if text.len() > 200_000 {
@@ -343,47 +465,9 @@ impl TelegramRelay {
             .unwrap_or("")
             .to_string();
 
-        // Commands (allow the /cmd@botname form Telegram uses in groups).
-        let command = text
-            .trim()
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .split('@')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
-        match command.as_str() {
-            "/start" | "/help" => {
-                let _ = self
-                    .send_text(
-                        &chat_id,
-                        "🤖 *ODON is online.*\n\nSend any message to run an autonomous agent turn in your workspace.\n\nCommands:\n/new — start a fresh session\n/status — show relay status\n/help — show this help",
-                    )
-                    .await;
-                return;
-            }
-            "/new" | "/reset" => {
-                let session = format!("tg_{}_{}", chat_id, chrono::Utc::now().timestamp());
-                if let Ok(mut map) = self.sessions.lock() {
-                    map.insert(chat_id.clone(), session);
-                }
-                let _ = self
-                    .send_text(&chat_id, "🆕 New ODON session started for this chat.")
-                    .await;
-                return;
-            }
-            "/status" => {
-                let _ = self
-                    .send_text(
-                        &chat_id,
-                        "✅ ODON daemon is online and the Telegram relay is polling for updates.",
-                    )
-                    .await;
-                return;
-            }
-            _ => {}
-        }
+        // Slash commands are handled centrally by the daemon dispatcher so
+        // Telegram and WhatsApp expose the same command surface.
+        let _ = &text;
 
         let mut extra_text = String::new();
         let attachments = self.collect_attachments(message, &mut extra_text).await;

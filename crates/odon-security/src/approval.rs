@@ -8,6 +8,15 @@ use tokio::sync::{oneshot, RwLock};
 use uuid::Uuid;
 
 use crate::policy::{ExecutionMode, SecurityPolicy};
+use std::time::Duration;
+
+fn approval_timeout() -> Duration {
+    let seconds = std::env::var("ODON_APPROVAL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(120);
+    Duration::from_secs(seconds.clamp(5, 3600))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RiskTier {
@@ -369,7 +378,7 @@ impl ApprovalEngine {
         });
 
         // Wait for decision or timeout
-        match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+        match tokio::time::timeout(approval_timeout(), rx).await {
             Ok(Ok(decision)) => Ok(decision),
             Ok(Err(_)) => Ok(ApprovalDecision::Rejected {
                 reason: "Approval channel closed".to_string(),

@@ -1,0 +1,10 @@
+pub struct BrowserSessionNavigateTool;
+#[async_trait] impl Tool for BrowserSessionNavigateTool { fn name(&self)->&str{"browser_session_navigate"} fn description(&self)->&str{"Navigate a persistent browser session without losing login state"} fn parameters_schema(&self)->Value{schema(json!({"session_id":{"type":"string"},"url":{"type":"string"}}),json!(["session_id","url"]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier1WorkspaceMutating} async fn execute(&self,_:&ToolContext,a:Value)->Result<Value>{let id=validate_session_id(a.get("session_id").and_then(Value::as_str).ok_or_else(||err("session_id is required"))?)?;let u=a.get("url").and_then(Value::as_str).ok_or_else(||err("url is required"))?;crate::net_guard::validate_url(u).await?;Ok(cdp(id,"Page.navigate",json!({"url":u})).await?)} }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_session_id;
+
+    #[test]
+    fn session_ids_reject_path_traversal_and_control_chars() {
+        assert!(validate_session_id("safe_session-1").is_ok());

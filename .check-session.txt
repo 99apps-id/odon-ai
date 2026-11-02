@@ -1,0 +1,48 @@
+    Checking odon-tools v0.1.0 (C:\Project\odon-ai\crates\odon-tools)
+error[E0599]: no variant, associated function, or constant named `Tier2System` found for enum `RiskTier` in the current scope
+  --> crates\odon-tools\src\browser_session.rs:24:370
+   |
+24 | ...self)->RiskTier{RiskTier::Tier2System} async fn execute(&self,ctx:&ToolContext,a:Value)->Result<Value>{ let id=sid(); let root=Pa...
+   |                              ^^^^^^^^^^^ variant, associated function, or constant not found in `RiskTier`
+
+error[E0599]: no variant, associated function, or constant named `Tier2System` found for enum `RiskTier` in the current scope
+  --> crates\odon-tools\src\browser_session.rs:30:331
+   |
+30 | ...self)->RiskTier{RiskTier::Tier2System} async fn execute(&self,ctx:&ToolContext,a:Value)->Result<Value>{ let id=a.get("session_id"...
+   |                              ^^^^^^^^^^^ variant, associated function, or constant not found in `RiskTier`
+
+error[E0599]: no variant, associated function, or constant named `Tier2System` found for enum `RiskTier` in the current scope
+  --> crates\odon-tools\src\browser_session.rs:33:342
+   |
+33 | ...self)->RiskTier{RiskTier::Tier2System} async fn execute(&self,_:&ToolContext,a:Value)->Result<Value>{ let id=a.get("session_id")....
+   |                              ^^^^^^^^^^^ variant, associated function, or constant not found in `RiskTier`
+
+error[E0382]: use of moved value: `x`
+  --> crates\odon-tools\src\browser_session.rs:18:213
+   |
+18 | ...Ok(x)=std::env::var("PROGRAMFILES") { p.push(PathBuf::from(x).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).j...
+   |       -                                                       - value moved here                                                     ^ value used here after move
+   |       |
+   |       move occurs because `x` has type `std::string::String`, which does not implement the `Copy` trait
+   |
+help: consider cloning the value if the performance cost is acceptable
+   |
+18 | fn browser() -> Result<PathBuf> { let mut p=Vec::new(); if cfg!(windows) { if let Ok(x)=std::env::var("PROGRAMFILES") { p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe")); } if let Ok(x)=std::env::var("LOCALAPPDATA") { p.push(PathBuf::from(x).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe")); } } else { p.extend([PathBuf::from("/usr/bin/google-chrome"),PathBuf::from("/usr/bin/chromium"),PathBuf::from("/usr/bin/microsoft-edge")]); } p.into_iter().find(|x| x.is_file()).ok_or_else(|| err("Chrome/Chromium/Edge executable not found")) }
+   |                                                                                                                                               ++++++++
+
+error[E0382]: use of moved value: `x`
+  --> crates\odon-tools\src\browser_session.rs:18:403
+   |
+18 | ...Ok(x)=std::env::var("LOCALAPPDATA") { p.push(PathBuf::from(x).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).j...
+   |       -                                                       - value moved here                                                     ^ value used here after move
+   |       |
+   |       move occurs because `x` has type `std::string::String`, which does not implement the `Copy` trait
+   |
+help: consider cloning the value if the performance cost is acceptable
+   |
+18 | fn browser() -> Result<PathBuf> { let mut p=Vec::new(); if cfg!(windows) { if let Ok(x)=std::env::var("PROGRAMFILES") { p.push(PathBuf::from(x).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe")); } if let Ok(x)=std::env::var("LOCALAPPDATA") { p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe")); } } else { p.extend([PathBuf::from("/usr/bin/google-chrome"),PathBuf::from("/usr/bin/chromium"),PathBuf::from("/usr/bin/microsoft-edge")]); } p.into_iter().find(|x| x.is_file()).ok_or_else(|| err("Chrome/Chromium/Edge executable not found")) }
+   |                                                                                                                                                                                                                                                                                                                                             ++++++++
+
+Some errors have detailed explanations: E0382, E0599.
+For more information about an error, try `rustc --explain E0382`.
+error: could not compile `odon-tools` (lib) due to 5 previous errors

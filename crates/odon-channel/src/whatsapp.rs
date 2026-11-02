@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::adapter::{ChannelAdapter, IncomingChannelMessage};
+use crate::adapter::{ChannelAdapter, IncomingChannelMessage, extract_document_text, is_extractable_document};
 
 const MAX_MESSAGE: usize = 3500;
 const MAX_DOWNLOAD_BYTES: usize = 20 * 1024 * 1024;
@@ -83,6 +83,21 @@ fn looks_like_text_file(name: &str, mime: &str) -> bool {
     ]
     .iter()
     .any(|ext| lower.ends_with(ext))
+}
+
+fn markdown_to_whatsapp(input: &str) -> String {
+    let bold = regex::Regex::new(r"(?m)\*\*(.+?)\*\*|\b__(.+?)__\b").unwrap();
+    let link = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
+    let heading = regex::Regex::new(r"(?m)^#{1,6}\s+(.+)$").unwrap();
+
+    let with_links = link.replace_all(input, "$1 $2");
+    let with_bold = bold.replace_all(&with_links, "*$1$2*");
+    let with_headings = heading.replace_all(&with_bold, "*$1*");
+    with_headings
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl Default for WhatsAppChannel {
@@ -178,7 +193,8 @@ impl WhatsAppChannel {
             )));
         }
 
-        for chunk in split_message(text, MAX_MESSAGE) {
+        let rendered = markdown_to_whatsapp(text);
+        for chunk in split_message(&rendered, MAX_MESSAGE) {
             let url = format!(
                 "https://graph.facebook.com/{}/{}/messages",
                 self.api_version, phone_id
@@ -208,6 +224,122 @@ impl WhatsAppChannel {
             }
         }
         Ok(())
+    }
+
+    async fn upload_media(
+        &self,
+        file_name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String> {
+        let token = self.access_token.as_ref().ok_or_else(|| {
+            OdonError::Channel("WhatsApp relay is not configured".to_string())
+        })?;
+        let phone_id = self.phone_number_id.as_ref().ok_or_else(|| {
+            OdonError::Channel("WhatsApp relay is not configured".to_string())
+        })?;
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file_name.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| OdonError::Channel(format!("Invalid WhatsApp media MIME: {e}")))?;
+        let form = reqwest::multipart::Form::new()
+            .text("messaging_product", "whatsapp")
+            .text("file_length", "0")
+            .part("file", part);
+        let url = format!(
+            "https://graph.facebook.com/{}/{}/media",
+            self.api_version, phone_id
+        );
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| OdonError::Channel(format!("WhatsApp media upload failed: {e}")))?;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+        if !status.is_success() {
+            return Err(OdonError::Channel(format!(
+                "WhatsApp media upload HTTP {}: {body}",
+                status.as_u16()
+            )));
+        }
+        body.get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| OdonError::Channel("WhatsApp media upload had no media id".to_string()))
+    }
+
+    async fn send_media(
+        &self,
+        to: &str,
+        file_name: &str,
+        mime_type: &str,
+        media_id: &str,
+        caption: Option<&str>,
+    ) -> Result<()> {
+        let token = self.access_token.as_ref().ok_or_else(|| {
+            OdonError::Channel("WhatsApp relay is not configured".to_string())
+        })?;
+        let phone_id = self.phone_number_id.as_ref().ok_or_else(|| {
+            OdonError::Channel("WhatsApp relay is not configured".to_string())
+        })?;
+        let recipient = clean_recipient(to);
+        let kind = if mime_type.starts_with("image/") {
+            "image"
+        } else {
+            "document"
+        };
+        let mut media = json!({ "id": media_id });
+        if kind == "document" {
+            media["filename"] = json!(file_name);
+        }
+        if let Some(caption) = caption.filter(|value| !value.trim().is_empty()) {
+            media["caption"] = json!(caption.chars().take(900).collect::<String>());
+        }
+        let url = format!(
+            "https://graph.facebook.com/{}/{}/messages",
+            self.api_version, phone_id
+        );
+        let mut payload = json!({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": kind
+        });
+        payload[kind] = media;
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| OdonError::Channel(format!("WhatsApp media send failed: {e}")))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(OdonError::Channel(format!(
+                "WhatsApp media send HTTP {}: {body}",
+                status.as_u16()
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn send_relay_file(
+        &self,
+        to: &str,
+        file_name: &str,
+        mime_type: &str,
+        bytes: Vec<u8>,
+        caption: Option<&str>,
+    ) -> Result<()> {
+        let media_id = self.upload_media(file_name, mime_type, bytes).await?;
+        self.send_media(to, file_name, mime_type, &media_id, caption)
+            .await
     }
 
     async fn download_media(&self, media_id: &str) -> Option<(Vec<u8>, String)> {
@@ -282,10 +414,33 @@ impl WhatsAppChannel {
 
             if mime.starts_with("image/") || mime == "application/pdf" {
                 attachments.push(MessageAttachment {
-                    name: file_name,
-                    mime_type: mime,
-                    data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+                    name: file_name.clone(),
+                    mime_type: mime.clone(),
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
                 });
+                if mime == "application/pdf" {
+                    if let Some((text, extractor)) =
+                        extract_document_text(&file_name, &mime, &bytes).await
+                    {
+                        extra_text.push_str(&format!(
+                            "\n\n[PDF text extracted from {file_name} using {extractor}]\n{text}"
+                        ));
+                    }
+                }
+            } else if is_extractable_document(&file_name, &mime) {
+                match extract_document_text(&file_name, &mime, &bytes).await {
+                    Some((text, extractor)) => {
+                        extra_text.push_str(&format!(
+                            "\n\n[Document text extracted from {file_name} using {extractor}]\n{text}"
+                        ));
+                    }
+                    None => {
+                        extra_text.push_str(&format!(
+                            "\n\n[Attached office document: {file_name} ({mime}, {} bytes). Install pdftotext/pandoc/LibreOffice to extract text.]",
+                            bytes.len()
+                        ));
+                    }
+                }
             } else if looks_like_text_file(&file_name, &mime) {
                 let text = String::from_utf8_lossy(&bytes);
                 let text = if text.len() > 200_000 {
@@ -431,6 +586,16 @@ mod tests {
     fn normalizes_phone_recipients() {
         assert_eq!(clean_recipient("+62 812-3456-7890"), "6281234567890");
         assert_eq!(clean_recipient("whatsapp:6281234567890"), "6281234567890");
+    }
+
+    #[test]
+    fn converts_common_markdown_to_whatsapp_formatting() {
+        let input = "# Report\n\n**Important** and [ODON](https://example.com)";
+        let output = markdown_to_whatsapp(input);
+        assert!(output.contains("*Report*"));
+        assert!(output.contains("*Important*"));
+        assert!(output.contains("ODON https://example.com"));
+        assert!(!output.contains("**"));
     }
 
     #[test]

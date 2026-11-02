@@ -1,0 +1,60 @@
+   Compiling odon-tools v0.1.0 (C:\Project\odon-ai\crates\odon-tools)
+warning: variable does not need to be mutable
+  --> crates\odon-tools\src\browser_session.rs:86:9
+   |
+86 |     let mut child = Command::new(browser).args(["--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check", &form...
+   |         ----^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+error[E0277]: a value of type `Vec<std::string::String>` cannot be built from an iterator over elements of type `PathBuf`
+    --> crates\odon-tools\src\browser_session.rs:58:112
+     |
+  58 |         vec!["google-chrome", "chromium", "chromium-browser", "microsoft-edge"].into_iter().map(PathBuf::from).collect()
+     |                                                                                                                ^^^^^^^ value of type `Vec<std::string::String>` cannot be built from `std::iter::Iterator<Item=PathBuf>`
+     |
+help: the trait `FromIterator<PathBuf>` is not implemented for `Vec<std::string::String>`
+      but trait `FromIterator<std::string::String>` is implemented for it
+    --> C:\Users\Iwan\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\vec\mod.rs:3888:1
+     |
+3888 | impl<T> FromIterator<T> for Vec<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `std::string::String`, found `PathBuf`
+note: the method call chain might not have had the expected associated types
+    --> crates\odon-tools\src\browser_session.rs:58:93
+     |
+  58 |         vec!["google-chrome", "chromium", "chromium-browser", "microsoft-edge"].into_iter().map(PathBuf::from).collect()
+     |         ----------------------------------------------------------------------- ----------- ^^^^^^^^^^^^^^^^^^ `Iterator::Item` changed to `PathBuf` here
+     |         |                                                                       |
+     |         |                                                                       `Iterator::Item` is `&str` here
+     |         this expression has type `Vec<&str>`
+note: required by a bound in `std::iter::Iterator::collect`
+    --> C:\Users\Iwan\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:2079:19
+     |
+2079 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
+
+error[E0599]: no method named `is_file` found for reference `&std::string::String` in the current scope
+  --> crates\odon-tools\src\browser_session.rs:60:39
+   |
+60 |     candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| OdonError::Tool { tool: "browser_session_create".into(), message: "Ch...
+   |                                       ^^^^^^^ method not found in `&std::string::String`
+
+error[E0308]: mismatched types
+  --> crates\odon-tools\src\browser_session.rs:60:5
+   |
+50 | fn browser_path() -> Result<PathBuf> {
+   |                      --------------- expected `Result<PathBuf, OdonError>` because of return type
+...
+60 |     candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| OdonError::Tool { tool: "browser_session_create".into(), message: "Chrome or Edge executable was not found".into() })
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<PathBuf, OdonError>`, found `Result<String, OdonError>`
+   |
+   = note: expected enum `Result<PathBuf, _>`
+              found enum `Result<std::string::String, _>`
+
+Some errors have detailed explanations: E0277, E0308, E0599.
+For more information about an error, try `rustc --explain E0277`.
+warning: `odon-tools` (lib test) generated 1 warning
+error: could not compile `odon-tools` (lib test) due to 3 previous errors; 1 warning emitted

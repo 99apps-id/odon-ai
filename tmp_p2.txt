@@ -1,0 +1,29 @@
+
+pub struct BrowserSessionListTool;
+#[async_trait] impl Tool for BrowserSessionListTool { fn name(&self)->&str{"browser_session_list"} fn description(&self)->&str{"List live persistent browser sessions"} fn parameters_schema(&self)->Value{schema(json!({}),json!([]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier0ReadOnly} async fn execute(&self,_:&ToolContext,_:Value)->Result<Value>{ let s=store().lock().await; let mut v=Vec::new(); for x in s.values(){v.push(x.lock().await.meta.clone());} Ok(json!(v)) } }
+
+pub struct BrowserSessionResumeTool;
+#[async_trait] impl Tool for BrowserSessionResumeTool { fn name(&self)->&str{"browser_session_resume"} fn description(&self)->&str{"Resume a persistent browser profile by session id"} fn parameters_schema(&self)->Value{schema(json!({"session_id":{"type":"string"}}),json!(["session_id"]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier1WorkspaceMutating} async fn execute(&self,ctx:&ToolContext,a:Value)->Result<Value>{ let id=validate_session_id(a.get("session_id").and_then(Value::as_str).ok_or_else(||err("session_id is required"))?)?; let path=Path::new(&ctx.workspace_root).join(".odon/browser-sessions").join(id); let b=std::fs::read(path.join("session.json")).map_err(|_|err("session metadata not found"))?; let m:Meta=serde_json::from_slice(&b).map_err(|e|err(e.to_string()))?; let p=port().await?; let mut c=Command::new(browser()?); c.args(["--headless=new","--disable-gpu","--no-first-run",&format!("--remote-debugging-port={p}"),&format!("--user-data-dir={}",m.profile_dir),"about:blank"]); let child=c.spawn().map_err(|e|err(e.to_string()))?; let mut n=m.clone(); n.port=p; n.pid=child.id().unwrap_or(0); n.last_used_at=chrono::Utc::now().to_rfc3339(); store().lock().await.insert(id.into(),Arc::new(Mutex::new(Live{meta:n.clone(),child}))); Ok(json!(n)) } }
+
+pub struct BrowserSessionCloseTool;
+#[async_trait] impl Tool for BrowserSessionCloseTool { fn name(&self)->&str{"browser_session_close"} fn description(&self)->&str{"Close a browser session while retaining its persistent profile"} fn parameters_schema(&self)->Value{schema(json!({"session_id":{"type":"string"}}),json!(["session_id"]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier1WorkspaceMutating} async fn execute(&self,_:&ToolContext,a:Value)->Result<Value>{ let id=validate_session_id(a.get("session_id").and_then(Value::as_str).ok_or_else(||err("session_id is required"))?)?; if let Some(x)=store().lock().await.remove(id){let mut l=x.lock().await; let _=l.child.kill().await; return Ok(json!({"session_id":id,"closed":true,"profile_retained":true}));} Err(err("session is not live")) } }
+
+pub struct BrowserSessionNavigateTool;
+#[async_trait] impl Tool for BrowserSessionNavigateTool { fn name(&self)->&str{"browser_session_navigate"} fn description(&self)->&str{"Navigate a persistent browser session without losing login state"} fn parameters_schema(&self)->Value{schema(json!({"session_id":{"type":"string"},"url":{"type":"string"}}),json!(["session_id","url"]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier1WorkspaceMutating} async fn execute(&self,_:&ToolContext,a:Value)->Result<Value>{let id=validate_session_id(a.get("session_id").and_then(Value::as_str).ok_or_else(||err("session_id is required"))?)?;let u=a.get("url").and_then(Value::as_str).ok_or_else(||err("url is required"))?;crate::net_guard::validate_url(u).await?;Ok(cdp(id,"Page.navigate",json!({"url":u})).await?)} }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_session_id;
+
+    #[test]
+    fn session_ids_reject_path_traversal_and_control_chars() {
+        assert!(validate_session_id("safe_session-1").is_ok());
+        assert!(validate_session_id("../escape").is_err());
+        assert!(validate_session_id("nested/name").is_err());
+        assert!(validate_session_id("").is_err());
+        assert!(validate_session_id(&"a".repeat(97)).is_err());
+    }
+}
+
+pub struct BrowserSessionClickTool;
+#[async_trait] impl Tool for BrowserSessionClickTool { fn name(&self)->&str{"browser_session_click"} fn description(&self)->&str{"Click an element inside a persistent browser session"} fn parameters_schema(&self)->Value{schema(json!({"session_id":{"type":"string"},"selector":{"type":"string"}}),json!(["session_id","selector"]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier1WorkspaceMutating} async fn execute(&self,_:&ToolContext,a:Value)->Result<Value>{let id=validate_session_id(a.get("session_id").and_then(Value::as_str).ok_or_else(||err("session_id is required"))?)?;let s=a.get("selector").and_then(Value::as_str).ok_or_else(||err("selector is required"))?;let js=format!("(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');e.click();return true}})()",serde_json::to_string(s).unwrap());Ok(cdp(id,"Runtime.evaluate",json!({"expression":js,"returnByValue":true})).await?)} }
