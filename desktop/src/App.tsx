@@ -1923,7 +1923,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
 
                                   <div className="relative aspect-video rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center overflow-hidden my-2.5">
                                     {fullSrc ? (
-                                      <img src={fullSrc} alt={art.payload.data.prompt} className="w-full h-full object-contain" />
+                                      <img src={fullSrc} alt={art.payload.data.prompt} referrerPolicy="no-referrer" className="w-full h-full object-contain" />
                                     ) : (
                                       <ImageIcon className="w-8 h-8 text-neutral-600" />
                                     )}

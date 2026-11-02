@@ -255,6 +255,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                           <img
                             src={fullSrc}
                             alt={imgData.prompt}
+                            referrerPolicy="no-referrer"
                             className="w-full h-full object-contain"
                           />
                         ) : (

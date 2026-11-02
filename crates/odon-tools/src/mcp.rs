@@ -188,10 +188,9 @@ impl StdioMcpClient {
             tool: "mcp".to_string(),
             message: format!("Failed reading MCP response: {error}"),
         })? {
-            let response: Value = serde_json::from_str(&line).map_err(|error| OdonError::Tool {
-                tool: "mcp".to_string(),
-                message: format!("MCP server returned invalid JSON: {error}"),
-            })?;
+            let Ok(response) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if response.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }

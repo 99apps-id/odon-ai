@@ -2436,27 +2436,27 @@ async fn execute_terminal(
         }
     }
 
+    // Run the command directly instead of interpolating it into a larger
+    // shell script. The endpoint is a terminal by design, but this removes a
+    // second layer of shell parsing and `}`/newline breakout from the wrapper.
     #[cfg(target_os = "windows")]
     let mut cmd = {
-        let script = format!(
-            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); [Console]::InputEncoding = [System.Text.UTF8Encoding]::new(); Set-Location -LiteralPath '{}'; try {{ & {{ {} }} }} catch {{ Write-Error $_ }}; $code = if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}; Write-Host \"`n__ODON_CWD__:$($ExecutionContext.SessionState.Path.CurrentLocation.Path)\"; exit $code",
-            final_dir.replace('\'', "''"),
-            command_str
-        );
         let mut c = tokio::process::Command::new("powershell.exe");
-        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script]);
+        c.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command_str.as_str(),
+        ]);
         c
     };
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
-        let script = format!(
-            "cd '{}' && {} && printf \"\\n__ODON_CWD__:%s\\n\" \"$(pwd)\"",
-            final_dir.replace('\'', "'\\''"),
-            command_str
-        );
         let mut c = tokio::process::Command::new("sh");
-        c.args(["-c", &script]);
+        c.args(["-c", command_str.as_str()]);
         c
     };
 
@@ -2470,31 +2470,13 @@ async fn execute_terminal(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
 
-            let mut updated_cwd = final_dir;
-            let mut cleaned_stdout = full_stdout;
-            if let Some(pos) = cleaned_stdout.rfind("__ODON_CWD__:") {
-                let cwd_part = cleaned_stdout[pos + 13..].trim();
-                if let Some(first_line) = cwd_part.lines().next() {
-                    let extracted = first_line.trim().to_string();
-                    if !extracted.is_empty() && std::path::Path::new(&extracted).exists() {
-                        updated_cwd = extracted;
-                    }
-                }
-                cleaned_stdout.truncate(pos);
-                if cleaned_stdout.ends_with("\r\n") {
-                    cleaned_stdout.truncate(cleaned_stdout.len() - 2);
-                } else if cleaned_stdout.ends_with('\n') {
-                    cleaned_stdout.truncate(cleaned_stdout.len() - 1);
-                }
-            }
-
             (
                 StatusCode::OK,
                 Json(json!({
                     "exit_code": exit_code,
-                    "stdout": cleaned_stdout,
+                    "stdout": full_stdout,
                     "stderr": stderr,
-                    "cwd": updated_cwd,
+                    "cwd": final_dir.clone(),
                     "success": exit_code == 0,
                 })),
             )
@@ -3088,8 +3070,12 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         }
     }
 
+    drop(pty_in_tx);
     let _ = child.kill();
+    let _ = child.wait();
     ws_send_task.abort();
+    let _ = ws_send_task.await;
+    drop(master_ref);
 }
 
 async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
@@ -4223,12 +4209,6 @@ fn validate_ssh_key_path(raw: &str) -> std::result::Result<String, String> {
     if !canonical.is_file() {
         return Err(format!("SSH key is not a file: {}", expanded));
     }
-    let allow_any = std::env::var("ODON_ALLOW_ANY_SSH_KEY")
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false);
-    if allow_any {
-        return Ok(display_path(&canonical));
-    }
     let allowed = ssh_key_roots()
         .into_iter()
         .filter_map(|root| std::fs::canonicalize(root).ok())
@@ -4243,16 +4223,35 @@ fn validate_ssh_key_path(raw: &str) -> std::result::Result<String, String> {
 }
 
 fn validate_ssh_target(host: &str, user: &str) -> std::result::Result<(), String> {
-    let valid_host = !host.is_empty()
-        && !host.starts_with('-')
-        && host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_' | '[' | ']'));
+    let host = host.trim();
+    let valid_host = if host.is_empty() || host.starts_with('-') || host.chars().any(char::is_whitespace) {
+        false
+    } else if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        inner.parse::<std::net::Ipv6Addr>().is_ok()
+    } else if host.parse::<std::net::IpAddr>().is_ok() {
+        true
+    } else {
+        host.len() <= 253
+            && !host.starts_with('.')
+            && !host.ends_with('.')
+            && host.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            })
+    };
     if !valid_host {
-        return Err(format!("Invalid SSH host: {host}"));
+        return Err(format!(
+            "Invalid SSH host: {host}. Use a DNS name, IPv4, or bracketed IPv6 address; use punycode for IDN."
+        ));
     }
     let valid_user = !user.is_empty()
         && !user.starts_with('-')
+        && user.len() <= 64
         && user
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));

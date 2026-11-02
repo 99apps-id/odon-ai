@@ -152,8 +152,12 @@ export const SshTerminalView: React.FC = () => {
       }
     }
 
+    const generatedId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `ssh-${crypto.randomUUID()}`
+        : `ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const newProfile: SshProfile = {
-      id: `ssh-${Date.now()}`,
+      id: generatedId,
       alias: newAlias.trim(),
       host: newHost.trim(),
       port: newPort || 22,

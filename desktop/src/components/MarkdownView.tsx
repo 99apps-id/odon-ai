@@ -592,6 +592,7 @@ export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
       <div className="relative aspect-video bg-neutral-950 flex items-center justify-center overflow-hidden">
         <img
           src={fullSrc}
+          referrerPolicy="no-referrer"
           alt={alt}
           className="w-full h-full object-contain"
           onError={(e) => {
