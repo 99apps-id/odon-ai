@@ -12,6 +12,7 @@ pub mod ops_ext;
 pub mod registry;
 pub mod shell;
 pub mod shell_ext;
+pub mod sftp;
 pub mod skills;
 pub mod system;
 pub mod web;
@@ -119,6 +120,11 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(shell::ShellExecTool));
     reg.register(Box::new(shell::BashRunTool));
     reg.register(Box::new(shell::TerminalExecTool));
+
+    // 5a. SFTP via scp
+    reg.register(Box::new(sftp::SftpUploadTool));
+    reg.register(Box::new(sftp::SftpDownloadTool));
+    reg.register(Box::new(sftp::SftpListTool));
 
     // Extended Shell & Process Management
     reg.register(Box::new(shell_ext::ProcessKillTool));

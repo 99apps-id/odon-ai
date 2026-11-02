@@ -144,6 +144,13 @@ impl StorageEngine {
             );
             ",
         )?;
+        // Older databases predate multi-endpoint provider metadata. SQLite has
+        // no IF NOT EXISTS for ADD COLUMN, so duplicate-column errors are benign.
+        let _ = conn.execute("ALTER TABLE provider_configs ADD COLUMN name TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE provider_configs ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
         Ok(())
     }
 
@@ -593,22 +600,34 @@ impl StorageEngine {
         api_key: &str,
         base_url: Option<&str>,
         is_default: bool,
+        name: Option<&str>,
+        models_json: &str,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
+        if is_default {
+            conn.execute(
+                "UPDATE provider_configs SET is_default = 0 WHERE provider_id != ?1",
+                params![provider_id],
+            )?;
+        }
         conn.execute(
-            "INSERT INTO provider_configs (provider_id, api_key, base_url, is_default, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO provider_configs (provider_id, api_key, base_url, is_default, name, models_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(provider_id) DO UPDATE SET
                 api_key = excluded.api_key,
                 base_url = excluded.base_url,
                 is_default = excluded.is_default,
+                name = excluded.name,
+                models_json = excluded.models_json,
                 updated_at = excluded.updated_at",
             params![
                 provider_id,
                 api_key,
                 base_url,
                 if is_default { 1 } else { 0 },
+                name,
+                models_json,
                 now
             ],
         )?;
@@ -618,7 +637,7 @@ impl StorageEngine {
     pub fn get_provider_config(&self, provider_id: &str) -> Result<Option<ProviderConfigRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT provider_id, api_key, base_url, is_default, updated_at
+            "SELECT provider_id, api_key, base_url, is_default, name, models_json, updated_at
              FROM provider_configs WHERE provider_id = ?1",
         )?;
         let mut rows = stmt.query_map(params![provider_id], |row| {
@@ -628,7 +647,9 @@ impl StorageEngine {
                 api_key: row.get(1)?,
                 base_url: row.get(2)?,
                 is_default: def_int != 0,
-                updated_at: row.get(4)?,
+                name: row.get(4)?,
+                models_json: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         })?;
         if let Some(r) = rows.next() {
@@ -641,7 +662,7 @@ impl StorageEngine {
     pub fn list_provider_configs(&self) -> Result<Vec<ProviderConfigRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT provider_id, api_key, base_url, is_default, updated_at
+            "SELECT provider_id, api_key, base_url, is_default, name, models_json, updated_at
              FROM provider_configs ORDER BY provider_id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -651,7 +672,9 @@ impl StorageEngine {
                 api_key: row.get(1)?,
                 base_url: row.get(2)?,
                 is_default: def_int != 0,
-                updated_at: row.get(4)?,
+                name: row.get(4)?,
+                models_json: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         })?;
         let mut list = Vec::new();
@@ -677,6 +700,8 @@ pub struct ProviderConfigRecord {
     pub api_key: String,
     pub base_url: Option<String>,
     pub is_default: bool,
+    pub name: Option<String>,
+    pub models_json: String,
     pub updated_at: String,
 }
 

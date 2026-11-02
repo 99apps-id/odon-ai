@@ -85,6 +85,19 @@ impl AgentRuntime {
         }
     }
 
+    pub async fn unregister_provider(&self, name: &str) {
+        let mut providers = self.providers.write().await;
+        providers.remove(name);
+        let mut def = self.default_provider.write().await;
+        if def.as_str() == name {
+            *def = providers
+                .keys()
+                .find(|key| key.as_str() != "odon-simulated" && key.as_str() != "default")
+                .cloned()
+                .unwrap_or_else(|| "default".to_string());
+        }
+    }
+
     pub async fn get_provider(&self, name: Option<&str>) -> Option<Arc<dyn ModelProvider>> {
         let providers = self.providers.read().await;
         if let Some(n) = name {

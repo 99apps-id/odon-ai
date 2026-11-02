@@ -491,17 +491,26 @@ export const api = {
     masked_key: string;
     base_url?: string;
     is_default: boolean;
+    name?: string;
+    models?: string[];
   }>> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config`);
     if (!res.ok) return [];
     return res.json();
   },
 
-  async saveProviderConfig(provider_id: string, api_key: string, base_url?: string, is_default?: boolean): Promise<any> {
+  async saveProviderConfig(
+    provider_id: string,
+    api_key: string,
+    base_url?: string,
+    is_default?: boolean,
+    name?: string,
+    models?: string[],
+  ): Promise<any> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider_id, api_key, base_url, is_default }),
+      body: JSON.stringify({ provider_id, api_key, base_url, is_default, name, models }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

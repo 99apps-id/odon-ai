@@ -2746,6 +2746,10 @@ struct SaveProviderConfigRequest {
     api_key: String,
     base_url: Option<String>,
     is_default: Option<bool>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    models: Vec<String>,
 }
 
 async fn get_provider_configs(State(state): State<AppState>) -> impl IntoResponse {
@@ -2763,6 +2767,8 @@ async fn get_provider_configs(State(state): State<AppState>) -> impl IntoRespons
             "masked_key": masked,
             "base_url": c.base_url,
             "is_default": c.is_default,
+            "name": c.name,
+            "models": serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default(),
             "updated_at": c.updated_at,
         }));
     }
@@ -2791,7 +2797,15 @@ async fn save_provider_config(
         req.api_key.clone()
     };
 
-    if let Err(e) = state.storage.save_provider_config(&pid, &api_key, Some(&base_url), is_def) {
+    let models_json = serde_json::to_string(&req.models).unwrap_or_else(|_| "[]".to_string());
+    if let Err(e) = state.storage.save_provider_config(
+        &pid,
+        &api_key,
+        Some(&base_url),
+        is_def,
+        req.name.as_deref(),
+        &models_json,
+    ) {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
     }
 
@@ -2814,6 +2828,7 @@ async fn delete_provider_config(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let _ = state.storage.delete_provider_config(&provider_id);
+    state.runtime.unregister_provider(&provider_id).await;
     StatusCode::OK
 }
 
@@ -3250,7 +3265,7 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
         ]),
     };
 
-    Json(json!({
+    let mut payload = json!({
         "catalog_as_of": "2026-11-02",
         "providers": [
             {
@@ -3455,7 +3470,49 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 "models": []
             }
         ]
-    }))
+    });
+
+    // Every saved endpoint with a non-catalog id is a first-class provider:
+    // its own key, Base URL, model list, and selectable provider id.
+    const STATIC_PROVIDER_IDS: &[&str] = &[
+        "github-copilot", "antigravity", "chatgpt", "claude-oauth", "xai-oauth", "muse",
+        "openai", "anthropic", "google", "deepseek", "qwen", "mistral", "groq",
+        "openrouter", "ollama", "openai-compatible", "openai_compatible", "default",
+        "odon-simulated",
+    ];
+    if let Some(list) = payload.get_mut("providers").and_then(|v| v.as_array_mut()) {
+        for c in byok_configs.iter() {
+            if STATIC_PROVIDER_IDS.iter().any(|id| id.eq_ignore_ascii_case(&c.provider_id)) {
+                continue;
+            }
+            let model_ids: Vec<String> =
+                serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default();
+            let models: Vec<serde_json::Value> = model_ids
+                .into_iter()
+                .map(|id| {
+                    json!({
+                        "id": id,
+                        "name": id,
+                        "context": 128000,
+                        "recommended": false
+                    })
+                })
+                .collect();
+            list.push(json!({
+                "id": c.provider_id,
+                "name": c.name.clone().unwrap_or_else(|| c.provider_id.clone()),
+                "category": "byok",
+                "auth_type": "api_key",
+                "configured": true,
+                "is_custom": true,
+                "default_base_url": c.base_url,
+                "description": "Custom OpenAI-compatible endpoint",
+                "models": models
+            }));
+        }
+    }
+
+    Json(payload)
 }
 
 async fn serve_file(

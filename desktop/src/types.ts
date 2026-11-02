@@ -135,6 +135,7 @@ export interface ProviderItem {
   default_base_url?: string;
   connected?: boolean;
   configured?: boolean;
+  is_custom?: boolean;
   models: ModelItem[];
 }
 

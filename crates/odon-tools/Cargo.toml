@@ -25,3 +25,4 @@ regex = { workspace = true }
 url = { workspace = true }
 sha2 = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+dirs = "6"

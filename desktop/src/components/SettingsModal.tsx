@@ -86,6 +86,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   type SettingsTab =
     | 'providers'
+    | 'endpoints'
     | 'agents'
     | 'skills'
     | 'mcp'
@@ -184,6 +185,125 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [newModelName, setNewModelName] = useState('');
   const [newModelContext, setNewModelContext] = useState(128000);
 
+  // Multiple OpenAI-compatible endpoints. Each one is stored as its own
+  // provider id (compat-*) and registered independently by the daemon.
+  type EndpointConfig = {
+    provider_id: string;
+    masked_key: string;
+    base_url?: string;
+    is_default: boolean;
+    name?: string;
+    models?: string[];
+  };
+  const [providerConfigs, setProviderConfigs] = useState<EndpointConfig[]>([]);
+  const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null);
+  const [endpointName, setEndpointName] = useState('');
+  const [endpointBaseUrl, setEndpointBaseUrl] = useState('https://api.openai.com/v1');
+  const [endpointKey, setEndpointKey] = useState('');
+  const [endpointModels, setEndpointModels] = useState('');
+  const [endpointBusy, setEndpointBusy] = useState(false);
+  const [endpointError, setEndpointError] = useState<string | null>(null);
+  const customEndpoints = providerConfigs.filter((c) => c.provider_id.startsWith('compat-'));
+
+  const refreshProviders = async () => {
+    const [data, configs] = await Promise.all([
+      api.getModels().catch(() => null),
+      api.getProviderConfigs().catch(() => [] as EndpointConfig[]),
+    ]);
+    if (data?.providers?.length) setProviders(data.providers);
+    setProviderConfigs(configs || []);
+  };
+
+  const slugifyProvider = (value: string) =>
+    value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'endpoint';
+
+  const nextEndpointId = (name: string) => {
+    const base = `compat-${slugifyProvider(name)}`;
+    let id = base;
+    let suffix = 2;
+    while (providerConfigs.some((c) => c.provider_id === id)) {
+      id = `${base}-${suffix++}`;
+    }
+    return id;
+  };
+
+  const resetEndpointForm = () => {
+    setEditingEndpointId(null);
+    setEndpointName('');
+    setEndpointBaseUrl('https://api.openai.com/v1');
+    setEndpointKey('');
+    setEndpointModels('');
+    setEndpointError(null);
+  };
+
+  const handleSaveEndpoint = async () => {
+    if (!endpointName.trim() || !endpointBaseUrl.trim()) {
+      setEndpointError('Nama provider dan Base URL wajib diisi.');
+      return;
+    }
+    const models = endpointModels
+      .split(/[\n,]/)
+      .map((m) => m.trim())
+      .filter(Boolean);
+    const providerId = editingEndpointId || nextEndpointId(endpointName);
+    setEndpointBusy(true);
+    setEndpointError(null);
+    try {
+      await api.saveProviderConfig(
+        providerId,
+        endpointKey.trim(),
+        endpointBaseUrl.trim(),
+        false,
+        endpointName.trim(),
+        models,
+      );
+      await refreshProviders();
+      resetEndpointForm();
+    } catch (e: any) {
+      setEndpointError(e.message || 'Gagal menyimpan endpoint.');
+    } finally {
+      setEndpointBusy(false);
+    }
+  };
+
+  const handleEditEndpoint = (c: EndpointConfig) => {
+    setEditingEndpointId(c.provider_id);
+    setEndpointName(c.name || c.provider_id);
+    setEndpointBaseUrl(c.base_url || '');
+    setEndpointKey('');
+    setEndpointModels((c.models || []).join('\n'));
+    setEndpointError(null);
+  };
+
+  const handleDeleteEndpoint = async (providerId: string) => {
+    if (!window.confirm(`Hapus endpoint ${providerId}?`)) return;
+    try {
+      await api.deleteProviderConfig(providerId);
+      await refreshProviders();
+      if (editingEndpointId === providerId) resetEndpointForm();
+    } catch (e: any) {
+      setEndpointError(e.message || 'Gagal menghapus endpoint.');
+    }
+  };
+
+  const handleUseEndpoint = (c: EndpointConfig) => {
+    onSelectProvider?.(c.provider_id);
+    setSelectedProviderId(c.provider_id);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('odon_active_provider', c.provider_id);
+    }
+    const firstModel = c.models?.[0];
+    if (firstModel) {
+      onSelectModel?.(firstModel);
+      localStorage.setItem('odon_selected_model', firstModel);
+    }
+  };
+
   const handleAddCustomModel = () => {
     const trimmedId = newModelId.trim();
     if (!trimmedId) return;
@@ -214,7 +334,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const requested = localStorage.getItem('odon_settings_tab');
       if (requested) {
         localStorage.removeItem('odon_settings_tab');
-        const valid = ['providers', 'agents', 'skills', 'mcp', 'harness', 'relays', 'ssh', 'system'];
+        const valid = ['providers', 'endpoints', 'agents', 'skills', 'mcp', 'harness', 'relays', 'ssh', 'system'];
         if (valid.includes(requested)) setActiveTab(requested as SettingsTab);
       }
     }
@@ -244,6 +364,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     // Load persisted BYOK configs from daemon
     api.getProviderConfigs().then((configs) => {
+      setProviderConfigs(configs || []);
       if (configs?.length) {
         // Never put a masked key into the editable field: saving it would
         // overwrite the real credential with "sk-a…z9".
