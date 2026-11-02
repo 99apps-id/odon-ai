@@ -1349,6 +1349,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       <header className="h-8 shrink-0 flex items-center justify-between px-3 text-xs text-neutral-600 bg-[#f4f5f8]">
         {/* Left: App Logo & Name + Backend Status */}
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setLeftSidebarOpen((prev) => !prev)}
+            className="p-1 -ml-1 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/70 rounded-md transition-colors cursor-pointer"
+            title={leftSidebarOpen ? "Hide Sidebar (Ctrl+B)" : "Show Sidebar (Ctrl+B)"}
+            aria-label="Toggle sidebar"
+          >
+            <Menu className="w-3.5 h-3.5" />
+          </button>
           <div
             onClick={handleNewChat}
             className="flex items-center gap-1.5 font-medium text-neutral-800 tracking-tight cursor-pointer hover:opacity-80 transition-opacity"
@@ -1631,72 +1639,68 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           </div>
         </aside>
 
-        {!leftSidebarOpen && (
-          <aside
-            className="w-12 shrink-0 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex items-start justify-center pt-2"
-            aria-label="Collapsed navigation sidebar"
-          >
-            <button
-              onClick={() => setLeftSidebarOpen(true)}
-              className="p-2 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2"
-              title="Show Sidebar (Ctrl+B)"
-              aria-label="Show sidebar"
-              aria-expanded="false"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-          </aside>
-        )}
-
         {/* ───────────────────────────────────────────────────────────
             CENTER MAIN CHAT / HERO CARD
         ─────────────────────────────────────────────────────────── */}
         <main className="flex-1 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between overflow-hidden relative min-w-0">
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 px-4">
-            {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
-              <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              {!leftSidebarOpen && (
                 <button
-                  onClick={() => setActiveNav('chat')}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2.5 py-1 rounded-lg hover:bg-blue-50 transition-colors cursor-pointer flex items-center gap-1"
+                  onClick={() => setLeftSidebarOpen(true)}
+                  className="p-1.5 -ml-1 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer flex items-center justify-center border border-neutral-200/80 shadow-2xs mr-1"
+                  title="Show Sidebar (Ctrl+B)"
+                  aria-label="Show sidebar"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>AI Chat</span>
+                  <Menu className="w-4 h-4" />
                 </button>
-                <span className="text-neutral-300">/</span>
-                <span className="text-xs font-bold text-neutral-900 capitalize tracking-tight flex items-center gap-1.5">
-                  {activeNav === 'github' && <GitPullRequest className="w-3.5 h-3.5 text-blue-600" />}
-                  {activeNav === 'automations' && <Share2 className="w-3.5 h-3.5 text-blue-600" />}
-                  {activeNav === 'mcp' && <Cpu className="w-3.5 h-3.5 text-blue-600" />}
-                  {activeNav === 'terminal' && <Terminal className="w-3.5 h-3.5 text-blue-600" />}
-                  {activeNav === 'code' && <Code2 className="w-3.5 h-3.5 text-blue-600" />}
-                  {(activeNav === 'files' || activeNav === 'explorer') && <Folder className="w-3.5 h-3.5 text-blue-600" />}
-                  <span>{activeNav === 'files' || activeNav === 'explorer' ? 'File Explorer' : `${activeNav} Workspace`}</span>
-                </span>
-              </div>
-            ) : (
-              /* Model Selector Pill */
-              <div className="flex items-center gap-2">
-                <div
-                  onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
-                  title={`Active Provider: ${activeProvider?.name} (Click to change)`}
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="font-semibold text-neutral-900 truncate max-w-[180px]">{displayModelName}</span>
-                  <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
-                </div>
+              )}
 
-                {inChatMode && (
+              {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={handleNewChat}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                    onClick={() => setActiveNav('chat')}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2.5 py-1 rounded-lg hover:bg-blue-50 transition-colors cursor-pointer flex items-center gap-1"
                   >
-                    ← Back to Home
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>AI Chat</span>
                   </button>
-                )}
-              </div>
-            )}
+                  <span className="text-neutral-300">/</span>
+                  <span className="text-xs font-bold text-neutral-900 capitalize tracking-tight flex items-center gap-1.5">
+                    {activeNav === 'github' && <GitPullRequest className="w-3.5 h-3.5 text-blue-600" />}
+                    {activeNav === 'automations' && <Share2 className="w-3.5 h-3.5 text-blue-600" />}
+                    {activeNav === 'mcp' && <Cpu className="w-3.5 h-3.5 text-blue-600" />}
+                    {activeNav === 'terminal' && <Terminal className="w-3.5 h-3.5 text-blue-600" />}
+                    {activeNav === 'code' && <Code2 className="w-3.5 h-3.5 text-blue-600" />}
+                    {(activeNav === 'files' || activeNav === 'explorer') && <Folder className="w-3.5 h-3.5 text-blue-600" />}
+                    <span>{activeNav === 'files' || activeNav === 'explorer' ? 'File Explorer' : `${activeNav} Workspace`}</span>
+                  </span>
+                </div>
+              ) : (
+                /* Model Selector Pill */
+                <div className="flex items-center gap-2">
+                  <div
+                    onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
+                    title={`Active Provider: ${activeProvider?.name} (Click to change)`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="font-semibold text-neutral-900 truncate max-w-[180px]">{displayModelName}</span>
+                    <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
+                  </div>
+
+                  {inChatMode && (
+                    <button
+                      onClick={handleNewChat}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                    >
+                      ← Back to Home
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Action Buttons on Right */}
             <div className="flex items-center gap-1">
