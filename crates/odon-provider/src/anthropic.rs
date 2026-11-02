@@ -236,7 +236,7 @@ impl ModelProvider for AnthropicProvider {
             let mut err_body = resp.text().await.unwrap_or_default();
             if err_body.len() > 2000 {
                 err_body.truncate(2000);
-                err_body.push_str("…");
+                err_body.push('…');
             }
             return Err(OdonError::Provider {
                 provider: self.label.clone(),

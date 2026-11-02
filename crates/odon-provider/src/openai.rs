@@ -424,7 +424,7 @@ impl OpenAiCompatibleProvider {
             let mut err_body = response.text().await.unwrap_or_default();
             if err_body.len() > 2000 {
                 err_body.truncate(2000);
-                err_body.push_str("…");
+                err_body.push('…');
             }
             return Err(OdonError::Provider {
                 provider: "github-copilot".to_string(),
@@ -598,7 +598,7 @@ impl OpenAiCompatibleProvider {
             let mut err_body = response.text().await.unwrap_or_default();
             if err_body.len() > 2000 {
                 err_body.truncate(2000);
-                err_body.push_str("…");
+                err_body.push('…');
             }
             return Err(OdonError::Provider {
                 provider: self.provider_label.clone(),
@@ -976,13 +976,13 @@ impl ModelProvider for OpenAiCompatibleProvider {
             let mut err_body = resp.text().await.unwrap_or_default();
             if err_body.len() > 2000 {
                 err_body.truncate(2000);
-                err_body.push_str("…");
+                err_body.push('…');
             }
             let hint = match status.as_u16() {
                 401 | 403 => " Check the API key for this provider.",
                 404 => " Check the Base URL and model ID.",
                 429 => " The provider is rate limiting requests; retry shortly.",
-                502 | 503 | 504 => {
+                502..=504 => {
                     " The upstream gateway/model is unavailable. Verify the model ID and that the gateway can reach the upstream provider."
                 }
                 _ => "",

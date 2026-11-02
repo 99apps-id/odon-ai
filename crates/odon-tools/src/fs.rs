@@ -638,21 +638,20 @@ impl Tool for FsGlobTool {
                     continue;
                 }
 
-                if let Ok(file_type) = entry.file_type().await {
+                                if let Ok(file_type) = entry.file_type().await {
                     if file_type.is_dir() {
                         queue.push(path);
-                    } else if file_type.is_file() {
-                        if clean_pat.is_empty()
+                    } else if file_type.is_file()
+                        && (clean_pat.is_empty()
                             || file_name.ends_with(clean_pat)
-                            || file_name.contains(clean_pat)
-                        {
-                            let rel = path
-                                .strip_prefix(&root_dir)
-                                .unwrap_or(&path)
-                                .to_string_lossy()
-                                .to_string();
-                            matches.push(rel);
-                        }
+                            || file_name.contains(clean_pat))
+                    {
+                        let rel = path
+                            .strip_prefix(&root_dir)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string();
+                        matches.push(rel);
                     }
                 }
             }

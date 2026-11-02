@@ -138,7 +138,6 @@ impl Tool for ArtifactCreateDocumentTool {
 /// Gemini image preview), writes the PNG into `<workspace>/generated/images/`
 /// and returns an image artifact whose preview URL is served by the daemon.
 /// If no image-capable key is configured it fails loudly instead of faking output.
-
 pub struct ArtifactCreateChartTool;
 
 #[async_trait]

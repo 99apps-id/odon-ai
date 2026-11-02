@@ -4,28 +4,62 @@ use odon_security::RiskTier;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde_json::{json, Value};
 use std::io::Read;
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::registry::{Tool, ToolContext};
 
+const GIT_EXT_TIMEOUT: Duration = Duration::from_secs(60);
+const GIT_EXT_OUTPUT_LIMIT: usize = 256 * 1024;
+
+fn clip_output(raw: &[u8]) -> (String, bool) {
+    if raw.len() <= GIT_EXT_OUTPUT_LIMIT {
+        (String::from_utf8_lossy(raw).to_string(), false)
+    } else {
+        (
+            String::from_utf8_lossy(&raw[..GIT_EXT_OUTPUT_LIMIT]).to_string(),
+            true,
+        )
+    }
+}
+
 async fn run_git(workspace: &str, args: &[&str]) -> Result<(i32, String, String)> {
+    if args.first().map(|arg| arg.starts_with('-')).unwrap_or(false) {
+        return Err(OdonError::Tool {
+            tool: "git_ext".to_string(),
+            message: "git subcommand must not start with '-'".to_string(),
+        });
+    }
     let mut cmd = Command::new("git");
     cmd.current_dir(workspace);
     cmd.args(args);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    let output = cmd.output().await.map_err(|e| OdonError::Tool {
-        tool: "git_ext".to_string(),
-        message: format!("Failed to run git command: {e}"),
-    })?;
+    let execution = timeout(GIT_EXT_TIMEOUT, cmd.output()).await;
+    let output = match execution {
+        Ok(output) => output.map_err(|e| OdonError::Tool {
+            tool: "git_ext".to_string(),
+            message: format!("Failed to run git command: {e}"),
+        })?,
+        Err(_) => {
+            return Err(OdonError::Tool {
+                tool: "git_ext".to_string(),
+                message: "git command timed out after 60 seconds".to_string(),
+            });
+        }
+    };
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let (stdout, stdout_truncated) = clip_output(&output.stdout);
+    let (stderr, stderr_truncated) = clip_output(&output.stderr);
     let code = output
         .status
         .code()
         .unwrap_or(if output.status.success() { 0 } else { 1 });
+    let truncated = stdout_truncated || stderr_truncated;
+    // Preserve the existing tuple API, but keep bounded output for callers.
+    let _ = truncated;
     Ok((code, stdout, stderr))
 }
 

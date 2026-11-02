@@ -431,6 +431,7 @@ impl Tool for BrowserSessionNavigateTool {
             json!({
                 "session_id": { "type": "string" },
                 "url": { "type": "string" },
+                "timeout_ms": { "type": "integer", "description": "Wait for document readyState (default 10000, max 60000)" }
             }),
             json!(["session_id", "url"]),
         )
@@ -449,7 +450,31 @@ impl Tool for BrowserSessionNavigateTool {
             .and_then(Value::as_str)
             .ok_or_else(|| err("url is required"))?;
         crate::net_guard::validate_url(u).await?;
-        Ok(cdp(id, "Page.navigate", json!({ "url": u })).await?)
+        let timeout_ms = a
+            .get("timeout_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(10_000)
+            .clamp(1_000, 60_000);
+        let navigation = cdp(id, "Page.navigate", json!({ "url": u })).await?;
+        let started = std::time::Instant::now();
+        let mut ready = false;
+        while started.elapsed().as_millis() < timeout_ms as u128 {
+            let state = evaluate_js(id, "document.readyState").await?;
+            if state.get("value").and_then(Value::as_str) == Some("complete") {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let current = evaluate_js(id, "location.href").await?;
+        Ok(json!({
+            "session_id": id,
+            "url": current.get("value").and_then(Value::as_str).unwrap_or(u),
+            "frame_id": navigation.pointer("/result/frameId"),
+            "ready": ready,
+            "timeout": !ready,
+            "duration_ms": started.elapsed().as_millis()
+        }))
     }
 }
 

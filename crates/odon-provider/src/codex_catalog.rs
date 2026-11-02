@@ -24,7 +24,8 @@ pub struct CodexModelInfo {
     pub use_responses_lite: bool,
 }
 
-static CACHE: OnceLock<Mutex<Option<(Instant, Vec<CodexModelInfo>)>>> = OnceLock::new();
+type CodexCacheValue = (Instant, Vec<CodexModelInfo>);
+static CACHE: OnceLock<Mutex<Option<CodexCacheValue>>> = OnceLock::new();
 
 /// Fetch the catalogue for the ChatGPT login stored by the Codex CLI.
 pub async fn codex_models() -> Option<Vec<CodexModelInfo>> {

@@ -239,6 +239,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(provider_ops::ProviderListTool));
     reg.register(Box::new(provider_ops::ProviderTestTool));
     reg.register(Box::new(provider_ops::ProviderSetDefaultTool));
+    reg.register(Box::new(provider_ops::ProviderDeleteTool));
 
     // Daemon operations
     reg.register(Box::new(daemon_ops::DaemonStatusTool));
@@ -327,7 +328,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            214,
+            215,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
@@ -406,7 +407,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 217);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 218);
     }
 
     #[test]

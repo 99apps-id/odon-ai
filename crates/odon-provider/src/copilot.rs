@@ -24,7 +24,8 @@ pub struct CopilotModelInfo {
 
 const CACHE_TTL: Duration = Duration::from_secs(300);
 
-static CACHE: OnceLock<Mutex<Option<(Instant, Vec<CopilotModelInfo>)>>> = OnceLock::new();
+type CopilotCacheValue = (Instant, Vec<CopilotModelInfo>);
+static CACHE: OnceLock<Mutex<Option<CopilotCacheValue>>> = OnceLock::new();
 
 /// Fetch the model catalog using the host-discovered Copilot session. Returns
 /// `None` when no host credentials are available or the API call fails.

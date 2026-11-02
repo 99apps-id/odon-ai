@@ -1539,6 +1539,15 @@
     "issues": []
   },
   {
+    "name": "provider_delete",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "provider_list",
     "availability": {
       "status": "stable"

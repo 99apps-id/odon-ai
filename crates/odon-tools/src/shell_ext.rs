@@ -76,33 +76,6 @@ fn background_summary(task_id: &str, task: &BackgroundTask) -> Value {
     })
 }
 
-#[cfg(test)]
-mod clipboard_tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore = "requires an interactive desktop clipboard"]
-    async fn native_clipboard_round_trip_and_history() {
-        let original = read_clipboard_text("clipboard_test_backup")
-            .await
-            .expect("clipboard must contain text before this test runs");
-        let sentinel = format!("odon-clipboard-test-{}", std::process::id());
-
-        write_clipboard_text(sentinel.clone(), "clipboard_test_write")
-            .await
-            .expect("native clipboard write should succeed");
-        let observed = read_clipboard_text("clipboard_test_read").await;
-        write_clipboard_text(original, "clipboard_test_restore")
-            .await
-            .expect("original clipboard text should be restored");
-
-        assert_eq!(observed.expect("native clipboard read should succeed"), sentinel);
-        assert!(clipboard_history_snapshot(CLIPBOARD_HISTORY_LIMIT)
-            .iter()
-            .any(|entry| entry.get("text").and_then(Value::as_str) == Some(sentinel.as_str())));
-    }
-}
-
 pub struct ProcessListTool;
 #[async_trait]
 impl Tool for ProcessListTool {

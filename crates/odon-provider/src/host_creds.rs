@@ -8,6 +8,7 @@ pub fn read_credential(target: &str) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
 
     #[repr(C)]
+    #[allow(clippy::upper_case_acronyms)]
     struct CREDENTIALW {
         flags: u32,
         r#type: u32,
@@ -46,7 +47,7 @@ pub fn read_credential(target: &str) -> Option<String> {
             let bytes = std::slice::from_raw_parts(cred.credential_blob, size);
 
             // Windows Credential Manager strings from keyring / Termigo are usually UTF-16
-            let result = if size >= 2 && size % 2 == 0 {
+            let result = if size >= 2 && size.is_multiple_of(2) {
                 let u16_slice: Vec<u16> = bytes
                     .chunks_exact(2)
                     .map(|c| u16::from_ne_bytes([c[0], c[1]]))
