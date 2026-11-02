@@ -1057,6 +1057,200 @@ async fn click_via_cdp(ws_url: url::Url, selector: String) -> Result<Value> {
     }))
 }
 
+pub struct BrowserDownloadTool;
+
+#[async_trait]
+impl Tool for BrowserDownloadTool {
+    fn name(&self) -> &str {
+        "browser_download"
+    }
+    fn description(&self) -> &str {
+        "Trigger a browser download via selector, wait for the file, and save it into the workspace"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Page URL to open before triggering the download" },
+                "selector": { "type": "string", "description": "CSS selector or link text that triggers the download" },
+                "filename": { "type": "string", "description": "Optional expected filename to wait for" },
+                "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 600, "default": 120 }
+            },
+            "required": ["url", "selector"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'url' parameter".to_string(),
+            })?;
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
+
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::protocol::Message;
+
+        let selector = args
+            .get("selector")
+            .and_then(|s| s.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'selector' parameter".to_string(),
+            })?;
+
+        let expected_filename = args
+            .get("filename")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string());
+
+        let timeout = args
+            .get("timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(120);
+
+        let download_dir = std::path::Path::new(&ctx.workspace_root).join(".odon").join("downloads");
+        std::fs::create_dir_all(&download_dir).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to create download directory: {e}"),
+        })?;
+
+        let chrome = find_chrome()?;
+        let port = find_free_port().await?;
+
+        let mut cmd = tokio::process::Command::new(chrome);
+        cmd.args([
+            "--headless",
+            "--disable-gpu",
+            "--no-first-run",
+            &format!("--remote-debugging-port={}", port),
+            "--window-size=1280,800",
+            url_str,
+        ]);
+        let mut child = cmd.spawn().map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to launch browser: {e}"),
+        })?;
+
+        let cdp_ws = wait_for_cdp_websocket(port)
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("CDP not ready: {e}"),
+            })?;
+
+        let set_behavior = serde_json::json!({
+            "id": 1,
+            "method": "Page.setDownloadBehavior",
+            "params": {
+                "behavior": "allow",
+                "downloadPath": download_dir.to_string_lossy()
+            }
+        });
+
+        let (mut ws, _) = tokio_tungstenite::connect_async(cdp_ws.as_str())
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to connect to CDP: {e}"),
+            })?;
+
+        ws.send(Message::Text(set_behavior.to_string().into()))
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to set download behavior: {e}"),
+            })?;
+
+        let _ = ws.next().await;
+
+        let js = format!(
+            "(() => {{ \
+                const el = document.querySelector({:?}); \
+                if (!el) return 'not_found'; \
+                el.click(); \
+                return 'clicked'; \
+            }})()",
+            selector
+        );
+
+        let payload = serde_json::json!({
+            "id": 2,
+            "method": "Runtime.evaluate",
+            "params": { "expression": js, "returnByValue": true }
+        });
+
+        ws.send(Message::Text(payload.to_string().into()))
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to send CDP command: {e}"),
+            })?;
+
+        let _ = ws.next().await;
+
+        drop(ws);
+        let _ = child.kill().await;
+
+        let start = std::time::Instant::now();
+        let mut downloaded_path = None;
+        while start.elapsed().as_secs() < timeout {
+            let entries = std::fs::read_dir(&download_dir).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Failed to read download directory: {e}"),
+            })?;
+
+            for entry in entries {
+                let entry = entry.map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Failed to read download entry: {e}"),
+                })?;
+                let path = entry.path();
+                if path.extension().map(|e| e == "crdownload").unwrap_or(false) {
+                    continue;
+                }
+                if let Some(ref expected) = expected_filename {
+                    if path.file_name().and_then(|n| n.to_str()) != Some(expected.as_str()) {
+                        continue;
+                    }
+                }
+                downloaded_path = Some(path);
+                break;
+            }
+
+            if downloaded_path.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        match downloaded_path {
+            Some(path) => {
+                let relative = path.strip_prefix(&ctx.workspace_root).unwrap_or(&path);
+                Ok(json!({
+                    "download_dir": download_dir.to_string_lossy(),
+                    "path": relative.to_string_lossy(),
+                    "selector": selector,
+                    "status": "downloaded"
+                }))
+            }
+            None => Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "Download did not complete within {} seconds. Check the selector or page behavior.",
+                    timeout
+                ),
+            }),
+        }
+    }
+}
+
 pub(crate) mod urlencoding {
     pub fn encode(s: &str) -> String {
         url::form_urlencoded::byte_serialize(s.as_bytes()).collect()

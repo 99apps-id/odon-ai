@@ -200,6 +200,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(web::BrowserNavigateTool));
     reg.register(Box::new(web::BrowserScreenshotTool));
     reg.register(Box::new(web::BrowserClickTool));
+    reg.register(Box::new(web::BrowserDownloadTool));
 
     // Autonomous Skills (.odon/skills)
     reg.register(Box::new(skills::SkillListTool));
@@ -257,7 +258,7 @@ mod tests {
         let schemas = reg.schemas();
         assert_eq!(
             schemas.len(),
-            177,
+            178,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
 
@@ -307,7 +308,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 176);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 177);
     }
 
     #[test]
