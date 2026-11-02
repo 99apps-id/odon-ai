@@ -750,11 +750,13 @@ mod tests {
         assert_eq!(first.name.as_deref(), Some("First Gateway"));
         assert_eq!(first.models_json, r#"["model-a","model-b"]"#);
         assert!(first.is_default);
-        assert!(!configs
-            .iter()
-            .find(|c| c.provider_id == "compat-second")
-            .unwrap()
-            .is_default);
+        assert!(
+            !configs
+                .iter()
+                .find(|c| c.provider_id == "compat-second")
+                .unwrap()
+                .is_default
+        );
 
         storage
             .save_provider_config(
@@ -767,15 +769,19 @@ mod tests {
             )
             .unwrap();
         let configs = storage.list_provider_configs().unwrap();
-        assert!(!configs
-            .iter()
-            .find(|c| c.provider_id == "compat-first")
-            .unwrap()
-            .is_default);
-        assert!(configs
-            .iter()
-            .find(|c| c.provider_id == "compat-second")
-            .unwrap()
-            .is_default);
+        assert!(
+            !configs
+                .iter()
+                .find(|c| c.provider_id == "compat-first")
+                .unwrap()
+                .is_default
+        );
+        assert!(
+            configs
+                .iter()
+                .find(|c| c.provider_id == "compat-second")
+                .unwrap()
+                .is_default
+        );
     }
 }

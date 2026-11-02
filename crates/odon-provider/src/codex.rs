@@ -19,8 +19,12 @@ pub struct OpenAiCodexProvider {
     access_token: String,
     account_id: Option<String>,
     session_id: String,
-    models_cache:
-        tokio::sync::Mutex<Option<(std::time::Instant, Vec<crate::codex_catalog::CodexModelInfo>)>>,
+    models_cache: tokio::sync::Mutex<
+        Option<(
+            std::time::Instant,
+            Vec<crate::codex_catalog::CodexModelInfo>,
+        )>,
+    >,
 }
 
 impl OpenAiCodexProvider {
@@ -111,19 +115,15 @@ impl ModelProvider for OpenAiCodexProvider {
             HeaderValue::from_str(&format!("Bearer {}", self.access_token))
                 .map_err(|e| OdonError::Auth(e.to_string()))?,
         );
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_static("codex_cli_rs/0.159.0"),
-        );
+        headers.insert(USER_AGENT, HeaderValue::from_static("codex_cli_rs/0.159.0"));
         headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
         headers.insert("version", HeaderValue::from_static(CODEX_CLI_VERSION));
         headers.insert(
             "session_id",
-            HeaderValue::from_str(&self.session_id)
-                .map_err(|e| OdonError::Provider {
-                    provider: "openai-codex".to_string(),
-                    message: format!("Invalid Codex session id: {e}"),
-                })?,
+            HeaderValue::from_str(&self.session_id).map_err(|e| OdonError::Provider {
+                provider: "openai-codex".to_string(),
+                message: format!("Invalid Codex session id: {e}"),
+            })?,
         );
 
         if let Some(acc) = &self.account_id {

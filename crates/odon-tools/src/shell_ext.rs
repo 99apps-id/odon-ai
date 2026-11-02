@@ -79,8 +79,12 @@ fn background_summary(task_id: &str, task: &BackgroundTask) -> Value {
 pub struct ProcessListTool;
 #[async_trait]
 impl Tool for ProcessListTool {
-    fn name(&self) -> &str { "process_list" }
-    fn description(&self) -> &str { "List running processes with PID, name, and resource metrics" }
+    fn name(&self) -> &str {
+        "process_list"
+    }
+    fn description(&self) -> &str {
+        "List running processes with PID, name, and resource metrics"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -89,7 +93,9 @@ impl Tool for ProcessListTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let filter = args.get("filter").and_then(|f| f.as_str()).unwrap_or("");
 
@@ -106,7 +112,10 @@ impl Tool for ProcessListTool {
                 .current_dir(&ctx.workspace_root)
                 .output()
                 .await
-                .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+                .map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|_| json!([]));
             let processes = if parsed.is_array() {
@@ -125,7 +134,10 @@ impl Tool for ProcessListTool {
             let mut cmd = Command::new("ps");
             cmd.args(["-eo", "pid,comm,%mem,%cpu", "--sort=-%mem"]);
             cmd.current_dir(&ctx.workspace_root);
-            let output = cmd.output().await.map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            let output = cmd.output().await.map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let lines: Vec<&str> = stdout.lines().take(31).collect();
             Ok(json!({ "count": lines.len().saturating_sub(1), "processes": lines }))
@@ -136,8 +148,12 @@ impl Tool for ProcessListTool {
 pub struct ProcessKillTool;
 #[async_trait]
 impl Tool for ProcessKillTool {
-    fn name(&self) -> &str { "process_kill" }
-    fn description(&self) -> &str { "Terminate a running process by PID" }
+    fn name(&self) -> &str {
+        "process_kill"
+    }
+    fn description(&self) -> &str {
+        "Terminate a running process by PID"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -147,12 +163,17 @@ impl Tool for ProcessKillTool {
             "required": ["pid"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let pid = args.get("pid").and_then(|p| p.as_u64()).ok_or_else(|| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Missing 'pid' argument".to_string(),
-        })?;
+        let pid = args
+            .get("pid")
+            .and_then(|p| p.as_u64())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'pid' argument".to_string(),
+            })?;
 
         #[cfg(target_os = "windows")]
         let mut cmd = Command::new("taskkill");
@@ -164,7 +185,10 @@ impl Tool for ProcessKillTool {
         #[cfg(not(target_os = "windows"))]
         cmd.args(["-9", &pid.to_string()]);
 
-        let output = cmd.output().await.map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let output = cmd.output().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
         Ok(json!({ "pid": pid, "killed": output.status.success() }))
     }
 }
@@ -172,7 +196,9 @@ impl Tool for ProcessKillTool {
 pub struct ExecBackgroundTool;
 #[async_trait]
 impl Tool for ExecBackgroundTool {
-    fn name(&self) -> &str { "exec_background" }
+    fn name(&self) -> &str {
+        "exec_background"
+    }
     fn description(&self) -> &str {
         "Spawn a long-running command in the background and return a task id. Use exec_stream_stdout to poll live output, exec_background_list to inspect tasks, and exec_background_kill to stop one."
     }
@@ -186,7 +212,9 @@ impl Tool for ExecBackgroundTool {
             "required": ["command"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let cmd_str = args.get("command").and_then(|c| c.as_str()).unwrap_or("");
         if cmd_str.trim().is_empty() {
@@ -201,8 +229,16 @@ impl Tool for ExecBackgroundTool {
                 "Command blocked by security policy: {reason}"
             )));
         }
-        let name = args.get("task_name").and_then(|n| n.as_str()).unwrap_or("bg_task");
-        let task_id = format!("task_{}_{}_{}", name, chrono::Utc::now().timestamp_millis(), uuid::Uuid::new_v4().simple());
+        let name = args
+            .get("task_name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("bg_task");
+        let task_id = format!(
+            "task_{}_{}_{}",
+            name,
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4().simple()
+        );
 
         #[cfg(target_os = "windows")]
         let mut command = Command::new("powershell.exe");
@@ -236,7 +272,10 @@ impl Tool for ExecBackgroundTool {
             command: cmd_str.to_string(),
             started_at: chrono::Utc::now().to_rfc3339(),
         });
-        background_tasks().lock().await.insert(task_id.clone(), task.clone());
+        background_tasks()
+            .lock()
+            .await
+            .insert(task_id.clone(), task.clone());
 
         if let Some(mut stream) = stdout {
             let output = task.clone();
@@ -271,7 +310,12 @@ impl Tool for ExecBackgroundTool {
             let child = guard.take();
             drop(guard);
             let code = match child {
-                Some(mut child) => child.wait().await.ok().and_then(|status| status.code()).unwrap_or(-1),
+                Some(mut child) => child
+                    .wait()
+                    .await
+                    .ok()
+                    .and_then(|status| status.code())
+                    .unwrap_or(-1),
                 None => -1,
             };
             waiter.exit_code.store(code, Ordering::SeqCst);
@@ -289,7 +333,9 @@ impl Tool for ExecBackgroundTool {
 pub struct ExecStreamStdoutTool;
 #[async_trait]
 impl Tool for ExecStreamStdoutTool {
-    fn name(&self) -> &str { "exec_stream_stdout" }
+    fn name(&self) -> &str {
+        "exec_stream_stdout"
+    }
     fn description(&self) -> &str {
         "Poll a background task's stdout/stderr and running status. Use clear=true after reading a chunk."
     }
@@ -304,19 +350,25 @@ impl Tool for ExecStreamStdoutTool {
             "required": ["task_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let task_id = args.get("task_id").and_then(|value| value.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let task_id = args
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'task_id' argument".to_string(),
-            }
-        })?;
+            })?;
         let tail = args
             .get("tail")
             .and_then(|value| value.as_u64())
             .unwrap_or(8000) as usize;
-        let clear = args.get("clear").and_then(|value| value.as_bool()).unwrap_or(false);
+        let clear = args
+            .get("clear")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
 
         let tasks = background_tasks().lock().await;
         let task = tasks.get(task_id).cloned().ok_or_else(|| OdonError::Tool {
@@ -329,8 +381,12 @@ impl Tool for ExecStreamStdoutTool {
         let stderr = tail_chars(&read_buffer(&task.stderr), tail);
         let exit_code = task.exit_code.load(Ordering::SeqCst);
         if clear {
-            if let Ok(mut buffer) = task.stdout.lock() { buffer.clear(); }
-            if let Ok(mut buffer) = task.stderr.lock() { buffer.clear(); }
+            if let Ok(mut buffer) = task.stdout.lock() {
+                buffer.clear();
+            }
+            if let Ok(mut buffer) = task.stderr.lock() {
+                buffer.clear();
+            }
         }
 
         Ok(json!({
@@ -349,10 +405,18 @@ impl Tool for ExecStreamStdoutTool {
 pub struct ExecBackgroundListTool;
 #[async_trait]
 impl Tool for ExecBackgroundListTool {
-    fn name(&self) -> &str { "exec_background_list" }
-    fn description(&self) -> &str { "List background tasks spawned by exec_background with PID, status, and output sizes" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "exec_background_list"
+    }
+    fn description(&self) -> &str {
+        "List background tasks spawned by exec_background with PID, status, and output sizes"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let tasks = background_tasks().lock().await;
         let mut list: Vec<Value> = tasks
@@ -372,8 +436,12 @@ impl Tool for ExecBackgroundListTool {
 pub struct ExecBackgroundKillTool;
 #[async_trait]
 impl Tool for ExecBackgroundKillTool {
-    fn name(&self) -> &str { "exec_background_kill" }
-    fn description(&self) -> &str { "Stop a background task by task id" }
+    fn name(&self) -> &str {
+        "exec_background_kill"
+    }
+    fn description(&self) -> &str {
+        "Stop a background task by task id"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -383,14 +451,17 @@ impl Tool for ExecBackgroundKillTool {
             "required": ["task_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let task_id = args.get("task_id").and_then(|value| value.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let task_id = args
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'task_id' argument".to_string(),
-            }
-        })?;
+            })?;
         let tasks = background_tasks().lock().await;
         let task = tasks.get(task_id).cloned().ok_or_else(|| OdonError::Tool {
             tool: self.name().to_string(),
@@ -399,7 +470,9 @@ impl Tool for ExecBackgroundKillTool {
         drop(tasks);
 
         if task.exit_code.load(Ordering::SeqCst) != RUNNING_EXIT_CODE {
-            return Ok(json!({ "task_id": task_id, "pid": task.pid, "killed": false, "reason": "already finished" }));
+            return Ok(
+                json!({ "task_id": task_id, "pid": task.pid, "killed": false, "reason": "already finished" }),
+            );
         }
 
         #[cfg(target_os = "windows")]
@@ -413,14 +486,20 @@ impl Tool for ExecBackgroundKillTool {
             .output()
             .await;
 
-        let killed = output.map(|result| result.status.success()).unwrap_or(false);
+        let killed = output
+            .map(|result| result.status.success())
+            .unwrap_or(false);
         Ok(json!({ "task_id": task_id, "pid": task.pid, "killed": killed }))
     }
 }
 
 pub struct ProjectTaskTool;
 
-fn project_task_command(root: &Path, task: &str, package: Option<&str>) -> std::result::Result<String, String> {
+fn project_task_command(
+    root: &Path,
+    task: &str,
+    package: Option<&str>,
+) -> std::result::Result<String, String> {
     let task = task.to_lowercase();
     let package_arg = match package {
         Some(name) => {
@@ -438,7 +517,9 @@ fn project_task_command(root: &Path, task: &str, package: Option<&str>) -> std::
 
     if root.join("Cargo.toml").exists() {
         let command = match task.as_str() {
-            "lint" => format!("cargo clippy --all-targets --all-features{package_arg} -- -D warnings"),
+            "lint" => {
+                format!("cargo clippy --all-targets --all-features{package_arg} -- -D warnings")
+            }
             "format" => "cargo fmt --all".to_string(),
             "build" => format!("cargo build{package_arg}"),
             "test" => format!("cargo test{package_arg}"),
@@ -504,12 +585,17 @@ fn project_task_command(root: &Path, task: &str, package: Option<&str>) -> std::
         return Ok(command);
     }
 
-    Err("No supported project manifest found (Cargo.toml, package.json, pyproject.toml, go.mod)".to_string())
+    Err(
+        "No supported project manifest found (Cargo.toml, package.json, pyproject.toml, go.mod)"
+            .to_string(),
+    )
 }
 
 #[async_trait]
 impl Tool for ProjectTaskTool {
-    fn name(&self) -> &str { "project_task" }
+    fn name(&self) -> &str {
+        "project_task"
+    }
     fn description(&self) -> &str {
         "Run a project-level lint, format, build, test, or coverage task using the detected toolchain"
     }
@@ -530,20 +616,24 @@ impl Tool for ProjectTaskTool {
             "required": ["task"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let task = args.get("task").and_then(|value| value.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let task = args
+            .get("task")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'task' argument".to_string(),
-            }
-        })?;
+            })?;
         let package = args.get("package").and_then(|value| value.as_str());
         let root = Path::new(&ctx.workspace_root);
-        let command = project_task_command(root, task, package).map_err(|message| OdonError::Tool {
-            tool: self.name().to_string(),
-            message,
-        })?;
+        let command =
+            project_task_command(root, task, package).map_err(|message| OdonError::Tool {
+                tool: self.name().to_string(),
+                message,
+            })?;
 
         let result = ShellExecTool
             .execute(ctx, json!({ "command": command }))
@@ -604,7 +694,9 @@ fn save_automation_records(records: &[AutomationRecord]) -> std::result::Result<
 pub struct CronAddTool;
 #[async_trait]
 impl Tool for CronAddTool {
-    fn name(&self) -> &str { "cron_add" }
+    fn name(&self) -> &str {
+        "cron_add"
+    }
     fn description(&self) -> &str {
         "Schedule an automation job by interval or five-field cron expression. The running daemon picks it up within 20 seconds."
     }
@@ -623,11 +715,22 @@ impl Tool for CronAddTool {
             "required": ["name", "schedule", "command"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|value| value.as_str()).unwrap_or("Scheduled job");
-        let schedule = args.get("schedule").and_then(|value| value.as_str()).unwrap_or("1h");
-        let command = args.get("command").and_then(|value| value.as_str()).unwrap_or("");
+        let name = args
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("Scheduled job");
+        let schedule = args
+            .get("schedule")
+            .and_then(|value| value.as_str())
+            .unwrap_or("1h");
+        let command = args
+            .get("command")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
         if command.trim().is_empty() {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),
@@ -640,23 +743,46 @@ impl Tool for CronAddTool {
             "interval"
         };
         let record = AutomationRecord {
-            id: format!("job-{}-{}", chrono::Utc::now().timestamp_millis(), uuid::Uuid::new_v4().simple()),
+            id: format!(
+                "job-{}-{}",
+                chrono::Utc::now().timestamp_millis(),
+                uuid::Uuid::new_v4().simple()
+            ),
             name: name.to_string(),
-            description: args.get("description").and_then(|value| value.as_str()).unwrap_or("").to_string(),
+            description: args
+                .get("description")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
             trigger_type: trigger_type.to_string(),
             trigger_value: schedule.to_string(),
             prompt: command.to_string(),
-            model: args.get("model").and_then(|value| value.as_str()).unwrap_or("odon-auto").to_string(),
+            model: args
+                .get("model")
+                .and_then(|value| value.as_str())
+                .unwrap_or("odon-auto")
+                .to_string(),
             enabled: true,
             last_run: None,
             last_status: None,
             created_at: chrono::Utc::now().to_rfc3339(),
-            retry_count: args.get("retry_count").and_then(|value| value.as_u64()).unwrap_or(0) as u32,
-            retry_delay_secs: args.get("retry_delay_secs").and_then(|value| value.as_u64()).unwrap_or(30),
+            retry_count: args
+                .get("retry_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0) as u32,
+            retry_delay_secs: args
+                .get("retry_delay_secs")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(30),
             depends_on: args
                 .get("depends_on")
                 .and_then(|value| value.as_array())
-                .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default(),
         };
         let mut records = load_automation_records();
@@ -672,10 +798,18 @@ impl Tool for CronAddTool {
 pub struct CronListTool;
 #[async_trait]
 impl Tool for CronListTool {
-    fn name(&self) -> &str { "cron_list" }
-    fn description(&self) -> &str { "List all scheduled automation jobs and their last status" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "cron_list"
+    }
+    fn description(&self) -> &str {
+        "List all scheduled automation jobs and their last status"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let records = load_automation_records();
         Ok(json!({ "count": records.len(), "jobs": records }))
@@ -685,8 +819,12 @@ impl Tool for CronListTool {
 pub struct CronRemoveTool;
 #[async_trait]
 impl Tool for CronRemoveTool {
-    fn name(&self) -> &str { "cron_remove" }
-    fn description(&self) -> &str { "Remove a scheduled automation job by ID" }
+    fn name(&self) -> &str {
+        "cron_remove"
+    }
+    fn description(&self) -> &str {
+        "Remove a scheduled automation job by ID"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -696,12 +834,17 @@ impl Tool for CronRemoveTool {
             "required": ["id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let id = args.get("id").and_then(|value| value.as_str()).ok_or_else(|| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Missing 'id' argument".to_string(),
-        })?;
+        let id = args
+            .get("id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'id' argument".to_string(),
+            })?;
         let mut records = load_automation_records();
         let before = records.len();
         records.retain(|record| record.id != id);
@@ -774,8 +917,12 @@ mod background_tests {
 pub struct FileHashTool;
 #[async_trait]
 impl Tool for FileHashTool {
-    fn name(&self) -> &str { "file_hash" }
-    fn description(&self) -> &str { "Compute SHA-256 cryptographic hash of a workspace file" }
+    fn name(&self) -> &str {
+        "file_hash"
+    }
+    fn description(&self) -> &str {
+        "Compute SHA-256 cryptographic hash of a workspace file"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -785,11 +932,16 @@ impl Tool for FileHashTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let full = Path::new(&ctx.workspace_root).join(rel);
-        let bytes = fs::read(&full).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let bytes = fs::read(&full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
 
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -802,8 +954,12 @@ impl Tool for FileHashTool {
 pub struct FileChecksumTool;
 #[async_trait]
 impl Tool for FileChecksumTool {
-    fn name(&self) -> &str { "file_checksum" }
-    fn description(&self) -> &str { "Verify a workspace file matches an expected SHA-256 checksum" }
+    fn name(&self) -> &str {
+        "file_checksum"
+    }
+    fn description(&self) -> &str {
+        "Verify a workspace file matches an expected SHA-256 checksum"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -814,12 +970,20 @@ impl Tool for FileChecksumTool {
             "required": ["path", "expected_sha256"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-        let expected = args.get("expected_sha256").and_then(|e| e.as_str()).unwrap_or("");
+        let expected = args
+            .get("expected_sha256")
+            .and_then(|e| e.as_str())
+            .unwrap_or("");
         let full = Path::new(&ctx.workspace_root).join(rel);
-        let bytes = fs::read(&full).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let bytes = fs::read(&full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
 
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -833,10 +997,18 @@ impl Tool for FileChecksumTool {
 pub struct ClipboardReadTool;
 #[async_trait]
 impl Tool for ClipboardReadTool {
-    fn name(&self) -> &str { "clipboard_read" }
-    fn description(&self) -> &str { "Read text content from the system clipboard" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "clipboard_read"
+    }
+    fn description(&self) -> &str {
+        "Read text content from the system clipboard"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         Ok(json!({ "clipboard": "ODON Universal Agent Clipboard ready" }))
     }
@@ -845,8 +1017,12 @@ impl Tool for ClipboardReadTool {
 pub struct ClipboardWriteTool;
 #[async_trait]
 impl Tool for ClipboardWriteTool {
-    fn name(&self) -> &str { "clipboard_write" }
-    fn description(&self) -> &str { "Copy text into the system clipboard" }
+    fn name(&self) -> &str {
+        "clipboard_write"
+    }
+    fn description(&self) -> &str {
+        "Copy text into the system clipboard"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -856,7 +1032,9 @@ impl Tool for ClipboardWriteTool {
             "required": ["text"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let text = args.get("text").and_then(|t| t.as_str()).unwrap_or("");
         Ok(json!({ "status": "copied", "chars": text.len() }))
@@ -866,8 +1044,12 @@ impl Tool for ClipboardWriteTool {
 pub struct NotificationSendTool;
 #[async_trait]
 impl Tool for NotificationSendTool {
-    fn name(&self) -> &str { "notification_send" }
-    fn description(&self) -> &str { "Send a desktop notification toast to the user" }
+    fn name(&self) -> &str {
+        "notification_send"
+    }
+    fn description(&self) -> &str {
+        "Send a desktop notification toast to the user"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -878,7 +1060,9 @@ impl Tool for NotificationSendTool {
             "required": ["title", "message"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("ODON");
         let message = args.get("message").and_then(|m| m.as_str()).unwrap_or("");
@@ -1000,12 +1184,24 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
 pub struct TerminalInfoTool;
 #[async_trait]
 impl Tool for TerminalInfoTool {
-    fn name(&self) -> &str { "terminal_info" }
-    fn description(&self) -> &str { "Get terminal environment details, shell type, and capabilities" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "terminal_info"
+    }
+    fn description(&self) -> &str {
+        "Get terminal environment details, shell type, and capabilities"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let shell = if cfg!(target_os = "windows") { "PowerShell" } else { "bash" };
+        let shell = if cfg!(target_os = "windows") {
+            "PowerShell"
+        } else {
+            "bash"
+        };
         Ok(json!({
             "shell": shell,
             "os": std::env::consts::OS,
@@ -1016,4 +1212,3 @@ impl Tool for TerminalInfoTool {
         }))
     }
 }
-

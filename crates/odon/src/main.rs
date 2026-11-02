@@ -135,7 +135,10 @@ async fn daemon_request(
     }
     let response = request.send().await?;
     let status = response.status();
-    let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| serde_json::json!({}));
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .unwrap_or_else(|_| serde_json::json!({}));
     if !status.is_success() {
         anyhow::bail!("daemon returned HTTP {status}: {payload}");
     }
@@ -307,16 +310,23 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // 6. Register model providers (BYOK / OpenAI / Ollama / Fallback)
-    let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".to_string());
+    let base_url = std::env::var("OPENAI_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:11434/v1".to_string());
     let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
     let default_model = std::env::var("ODON_MODEL").unwrap_or_else(|_| "odon-auto".to_string());
 
     if !api_key.is_empty() || std::env::var("OPENAI_BASE_URL").is_ok() {
-        let provider = Arc::new(OpenAiCompatibleProvider::new(base_url, api_key, Some("openai-compatible")));
+        let provider = Arc::new(OpenAiCompatibleProvider::new(
+            base_url,
+            api_key,
+            Some("openai-compatible"),
+        ));
         runtime.register_provider("default", provider, true).await;
     } else {
         let sim_provider = Arc::new(SimulatedProvider::default());
-        runtime.register_provider("default", sim_provider, true).await;
+        runtime
+            .register_provider("default", sim_provider, true)
+            .await;
     }
 
     let cli_channel = CliChannel::new();
@@ -330,10 +340,16 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Status => {
-            println!("{}", "====================================================".bold());
+            println!(
+                "{}",
+                "====================================================".bold()
+            );
             println!("   ODON (Open Digital Orchestration Network)");
             println!("   Version: {}", env!("CARGO_PKG_VERSION").green());
-            println!("{}", "====================================================".bold());
+            println!(
+                "{}",
+                "====================================================".bold()
+            );
             let tool_count = tools.schemas().len();
             let session_count = storage
                 .list_sessions()
@@ -342,10 +358,19 @@ async fn main() -> anyhow::Result<()> {
             println!(" • Model:        {}", default_model.cyan());
             println!(" • Tools:        {}", tool_count.to_string().green());
             println!(" • Sessions:     {}", session_count.to_string().green());
-            println!(" • Relays:       {}", "Telegram | WhatsApp relays".magenta());
+            println!(
+                " • Relays:       {}",
+                "Telegram | WhatsApp relays".magenta()
+            );
             println!(" • Persistence:  {}", "Durable SQLite State".yellow());
-            println!(" • Connectors:   {}", "GitHub | Stdio MCP | Local Filesystem".blue());
-            println!(" • Mode:         {}", "ChatGPT Desktop + Codex Workspace (Fluid)".bright_white());
+            println!(
+                " • Connectors:   {}",
+                "GitHub | Stdio MCP | Local Filesystem".blue()
+            );
+            println!(
+                " • Mode:         {}",
+                "ChatGPT Desktop + Codex Workspace (Fluid)".bright_white()
+            );
             println!(" • Daemon:       run `odond status --metrics` for live metrics");
         }
         Commands::Tools { action } => match action {
@@ -381,7 +406,11 @@ async fn main() -> anyhow::Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("Tool '{name}' not found"))?;
                 println!("{}", serde_json::to_string_pretty(&schema)?);
             }
-            ToolCommands::Doctor { json, filter, strict } => {
+            ToolCommands::Doctor {
+                json,
+                filter,
+                strict,
+            } => {
                 let mut diagnostics = tools.diagnostics();
                 if let Some(filter) = filter {
                     let needle = filter.to_lowercase();
@@ -396,7 +425,11 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     for item in &diagnostics {
                         let status = if item.ready { "ready" } else { "not ready" };
-                        println!("{:<28} {:<12} {status}", item.name, item.availability.label());
+                        println!(
+                            "{:<28} {:<12} {status}",
+                            item.name,
+                            item.availability.label()
+                        );
                         for issue in &item.issues {
                             println!("  - {issue}");
                         }
@@ -557,13 +590,9 @@ async fn main() -> anyhow::Result<()> {
                             .collect::<Vec<_>>())
                     }
                 };
-                let settings = daemon_request(
-                    reqwest::Method::GET,
-                    "/api/settings",
-                    None,
-                )
-                .await
-                .ok();
+                let settings = daemon_request(reqwest::Method::GET, "/api/settings", None)
+                    .await
+                    .ok();
                 if json {
                     println!(
                         "{}",
@@ -577,8 +606,12 @@ async fn main() -> anyhow::Result<()> {
                         for item in items {
                             println!(
                                 "{}  key={}  base={}  models={}",
-                                item.get("provider_id").and_then(|v| v.as_str()).unwrap_or("-"),
-                                item.get("masked_key").and_then(|v| v.as_str()).unwrap_or("-"),
+                                item.get("provider_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("-"),
+                                item.get("masked_key")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("-"),
                                 item.get("base_url").and_then(|v| v.as_str()).unwrap_or("-"),
                                 item.get("models")
                                     .and_then(|v| v.as_array())
@@ -605,7 +638,9 @@ async fn main() -> anyhow::Result<()> {
             } => {
                 let api_key = match key_file {
                     Some(path) => std::fs::read_to_string(&path)
-                        .map_err(|error| anyhow::anyhow!("Cannot read {}: {error}", path.display()))?
+                        .map_err(|error| {
+                            anyhow::anyhow!("Cannot read {}: {error}", path.display())
+                        })?
                         .trim()
                         .to_string(),
                     None => match key {
@@ -632,7 +667,9 @@ async fn main() -> anyhow::Result<()> {
                 if !models.is_empty() {
                     body["models"] = serde_json::json!(models.clone());
                 }
-                match daemon_request(reqwest::Method::POST, "/api/providers/config", Some(body)).await {
+                match daemon_request(reqwest::Method::POST, "/api/providers/config", Some(body))
+                    .await
+                {
                     Ok(_) => println!("Saved {provider_id} through the running daemon."),
                     Err(error) => {
                         let existing = storage.get_provider_config(&provider_id).ok().flatten();
@@ -649,8 +686,9 @@ async fn main() -> anyhow::Result<()> {
                             &api_key,
                             base_url.as_deref(),
                             default,
-                            name.as_deref()
-                                .or_else(|| existing.as_ref().and_then(|config| config.name.as_deref())),
+                            name.as_deref().or_else(|| {
+                                existing.as_ref().and_then(|config| config.name.as_deref())
+                            }),
                             &models_json,
                         )?;
                         println!(
@@ -672,7 +710,11 @@ async fn main() -> anyhow::Result<()> {
                         let deleted = storage.delete_provider_config(&provider_id)?;
                         println!(
                             "{} {provider_id} in local storage ({error}).",
-                            if deleted { "Deleted" } else { "No configuration for" }
+                            if deleted {
+                                "Deleted"
+                            } else {
+                                "No configuration for"
+                            }
                         );
                     }
                 }
@@ -680,25 +722,41 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Run { prompt, model } => {
             println!("{} {}", "▶ Running mission:".bold().green(), prompt);
-            let session = Session::new("Mission Run", SessionMode::General, model.as_deref().unwrap_or(&default_model));
+            let session = Session::new(
+                "Mission Run",
+                SessionMode::General,
+                model.as_deref().unwrap_or(&default_model),
+            );
             let _ = storage.save_session(&session);
             let cancel = CancellationToken::new();
 
-            let _ = runtime.execute_turn(&session.id, &prompt, model.as_deref(), cancel).await;
+            let _ = runtime
+                .execute_turn(&session.id, &prompt, model.as_deref(), cancel)
+                .await;
             println!("\n{}", "✔ Mission completed.".bold().green());
         }
         Commands::Chat { session_id, model } => {
             let sid = session_id.unwrap_or_else(|| {
-                let s = Session::new("New Chat", SessionMode::General, model.as_deref().unwrap_or(&default_model));
+                let s = Session::new(
+                    "New Chat",
+                    SessionMode::General,
+                    model.as_deref().unwrap_or(&default_model),
+                );
                 let _ = storage.save_session(&s);
                 s.id
             });
 
-            println!("{}", "====================================================".bold());
+            println!(
+                "{}",
+                "====================================================".bold()
+            );
             println!("   ODON Chat - What can ODON do for you?");
             println!("   Code, create, automate, and more.");
             println!("   Type 'exit' to quit.");
-            println!("{}", "====================================================".bold());
+            println!(
+                "{}",
+                "====================================================".bold()
+            );
 
             loop {
                 print!("\n{} ", "You ▶".bold().blue());
@@ -720,7 +778,10 @@ async fn main() -> anyhow::Result<()> {
                 io::stdout().flush()?;
 
                 let cancel = CancellationToken::new();
-                if let Err(e) = runtime.execute_turn(&sid, trimmed, model.as_deref(), cancel).await {
+                if let Err(e) = runtime
+                    .execute_turn(&sid, trimmed, model.as_deref(), cancel)
+                    .await
+                {
                     eprintln!("\n{}: {}", "Turn error".red(), e);
                 }
                 println!();

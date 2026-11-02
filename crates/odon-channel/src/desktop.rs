@@ -41,10 +41,7 @@ impl ChannelAdapter for DesktopChannel {
         "desktop"
     }
 
-    async fn start(
-        &self,
-        incoming_tx: mpsc::Sender<IncomingChannelMessage>,
-    ) -> Result<()> {
+    async fn start(&self, incoming_tx: mpsc::Sender<IncomingChannelMessage>) -> Result<()> {
         let mut lock = self.incoming_tx.write().await;
         *lock = Some(incoming_tx);
         Ok(())

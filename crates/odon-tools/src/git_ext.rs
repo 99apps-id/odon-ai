@@ -22,7 +22,10 @@ async fn run_git(workspace: &str, args: &[&str]) -> Result<(i32, String, String)
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+    let code = output
+        .status
+        .code()
+        .unwrap_or(if output.status.success() { 0 } else { 1 });
     Ok((code, stdout, stderr))
 }
 
@@ -41,7 +44,10 @@ impl GitHubApiClient {
 
     fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("odon-github-connector/1.0"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("odon-github-connector/1.0"),
+        );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         if let Some(t) = &self.token {
             if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", t)) {
@@ -68,8 +74,12 @@ impl GitHubApiClient {
 pub struct GitMergeTool;
 #[async_trait]
 impl Tool for GitMergeTool {
-    fn name(&self) -> &str { "git_merge" }
-    fn description(&self) -> &str { "Merge specified branch into current working branch" }
+    fn name(&self) -> &str {
+        "git_merge"
+    }
+    fn description(&self) -> &str {
+        "Merge specified branch into current working branch"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -80,9 +90,14 @@ impl Tool for GitMergeTool {
             "required": ["branch"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let branch = args.get("branch").and_then(|b| b.as_str()).unwrap_or("main");
+        let branch = args
+            .get("branch")
+            .and_then(|b| b.as_str())
+            .unwrap_or("main");
         let msg = args.get("message").and_then(|m| m.as_str());
 
         let mut git_args = vec!["merge", branch];
@@ -99,8 +114,12 @@ impl Tool for GitMergeTool {
 pub struct GitRebaseTool;
 #[async_trait]
 impl Tool for GitRebaseTool {
-    fn name(&self) -> &str { "git_rebase" }
-    fn description(&self) -> &str { "Rebase current branch onto target branch or upstream" }
+    fn name(&self) -> &str {
+        "git_rebase"
+    }
+    fn description(&self) -> &str {
+        "Rebase current branch onto target branch or upstream"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -110,12 +129,18 @@ impl Tool for GitRebaseTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let abort = args.get("abort").and_then(|a| a.as_bool()).unwrap_or(false);
         let onto = args.get("onto").and_then(|o| o.as_str()).unwrap_or("main");
 
-        let git_args = if abort { vec!["rebase", "--abort"] } else { vec!["rebase", onto] };
+        let git_args = if abort {
+            vec!["rebase", "--abort"]
+        } else {
+            vec!["rebase", onto]
+        };
         let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
         Ok(json!({ "exit_code": code, "stdout": stdout, "stderr": stderr, "rebased": code == 0 }))
     }
@@ -125,8 +150,12 @@ impl Tool for GitRebaseTool {
 pub struct GitCherryPickTool;
 #[async_trait]
 impl Tool for GitCherryPickTool {
-    fn name(&self) -> &str { "git_cherry_pick" }
-    fn description(&self) -> &str { "Apply changes introduced by specified commit SHA" }
+    fn name(&self) -> &str {
+        "git_cherry_pick"
+    }
+    fn description(&self) -> &str {
+        "Apply changes introduced by specified commit SHA"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -136,7 +165,9 @@ impl Tool for GitCherryPickTool {
             "required": ["commit"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("");
         let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["cherry-pick", commit]).await?;
@@ -148,8 +179,12 @@ impl Tool for GitCherryPickTool {
 pub struct GitRevertTool;
 #[async_trait]
 impl Tool for GitRevertTool {
-    fn name(&self) -> &str { "git_revert" }
-    fn description(&self) -> &str { "Revert existing commit by creating an inverse commit" }
+    fn name(&self) -> &str {
+        "git_revert"
+    }
+    fn description(&self) -> &str {
+        "Revert existing commit by creating an inverse commit"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -159,10 +194,13 @@ impl Tool for GitRevertTool {
             "required": ["commit"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("");
-        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["revert", "--no-edit", commit]).await?;
+        let (code, stdout, stderr) =
+            run_git(&ctx.workspace_root, &["revert", "--no-edit", commit]).await?;
         Ok(json!({ "commit": commit, "exit_code": code, "stdout": stdout, "stderr": stderr }))
     }
 }
@@ -171,8 +209,12 @@ impl Tool for GitRevertTool {
 pub struct GitResetHardTool;
 #[async_trait]
 impl Tool for GitResetHardTool {
-    fn name(&self) -> &str { "git_reset_hard" }
-    fn description(&self) -> &str { "Hard reset working directory and HEAD to target commit (destructive)" }
+    fn name(&self) -> &str {
+        "git_reset_hard"
+    }
+    fn description(&self) -> &str {
+        "Hard reset working directory and HEAD to target commit (destructive)"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -181,10 +223,16 @@ impl Tool for GitResetHardTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let target = args.get("target").and_then(|t| t.as_str()).unwrap_or("HEAD");
-        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["reset", "--hard", target]).await?;
+        let target = args
+            .get("target")
+            .and_then(|t| t.as_str())
+            .unwrap_or("HEAD");
+        let (code, stdout, stderr) =
+            run_git(&ctx.workspace_root, &["reset", "--hard", target]).await?;
         Ok(json!({ "target": target, "exit_code": code, "stdout": stdout, "stderr": stderr }))
     }
 }
@@ -193,8 +241,12 @@ impl Tool for GitResetHardTool {
 pub struct GitCleanTool;
 #[async_trait]
 impl Tool for GitCleanTool {
-    fn name(&self) -> &str { "git_clean" }
-    fn description(&self) -> &str { "Remove untracked files from the working tree" }
+    fn name(&self) -> &str {
+        "git_clean"
+    }
+    fn description(&self) -> &str {
+        "Remove untracked files from the working tree"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -204,10 +256,19 @@ impl Tool for GitCleanTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let dry = args.get("dry_run").and_then(|d| d.as_bool()).unwrap_or(false);
-        let git_args = if dry { vec!["clean", "-fdn"] } else { vec!["clean", "-fd"] };
+        let dry = args
+            .get("dry_run")
+            .and_then(|d| d.as_bool())
+            .unwrap_or(false);
+        let git_args = if dry {
+            vec!["clean", "-fdn"]
+        } else {
+            vec!["clean", "-fd"]
+        };
         let (code, stdout, stderr) = run_git(&ctx.workspace_root, &git_args).await?;
         Ok(json!({ "dry_run": dry, "exit_code": code, "stdout": stdout, "stderr": stderr }))
     }
@@ -217,8 +278,12 @@ impl Tool for GitCleanTool {
 pub struct GitTagTool;
 #[async_trait]
 impl Tool for GitTagTool {
-    fn name(&self) -> &str { "git_tag" }
-    fn description(&self) -> &str { "List existing git tags or create a new release tag" }
+    fn name(&self) -> &str {
+        "git_tag"
+    }
+    fn description(&self) -> &str {
+        "List existing git tags or create a new release tag"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -228,7 +293,9 @@ impl Tool for GitTagTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let tag = args.get("tag").and_then(|t| t.as_str());
         let msg = args.get("message").and_then(|m| m.as_str());
@@ -256,8 +323,12 @@ impl Tool for GitTagTool {
 pub struct GitRemoteAddTool;
 #[async_trait]
 impl Tool for GitRemoteAddTool {
-    fn name(&self) -> &str { "git_remote_add" }
-    fn description(&self) -> &str { "Add a new remote repository origin or upstream" }
+    fn name(&self) -> &str {
+        "git_remote_add"
+    }
+    fn description(&self) -> &str {
+        "Add a new remote repository origin or upstream"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -268,20 +339,32 @@ impl Tool for GitRemoteAddTool {
             "required": ["name", "url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|n| n.as_str()).unwrap_or("origin");
+        let name = args
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("origin");
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["remote", "add", name, url]).await?;
-        Ok(json!({ "remote": name, "url": url, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+        let (code, stdout, stderr) =
+            run_git(&ctx.workspace_root, &["remote", "add", name, url]).await?;
+        Ok(
+            json!({ "remote": name, "url": url, "exit_code": code, "stdout": stdout, "stderr": stderr }),
+        )
     }
 }
 
 pub struct GitRemoteSetUrlTool;
 #[async_trait]
 impl Tool for GitRemoteSetUrlTool {
-    fn name(&self) -> &str { "git_remote_set_url" }
-    fn description(&self) -> &str { "Change the URL of an existing git remote" }
+    fn name(&self) -> &str {
+        "git_remote_set_url"
+    }
+    fn description(&self) -> &str {
+        "Change the URL of an existing git remote"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -292,12 +375,20 @@ impl Tool for GitRemoteSetUrlTool {
             "required": ["name", "url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|n| n.as_str()).unwrap_or("origin");
+        let name = args
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("origin");
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["remote", "set-url", name, url]).await?;
-        Ok(json!({ "remote": name, "url": url, "exit_code": code, "stdout": stdout, "stderr": stderr }))
+        let (code, stdout, stderr) =
+            run_git(&ctx.workspace_root, &["remote", "set-url", name, url]).await?;
+        Ok(
+            json!({ "remote": name, "url": url, "exit_code": code, "stdout": stdout, "stderr": stderr }),
+        )
     }
 }
 
@@ -305,8 +396,12 @@ impl Tool for GitRemoteSetUrlTool {
 pub struct GitBlameTool;
 #[async_trait]
 impl Tool for GitBlameTool {
-    fn name(&self) -> &str { "git_blame" }
-    fn description(&self) -> &str { "Show commit and author information for each line of a file" }
+    fn name(&self) -> &str {
+        "git_blame"
+    }
+    fn description(&self) -> &str {
+        "Show commit and author information for each line of a file"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -317,7 +412,9 @@ impl Tool for GitBlameTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let lines = args.get("lines").and_then(|l| l.as_str());
@@ -338,8 +435,12 @@ impl Tool for GitBlameTool {
 pub struct GitLogFileTool;
 #[async_trait]
 impl Tool for GitLogFileTool {
-    fn name(&self) -> &str { "git_log_file" }
-    fn description(&self) -> &str { "View commit history filtered to a specific file" }
+    fn name(&self) -> &str {
+        "git_log_file"
+    }
+    fn description(&self) -> &str {
+        "View commit history filtered to a specific file"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -350,13 +451,19 @@ impl Tool for GitLogFileTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10);
         let limit_str = format!("-{}", limit);
 
-        let (code, stdout, _) = run_git(&ctx.workspace_root, &["log", &limit_str, "--oneline", "--", rel]).await?;
+        let (code, stdout, _) = run_git(
+            &ctx.workspace_root,
+            &["log", &limit_str, "--oneline", "--", rel],
+        )
+        .await?;
         let commits: Vec<&str> = stdout.lines().collect();
         Ok(json!({ "path": rel, "exit_code": code, "commits": commits }))
     }
@@ -366,10 +473,18 @@ impl Tool for GitLogFileTool {
 pub struct GitLsFilesTool;
 #[async_trait]
 impl Tool for GitLsFilesTool {
-    fn name(&self) -> &str { "git_ls_files" }
-    fn description(&self) -> &str { "List all files tracked by the Git repository" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "git_ls_files"
+    }
+    fn description(&self) -> &str {
+        "List all files tracked by the Git repository"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
         let (code, stdout, _) = run_git(&ctx.workspace_root, &["ls-files"]).await?;
         let files: Vec<&str> = stdout.lines().collect();
@@ -381,12 +496,22 @@ impl Tool for GitLsFilesTool {
 pub struct GitHubCreateReviewTool {
     gh: GitHubApiClient,
 }
-impl GitHubCreateReviewTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubCreateReviewTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubCreateReviewTool {
-    fn name(&self) -> &str { "github_create_review" }
-    fn description(&self) -> &str { "Submit a formal code review on a GitHub pull request" }
+    fn name(&self) -> &str {
+        "github_create_review"
+    }
+    fn description(&self) -> &str {
+        "Submit a formal code review on a GitHub pull request"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -400,21 +525,46 @@ impl Tool for GitHubCreateReviewTool {
             "required": ["owner", "repo", "pull_number", "event", "body"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
-        let num = args.get("pull_number").and_then(|n| n.as_u64()).unwrap_or(1);
-        let event = args.get("event").and_then(|e| e.as_str()).unwrap_or("COMMENT");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
+        let num = args
+            .get("pull_number")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(1);
+        let event = args
+            .get("event")
+            .and_then(|e| e.as_str())
+            .unwrap_or("COMMENT");
         let body = args.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{num}/reviews");
-        let resp = self.gh.client.post(&url)
+        let resp = self
+            .gh
+            .client
+            .post(&url)
             .headers(self.gh.headers())
             .json(&json!({ "event": event, "body": body }))
-            .send().await.map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
 
-        let data: Value = resp.json().await.unwrap_or(json!({ "status": "submitted" }));
+        let data: Value = resp
+            .json()
+            .await
+            .unwrap_or(json!({ "status": "submitted" }));
         Ok(json!({ "pull_number": num, "review": data }))
     }
 }
@@ -422,12 +572,22 @@ impl Tool for GitHubCreateReviewTool {
 pub struct GitHubListCommentsTool {
     gh: GitHubApiClient,
 }
-impl GitHubListCommentsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubListCommentsTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubListCommentsTool {
-    fn name(&self) -> &str { "github_list_comments" }
-    fn description(&self) -> &str { "List review and issue comments on a pull request or issue" }
+    fn name(&self) -> &str {
+        "github_list_comments"
+    }
+    fn description(&self) -> &str {
+        "List review and issue comments on a pull request or issue"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -439,15 +599,35 @@ impl Tool for GitHubListCommentsTool {
             "required": ["owner", "repo", "issue_number"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
-        let num = args.get("issue_number").and_then(|n| n.as_u64()).unwrap_or(1);
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
+        let num = args
+            .get("issue_number")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(1);
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}/issues/{num}/comments");
-        let resp = self.gh.client.get(&url).headers(self.gh.headers()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let comments: Value = resp.json().await.unwrap_or(json!([]));
         Ok(json!({ "comments": comments }))
     }
@@ -456,12 +636,22 @@ impl Tool for GitHubListCommentsTool {
 pub struct GitHubMergePrTool {
     gh: GitHubApiClient,
 }
-impl GitHubMergePrTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubMergePrTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubMergePrTool {
-    fn name(&self) -> &str { "github_merge_pr" }
-    fn description(&self) -> &str { "Merge an approved pull request on GitHub" }
+    fn name(&self) -> &str {
+        "github_merge_pr"
+    }
+    fn description(&self) -> &str {
+        "Merge an approved pull request on GitHub"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -474,16 +664,40 @@ impl Tool for GitHubMergePrTool {
             "required": ["owner", "repo", "pull_number"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
-        let num = args.get("pull_number").and_then(|n| n.as_u64()).unwrap_or(1);
-        let method = args.get("merge_method").and_then(|m| m.as_str()).unwrap_or("squash");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
+        let num = args
+            .get("pull_number")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(1);
+        let method = args
+            .get("merge_method")
+            .and_then(|m| m.as_str())
+            .unwrap_or("squash");
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{num}/merge");
-        let resp = self.gh.client.put(&url).headers(self.gh.headers()).json(&json!({ "merge_method": method })).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = self
+            .gh
+            .client
+            .put(&url)
+            .headers(self.gh.headers())
+            .json(&json!({ "merge_method": method }))
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let data: Value = resp.json().await.unwrap_or(json!({ "merged": true }));
         Ok(json!({ "pull_number": num, "result": data }))
     }
@@ -492,12 +706,22 @@ impl Tool for GitHubMergePrTool {
 pub struct GitHubWorkflowRunsTool {
     gh: GitHubApiClient,
 }
-impl GitHubWorkflowRunsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubWorkflowRunsTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubWorkflowRunsTool {
-    fn name(&self) -> &str { "github_workflow_runs" }
-    fn description(&self) -> &str { "List recent GitHub Actions runs with status, conclusion, branch, and URL" }
+    fn name(&self) -> &str {
+        "github_workflow_runs"
+    }
+    fn description(&self) -> &str {
+        "List recent GitHub Actions runs with status, conclusion, branch, and URL"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -510,13 +734,22 @@ impl Tool for GitHubWorkflowRunsTool {
             "required": ["owner", "repo"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
         let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
-        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(50);
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10)
+            .min(50);
         if owner.is_empty() || repo.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner and repo are required".to_string() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "owner and repo are required".to_string(),
+            });
         }
         let url = match args.get("workflow_id").and_then(|v| v.as_str()) {
             Some(workflow) if !workflow.is_empty() => format!(
@@ -524,8 +757,17 @@ impl Tool for GitHubWorkflowRunsTool {
             ),
             _ => format!("https://api.github.com/repos/{owner}/{repo}/actions/runs?per_page={limit}"),
         };
-        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let response = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let data: Value = GitHubApiClient::response_json("github_workflow_runs", response).await?;
         Ok(data)
     }
@@ -534,12 +776,22 @@ impl Tool for GitHubWorkflowRunsTool {
 pub struct GitHubWorkflowJobsTool {
     gh: GitHubApiClient,
 }
-impl GitHubWorkflowJobsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubWorkflowJobsTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubWorkflowJobsTool {
-    fn name(&self) -> &str { "github_workflow_jobs" }
-    fn description(&self) -> &str { "List jobs and step results for a GitHub Actions run" }
+    fn name(&self) -> &str {
+        "github_workflow_jobs"
+    }
+    fn description(&self) -> &str {
+        "List jobs and step results for a GitHub Actions run"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -551,17 +803,31 @@ impl Tool for GitHubWorkflowJobsTool {
             "required": ["owner", "repo", "run_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
         let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
         let run_id = args.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
         if owner.is_empty() || repo.is_empty() || run_id.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner, repo, and run_id are required".to_string() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "owner, repo, and run_id are required".to_string(),
+            });
         }
         let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs");
-        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let response = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let data: Value = GitHubApiClient::response_json("github_workflow_jobs", response).await?;
         Ok(data)
     }
@@ -570,11 +836,19 @@ impl Tool for GitHubWorkflowJobsTool {
 pub struct GitHubWorkflowLogsTool {
     gh: GitHubApiClient,
 }
-impl GitHubWorkflowLogsTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubWorkflowLogsTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubWorkflowLogsTool {
-    fn name(&self) -> &str { "github_workflow_logs" }
+    fn name(&self) -> &str {
+        "github_workflow_logs"
+    }
     fn description(&self) -> &str {
         "Download and extract GitHub Actions run logs as text, with size limits"
     }
@@ -590,19 +864,37 @@ impl Tool for GitHubWorkflowLogsTool {
             "required": ["owner", "repo", "run_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
         let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
         let run_id = args.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
         if owner.is_empty() || repo.is_empty() || run_id.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner, repo, and run_id are required".to_string() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "owner, repo, and run_id are required".to_string(),
+            });
         }
-        let max_bytes = args.get("max_bytes").and_then(|v| v.as_u64()).unwrap_or(120_000).clamp(1_000, 1_000_000) as usize;
+        let max_bytes = args
+            .get("max_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(120_000)
+            .clamp(1_000, 1_000_000) as usize;
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs");
-        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let response = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -664,12 +956,22 @@ impl Tool for GitHubWorkflowLogsTool {
 pub struct GitHubPrFilesTool {
     gh: GitHubApiClient,
 }
-impl GitHubPrFilesTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubPrFilesTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubPrFilesTool {
-    fn name(&self) -> &str { "github_pr_files" }
-    fn description(&self) -> &str { "List changed files and diff stats for a pull request" }
+    fn name(&self) -> &str {
+        "github_pr_files"
+    }
+    fn description(&self) -> &str {
+        "List changed files and diff stats for a pull request"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -681,33 +983,80 @@ impl Tool for GitHubPrFilesTool {
             "required": ["owner", "repo", "pull_number"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let owner = args.get("owner").and_then(|v| v.as_str()).unwrap_or("");
         let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
-        let number = args.get("pull_number").and_then(|v| v.as_u64()).unwrap_or(0);
+        let number = args
+            .get("pull_number")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         if owner.is_empty() || repo.is_empty() || number == 0 {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "owner, repo, and pull_number are required".to_string() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "owner, repo, and pull_number are required".to_string(),
+            });
         }
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{number}/files?per_page=100");
-        let response = self.gh.client.get(&url).headers(self.gh.headers()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let url = format!(
+            "https://api.github.com/repos/{owner}/{repo}/pulls/{number}/files?per_page=100"
+        );
+        let response = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let files: Value = GitHubApiClient::response_json("github_pr_files", response).await?;
-        let additions: u64 = files.as_array().map(|items| items.iter().filter_map(|f| f.get("additions").and_then(|v| v.as_u64())).sum()).unwrap_or(0);
-        let deletions: u64 = files.as_array().map(|items| items.iter().filter_map(|f| f.get("deletions").and_then(|v| v.as_u64())).sum()).unwrap_or(0);
-        Ok(json!({ "pull_number": number, "files": files, "additions": additions, "deletions": deletions }))
+        let additions: u64 = files
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|f| f.get("additions").and_then(|v| v.as_u64()))
+                    .sum()
+            })
+            .unwrap_or(0);
+        let deletions: u64 = files
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|f| f.get("deletions").and_then(|v| v.as_u64()))
+                    .sum()
+            })
+            .unwrap_or(0);
+        Ok(
+            json!({ "pull_number": number, "files": files, "additions": additions, "deletions": deletions }),
+        )
     }
 }
 
 pub struct GitHubWorkflowListTool {
     gh: GitHubApiClient,
 }
-impl GitHubWorkflowListTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubWorkflowListTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubWorkflowListTool {
-    fn name(&self) -> &str { "github_workflow_list" }
-    fn description(&self) -> &str { "List GitHub Actions CI/CD workflows and recent runs" }
+    fn name(&self) -> &str {
+        "github_workflow_list"
+    }
+    fn description(&self) -> &str {
+        "List GitHub Actions CI/CD workflows and recent runs"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -718,14 +1067,31 @@ impl Tool for GitHubWorkflowListTool {
             "required": ["owner", "repo"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/workflows");
-        let resp = self.gh.client.get(&url).headers(self.gh.headers()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = self
+            .gh
+            .client
+            .get(&url)
+            .headers(self.gh.headers())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let data: Value = resp.json().await.unwrap_or(json!({ "workflows": [] }));
         Ok(data)
     }
@@ -734,12 +1100,22 @@ impl Tool for GitHubWorkflowListTool {
 pub struct GitHubWorkflowRunTool {
     gh: GitHubApiClient,
 }
-impl GitHubWorkflowRunTool { pub fn new() -> Self { Self { gh: GitHubApiClient::new() } } }
+impl GitHubWorkflowRunTool {
+    pub fn new() -> Self {
+        Self {
+            gh: GitHubApiClient::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl Tool for GitHubWorkflowRunTool {
-    fn name(&self) -> &str { "github_workflow_run" }
-    fn description(&self) -> &str { "Trigger a GitHub Actions workflow dispatch run" }
+    fn name(&self) -> &str {
+        "github_workflow_run"
+    }
+    fn description(&self) -> &str {
+        "Trigger a GitHub Actions workflow dispatch run"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -752,17 +1128,41 @@ impl Tool for GitHubWorkflowRunTool {
             "required": ["owner", "repo", "workflow_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
-        let w_id = args.get("workflow_id").and_then(|w| w.as_str()).unwrap_or("");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
+        let w_id = args
+            .get("workflow_id")
+            .and_then(|w| w.as_str())
+            .unwrap_or("");
         let r_ref = args.get("ref").and_then(|r| r.as_str()).unwrap_or("main");
 
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/workflows/{w_id}/dispatches");
-        let resp = self.gh.client.post(&url).headers(self.gh.headers()).json(&json!({ "ref": r_ref })).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
-        Ok(json!({ "status": "dispatched", "workflow": w_id, "ref": r_ref, "code": resp.status().as_u16() }))
+        let url = format!(
+            "https://api.github.com/repos/{owner}/{repo}/actions/workflows/{w_id}/dispatches"
+        );
+        let resp = self
+            .gh
+            .client
+            .post(&url)
+            .headers(self.gh.headers())
+            .json(&json!({ "ref": r_ref }))
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
+        Ok(
+            json!({ "status": "dispatched", "workflow": w_id, "ref": r_ref, "code": resp.status().as_u16() }),
+        )
     }
 }
-

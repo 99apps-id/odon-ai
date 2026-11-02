@@ -46,7 +46,11 @@ fn platform_code() -> i32 {
 }
 
 fn random_hex(len: usize) -> String {
-    let s = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    let s = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
     s.chars().take(len * 2).collect()
 }
 
@@ -62,7 +66,13 @@ fn antigravity_request_id(message_count: usize) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("agent/{}/{}/{}/{}", random_hex(8), now, random_hex(8), step.max(1))
+    format!(
+        "agent/{}/{}/{}/{}",
+        random_hex(8),
+        now,
+        random_hex(8),
+        step.max(1)
+    )
 }
 
 fn extract_project_id(raw: &Value) -> Option<String> {
@@ -93,11 +103,16 @@ impl AntigravityProvider {
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
-            base_url: custom_base.unwrap_or(CODE_ASSIST_HOST).trim_end_matches('/').to_string(),
+            base_url: custom_base
+                .unwrap_or(CODE_ASSIST_HOST)
+                .trim_end_matches('/')
+                .to_string(),
             access_token: std::sync::Mutex::new((access_token.into(), std::time::Instant::now())),
             project: tokio::sync::Mutex::new(None),
             account_id,
-            signatures: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            signatures: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -133,10 +148,22 @@ impl AntigravityProvider {
         h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         h.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| OdonError::Auth(e.to_string()))?,
+            HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|e| OdonError::Auth(e.to_string()))?,
         );
-        let platform = if cfg!(target_os = "windows") { "windows/x64" } else if cfg!(target_os = "macos") { "darwin/arm64" } else { "linux/x64" };
-        h.insert(USER_AGENT, HeaderValue::from_str(&format!("antigravity/ide/2.11.0 {platform}")).unwrap_or(HeaderValue::from_static("antigravity/ide/2.11.0 windows/x64")));
+        let platform = if cfg!(target_os = "windows") {
+            "windows/x64"
+        } else if cfg!(target_os = "macos") {
+            "darwin/arm64"
+        } else {
+            "linux/x64"
+        };
+        h.insert(
+            USER_AGENT,
+            HeaderValue::from_str(&format!("antigravity/ide/2.11.0 {platform}")).unwrap_or(
+                HeaderValue::from_static("antigravity/ide/2.11.0 windows/x64"),
+            ),
+        );
         if let Some(s) = session {
             if let Ok(v) = HeaderValue::from_str(s) {
                 h.insert("x-machine-session-id", v);
@@ -178,12 +205,15 @@ impl AntigravityProvider {
 
         if let Ok(res) = resp {
             if res.status() == 401 {
-                return Err(OdonError::Auth("Antigravity token expired or invalid".into()));
+                return Err(OdonError::Auth(
+                    "Antigravity token expired or invalid".into(),
+                ));
             }
             if res.status().is_success() {
                 let val: Value = res.json().await.unwrap_or(Value::Null);
                 tracing::info!("Antigravity loadCodeAssist raw response: {:?}", val);
-                if let Some(proj) = val.get("cloudaicompanionProject")
+                if let Some(proj) = val
+                    .get("cloudaicompanionProject")
                     .and_then(extract_project_id)
                     .or_else(|| val.get("project").and_then(extract_project_id))
                     .or_else(|| val.get("projectId").and_then(extract_project_id))
@@ -197,7 +227,11 @@ impl AntigravityProvider {
                 let mut tier = "legacy-tier".to_string();
                 if let Some(tiers) = val.get("allowedTiers").and_then(|t| t.as_array()) {
                     for candidate in tiers {
-                        if candidate.get("isDefault").and_then(|d| d.as_bool()).unwrap_or(false) {
+                        if candidate
+                            .get("isDefault")
+                            .and_then(|d| d.as_bool())
+                            .unwrap_or(false)
+                        {
                             if let Some(id) = candidate.get("id").and_then(|i| i.as_str()) {
                                 tier = id.to_string();
                                 break;
@@ -219,18 +253,30 @@ impl AntigravityProvider {
 
                     if let Ok(onboard_res) = onboard_resp {
                         if onboard_res.status().is_success() {
-                            let onboard_val: Value = onboard_res.json().await.unwrap_or(Value::Null);
-                            let from_onboard = onboard_val.get("response")
+                            let onboard_val: Value =
+                                onboard_res.json().await.unwrap_or(Value::Null);
+                            let from_onboard = onboard_val
+                                .get("response")
                                 .and_then(|r| r.get("cloudaicompanionProject"))
                                 .and_then(extract_project_id)
-                                .or_else(|| onboard_val.get("cloudaicompanionProject").and_then(extract_project_id))
-                                .or_else(|| onboard_val.get("response").and_then(extract_project_id));
+                                .or_else(|| {
+                                    onboard_val
+                                        .get("cloudaicompanionProject")
+                                        .and_then(extract_project_id)
+                                })
+                                .or_else(|| {
+                                    onboard_val.get("response").and_then(extract_project_id)
+                                });
 
                             if let Some(proj) = from_onboard {
                                 *cached = Some(proj.clone());
                                 return Ok(proj);
                             }
-                            if onboard_val.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                            if onboard_val
+                                .get("done")
+                                .and_then(|d| d.as_bool())
+                                .unwrap_or(false)
+                            {
                                 break;
                             }
                         }
@@ -335,16 +381,24 @@ impl ModelProvider for AntigravityProvider {
                         parts.push(json!({ "text": msg.content.text }));
                     }
                     for tc in &msg.content.tool_calls {
-                        let args = if tc.arguments.is_object() { tc.arguments.clone() } else { json!({}) };
-                        let clean_name = tc.tool_name
+                        let args = if tc.arguments.is_object() {
+                            tc.arguments.clone()
+                        } else {
+                            json!({})
+                        };
+                        let clean_name = tc
+                            .tool_name
                             .trim_start_matches("defaultapi:")
                             .trim_start_matches("default_api:");
 
-                        let sig = self.get_signature(&tc.call_id).await
+                        let sig = self
+                            .get_signature(&tc.call_id)
+                            .await
                             .or(self.get_signature(&tc.tool_name).await)
                             .or(self.get_signature(clean_name).await)
                             .unwrap_or_else(|| {
-                                base64::engine::general_purpose::STANDARD.encode(format!("sig_{}_{}", clean_name, tc.call_id))
+                                base64::engine::general_purpose::STANDARD
+                                    .encode(format!("sig_{}_{}", clean_name, tc.call_id))
                             });
 
                         parts.push(json!({
@@ -361,13 +415,24 @@ impl ModelProvider for AntigravityProvider {
                     }
                 }
                 MessageRole::Tool => {
-                    let raw_name = msg.content.tool_calls.first().map(|t| t.tool_name.clone()).unwrap_or_default();
+                    let raw_name = msg
+                        .content
+                        .tool_calls
+                        .first()
+                        .map(|t| t.tool_name.clone())
+                        .unwrap_or_default();
                     let clean_name = raw_name
                         .trim_start_matches("defaultapi:")
                         .trim_start_matches("default_api:");
-                    let call_id = msg.content.tool_calls.first().map(|t| t.call_id.clone()).unwrap_or_default();
+                    let call_id = msg
+                        .content
+                        .tool_calls
+                        .first()
+                        .map(|t| t.call_id.clone())
+                        .unwrap_or_default();
 
-                    let output: Value = serde_json::from_str(&msg.content.text).unwrap_or_else(|_| json!(msg.content.text));
+                    let output: Value = serde_json::from_str(&msg.content.text)
+                        .unwrap_or_else(|_| json!(msg.content.text));
                     let mut resp_obj = json!({
                         "name": clean_name,
                         "response": { "output": output }
@@ -378,10 +443,18 @@ impl ModelProvider for AntigravityProvider {
                     let part = json!({ "functionResponse": resp_obj });
                     let merge = contents
                         .last()
-                        .map(|c| c["role"] == "user" && c["parts"].as_array().map(|p| p.iter().all(|x| x.get("functionResponse").is_some())).unwrap_or(false))
+                        .map(|c| {
+                            c["role"] == "user"
+                                && c["parts"]
+                                    .as_array()
+                                    .map(|p| p.iter().all(|x| x.get("functionResponse").is_some()))
+                                    .unwrap_or(false)
+                        })
                         .unwrap_or(false);
                     if merge {
-                        if let Some(arr) = contents.last_mut().and_then(|c| c["parts"].as_array_mut()) {
+                        if let Some(arr) =
+                            contents.last_mut().and_then(|c| c["parts"].as_array_mut())
+                        {
                             arr.push(part);
                         }
                     } else {
@@ -407,7 +480,10 @@ impl ModelProvider for AntigravityProvider {
         let session_id = new_session_id();
         let wire_model = match request.model.as_str() {
             // Legacy aliases kept so saved sessions keep working.
-            "gemini-4-argon" | "gemini-3.1-pro" | "gemini-3.8-flash" | "gemini-3.8-flash-medium" => "gemini-2.5-pro",
+            "gemini-4-argon"
+            | "gemini-3.1-pro"
+            | "gemini-3.8-flash"
+            | "gemini-3.8-flash-medium" => "gemini-2.5-pro",
             "gemini-3.8-flash-high" | "odon-auto" | "auto" | "" => "gemini-2.5-flash",
             "claude-sonnet-5-5" | "claude-sonnet-4-6" => "claude-sonnet-4-20250514",
             "claude-opus-5-5" => "claude-opus-4-20250514",
@@ -426,7 +502,13 @@ impl ModelProvider for AntigravityProvider {
             gen["temperature"] = json!(t);
         }
         if let Some(effort) = &request.effort {
-            gen["thinkingConfig"]["thinkingBudget"] = json!(match effort.as_str() { "low" => 2048, "medium" => 8192, "high" => 24576, "xhigh" => 32768, _ => 8192 });
+            gen["thinkingConfig"]["thinkingBudget"] = json!(match effort.as_str() {
+                "low" => 2048,
+                "medium" => 8192,
+                "high" => 24576,
+                "xhigh" => 32768,
+                _ => 8192,
+            });
         }
 
         let mut inner = json!({
@@ -463,7 +545,12 @@ impl ModelProvider for AntigravityProvider {
             "request": inner,
         });
 
-        tracing::info!("Antigravity stream_chat request: project={}, model={}, wire_model={}", project, request.model, wire_model);
+        tracing::info!(
+            "Antigravity stream_chat request: project={}, model={}, wire_model={}",
+            project,
+            request.model,
+            wire_model
+        );
 
         let endpoint = format!("{}/v1internal:streamGenerateContent?alt=sse", self.base_url);
         let mut resp = self
@@ -473,10 +560,16 @@ impl ModelProvider for AntigravityProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| OdonError::Provider { provider: "antigravity".into(), message: format!("Antigravity request failed: {e}") })?;
+            .map_err(|e| OdonError::Provider {
+                provider: "antigravity".into(),
+                message: format!("Antigravity request failed: {e}"),
+            })?;
 
         if resp.status().is_server_error() && self.base_url.contains("daily-cloudcode-pa") {
-            let fallback_url = format!("{}/v1internal:streamGenerateContent?alt=sse", CODE_ASSIST_FALLBACK_HOST);
+            let fallback_url = format!(
+                "{}/v1internal:streamGenerateContent?alt=sse",
+                CODE_ASSIST_FALLBACK_HOST
+            );
             if let Ok(retry) = self
                 .client
                 .post(&fallback_url)
@@ -490,12 +583,17 @@ impl ModelProvider for AntigravityProvider {
         }
 
         if resp.status() == 401 {
-            return Err(OdonError::Auth("Antigravity token expired or invalid".into()));
+            return Err(OdonError::Auth(
+                "Antigravity token expired or invalid".into(),
+            ));
         }
         if !resp.status().is_success() {
             let status = resp.status();
             let err_body = resp.text().await.unwrap_or_default();
-            return Err(OdonError::Provider { provider: "antigravity".into(), message: format!("Antigravity HTTP {status}: {err_body}") });
+            return Err(OdonError::Provider {
+                provider: "antigravity".into(),
+                message: format!("Antigravity HTTP {status}: {err_body}"),
+            });
         }
 
         let mut stream = resp.bytes_stream().eventsource();

@@ -24,7 +24,10 @@ pub(crate) fn normalize_todos(tool: &str, raw: &Value) -> Result<Value> {
         .as_array()
         .ok_or_else(|| tool_err(tool, "'todos' must be an array"))?;
     if items.len() > MAX_TODOS {
-        return Err(tool_err(tool, format!("at most {MAX_TODOS} todo items are allowed")));
+        return Err(tool_err(
+            tool,
+            format!("at most {MAX_TODOS} todo items are allowed"),
+        ));
     }
 
     let mut out = Vec::with_capacity(items.len());
@@ -35,12 +38,20 @@ pub(crate) fn normalize_todos(tool: &str, raw: &Value) -> Result<Value> {
             .and_then(|t| t.as_str())
             .map(str::trim)
             .filter(|t| !t.is_empty())
-            .ok_or_else(|| tool_err(tool, format!("todo #{} needs a non-empty 'title'", idx + 1)))?;
-        let status = item.get("status").and_then(|s| s.as_str()).unwrap_or("pending");
+            .ok_or_else(|| {
+                tool_err(tool, format!("todo #{} needs a non-empty 'title'", idx + 1))
+            })?;
+        let status = item
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("pending");
         if !STATUSES.contains(&status) {
             return Err(tool_err(
                 tool,
-                format!("todo #{} has invalid status '{status}' (use pending, in_progress, completed)", idx + 1),
+                format!(
+                    "todo #{} has invalid status '{status}' (use pending, in_progress, completed)",
+                    idx + 1
+                ),
             ));
         }
         if status == "in_progress" {
@@ -55,7 +66,10 @@ pub(crate) fn normalize_todos(tool: &str, raw: &Value) -> Result<Value> {
     }
 
     if in_progress > 1 {
-        return Err(tool_err(tool, "exactly one todo may be in_progress at a time"));
+        return Err(tool_err(
+            tool,
+            "exactly one todo may be in_progress at a time",
+        ));
     }
     Ok(Value::Array(out))
 }
@@ -214,7 +228,11 @@ impl Tool for PlanModeTool {
             .as_ref()
             .ok_or_else(|| tool_err(self.name(), "Storage engine unavailable in tool context"))?;
         storage
-            .set_memory(&plan_mode_key(&ctx.session_id), if enabled { "on" } else { "off" }, "plan_mode")
+            .set_memory(
+                &plan_mode_key(&ctx.session_id),
+                if enabled { "on" } else { "off" },
+                "plan_mode",
+            )
             .map_err(|e| tool_err(self.name(), format!("Failed to save plan mode: {e}")))?;
         Ok(json!({ "plan_mode": enabled }))
     }
@@ -273,7 +291,10 @@ impl Tool for TodoUpdateTool {
             .as_ref()
             .ok_or_else(|| tool_err(self.name(), "Storage engine unavailable"))?;
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
-        let new_status = args.get("status").and_then(|s| s.as_str()).unwrap_or("completed");
+        let new_status = args
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("completed");
 
         let key = format!("todos:{}", ctx.session_id);
         let existing = storage.get_memory(&key).ok().flatten();
@@ -335,9 +356,10 @@ impl Tool for RememberTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let fact = args.get("fact").and_then(|f| f.as_str()).ok_or_else(|| {
-            tool_err(self.name(), "Missing 'fact' parameter")
-        })?;
+        let fact = args
+            .get("fact")
+            .and_then(|f| f.as_str())
+            .ok_or_else(|| tool_err(self.name(), "Missing 'fact' parameter"))?;
 
         if let Some(storage) = &ctx.storage {
             let key = format!("memory:facts:{}", ctx.session_id);
@@ -371,16 +393,23 @@ mod tests {
         };
         let reg = crate::build_full_tool_registry();
 
-        reg.execute_tool("plan_mode", &ctx, json!({ "enabled": true })).await.unwrap();
+        reg.execute_tool("plan_mode", &ctx, json!({ "enabled": true }))
+            .await
+            .unwrap();
         let blocked = reg
             .execute_tool("fs_write", &ctx, json!({ "path": "a.txt", "content": "x" }))
             .await;
-        assert!(blocked.is_err(), "mutating tool must be blocked in plan mode");
+        assert!(
+            blocked.is_err(),
+            "mutating tool must be blocked in plan mode"
+        );
         assert!(!dir.join("a.txt").exists());
         // Read-only tools still work while planning.
         assert!(reg.execute_tool("fs_list", &ctx, json!({})).await.is_ok());
 
-        reg.execute_tool("plan_mode", &ctx, json!({ "enabled": false })).await.unwrap();
+        reg.execute_tool("plan_mode", &ctx, json!({ "enabled": false }))
+            .await
+            .unwrap();
         reg.execute_tool("fs_write", &ctx, json!({ "path": "a.txt", "content": "x" }))
             .await
             .unwrap();
@@ -412,15 +441,25 @@ mod tests {
 
     #[test]
     fn rejects_bad_status_and_empty_title() {
-        assert!(normalize_todos("todo_write", &json!([{ "title": "a", "status": "done" }])).is_err());
-        assert!(normalize_todos("todo_write", &json!([{ "title": "  ", "status": "pending" }])).is_err());
+        assert!(
+            normalize_todos("todo_write", &json!([{ "title": "a", "status": "done" }])).is_err()
+        );
+        assert!(normalize_todos(
+            "todo_write",
+            &json!([{ "title": "  ", "status": "pending" }])
+        )
+        .is_err());
         assert!(normalize_todos("todo_write", &json!("nope")).is_err());
     }
 
     #[test]
     fn todos_round_trip_through_storage() {
         let storage = odon_storage::StorageEngine::new_in_memory().unwrap();
-        let items = normalize_todos("todo_write", &json!([{ "title": "x", "status": "pending" }])).unwrap();
+        let items = normalize_todos(
+            "todo_write",
+            &json!([{ "title": "x", "status": "pending" }]),
+        )
+        .unwrap();
         storage.set_todos("s1", &items).unwrap();
         assert_eq!(storage.get_todos("s1").unwrap(), items);
         assert_eq!(storage.get_todos("other").unwrap(), json!([]));
@@ -430,7 +469,9 @@ mod tests {
     fn plan_mode_flag_is_session_scoped() {
         let storage = odon_storage::StorageEngine::new_in_memory().unwrap();
         assert!(!is_plan_mode(&storage, "s1"));
-        storage.set_memory(&plan_mode_key("s1"), "on", "plan_mode").unwrap();
+        storage
+            .set_memory(&plan_mode_key("s1"), "on", "plan_mode")
+            .unwrap();
         assert!(is_plan_mode(&storage, "s1"));
         assert!(!is_plan_mode(&storage, "s2"));
     }

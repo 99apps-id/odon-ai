@@ -68,12 +68,13 @@ impl Tool for CalcEvalTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let expr = args.get("expression").and_then(|e| e.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let expr = args
+            .get("expression")
+            .and_then(|e| e.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'expression' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let res = eval_simple_math(expr).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
@@ -88,7 +89,9 @@ impl Tool for CalcEvalTool {
 }
 
 fn num_cpus() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 fn eval_simple_math(expr: &str) -> std::result::Result<f64, String> {
@@ -103,7 +106,9 @@ fn eval_simple_math(expr: &str) -> std::result::Result<f64, String> {
     parse_addition(&mut chars)
 }
 
-fn parse_addition(chars: &mut std::iter::Peekable<std::str::Chars>) -> std::result::Result<f64, String> {
+fn parse_addition(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> std::result::Result<f64, String> {
     let mut left = parse_multiplication(chars)?;
     while let Some(&op) = chars.peek() {
         if op == '+' {
@@ -121,7 +126,9 @@ fn parse_addition(chars: &mut std::iter::Peekable<std::str::Chars>) -> std::resu
     Ok(left)
 }
 
-fn parse_multiplication(chars: &mut std::iter::Peekable<std::str::Chars>) -> std::result::Result<f64, String> {
+fn parse_multiplication(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> std::result::Result<f64, String> {
     let mut left = parse_primary(chars)?;
     while let Some(&op) = chars.peek() {
         if op == '*' {
@@ -146,7 +153,9 @@ fn parse_multiplication(chars: &mut std::iter::Peekable<std::str::Chars>) -> std
     Ok(left)
 }
 
-fn parse_primary(chars: &mut std::iter::Peekable<std::str::Chars>) -> std::result::Result<f64, String> {
+fn parse_primary(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+) -> std::result::Result<f64, String> {
     match chars.peek() {
         Some('(') => {
             chars.next();
@@ -205,17 +214,26 @@ impl Tool for EnvGetTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|n| n.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let name = args
+            .get("name")
+            .and_then(|n| n.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'name' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let val = std::env::var(name).unwrap_or_default();
         let upper = name.to_uppercase();
-        let safe_val = if upper.contains("KEY") || upper.contains("SECRET") || upper.contains("TOKEN") || upper.contains("PASS") {
-            if val.is_empty() { "".to_string() } else { "REDACTED".to_string() }
+        let safe_val = if upper.contains("KEY")
+            || upper.contains("SECRET")
+            || upper.contains("TOKEN")
+            || upper.contains("PASS")
+        {
+            if val.is_empty() {
+                "".to_string()
+            } else {
+                "REDACTED".to_string()
+            }
         } else {
             val
         };
@@ -315,5 +333,3 @@ impl Tool for DiskUsageTool {
         }))
     }
 }
-
-

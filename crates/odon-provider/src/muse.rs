@@ -32,7 +32,9 @@ impl MuseProvider {
     pub fn sanitize_sse_payload(payload: &str) -> String {
         if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(payload) {
             if let Some(obj) = val.as_object_mut() {
-                if !obj.contains_key("choices") || obj.get("choices").map(|c| c.is_null()).unwrap_or(false) {
+                if !obj.contains_key("choices")
+                    || obj.get("choices").map(|c| c.is_null()).unwrap_or(false)
+                {
                     obj.insert("choices".to_string(), json!([]));
                     return serde_json::to_string(&val).unwrap_or_else(|_| payload.to_string());
                 }

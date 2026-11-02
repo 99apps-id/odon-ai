@@ -17,10 +17,7 @@ pub struct IncomingChannelMessage {
 pub trait ChannelAdapter: Send + Sync {
     fn channel_name(&self) -> &str;
 
-    async fn start(
-        &self,
-        incoming_tx: mpsc::Sender<IncomingChannelMessage>,
-    ) -> Result<()>;
+    async fn start(&self, incoming_tx: mpsc::Sender<IncomingChannelMessage>) -> Result<()>;
 
     async fn broadcast_event(&self, event: &AgentEvent) -> Result<()>;
 

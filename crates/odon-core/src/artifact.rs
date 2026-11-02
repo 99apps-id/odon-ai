@@ -161,7 +161,10 @@ impl Artifact {
             session_id: session_id.into(),
             title: title.into(),
             kind: ArtifactKind::Patch,
-            summary: format!("+{} -{} lines ({} files)", additions, deletions, files_changed),
+            summary: format!(
+                "+{} -{} lines ({} files)",
+                additions, deletions, files_changed
+            ),
             payload: ArtifactPayload::Patch {
                 git_target: git_target.into(),
                 diff: diff.into(),

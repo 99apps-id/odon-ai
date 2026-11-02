@@ -42,10 +42,22 @@ impl Tool for ArtifactCreateCodeTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("Untitled Project");
-        let summary = args.get("summary").and_then(|s| s.as_str()).unwrap_or("Generated code");
-        let language = args.get("language").and_then(|l| l.as_str()).unwrap_or("TypeScript");
-        let framework = args.get("framework").and_then(|f| f.as_str()).map(|s| s.to_string());
+        let title = args
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("Untitled Project");
+        let summary = args
+            .get("summary")
+            .and_then(|s| s.as_str())
+            .unwrap_or("Generated code");
+        let language = args
+            .get("language")
+            .and_then(|l| l.as_str())
+            .unwrap_or("TypeScript");
+        let framework = args
+            .get("framework")
+            .and_then(|f| f.as_str())
+            .map(|s| s.to_string());
 
         let mut files = Vec::new();
         if let Some(arr) = args.get("files").and_then(|f| f.as_array()) {
@@ -62,14 +74,8 @@ impl Tool for ArtifactCreateCodeTool {
             }
         }
 
-        let artifact = Artifact::new_code(
-            &ctx.session_id,
-            title,
-            summary,
-            language,
-            framework,
-            files,
-        );
+        let artifact =
+            Artifact::new_code(&ctx.session_id, title, summary, language, framework, files);
 
         Ok(json!({
             "artifact_id": artifact.id,
@@ -106,8 +112,14 @@ impl Tool for ArtifactCreateDocumentTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("Untitled Document");
-        let doc_type = args.get("doc_type").and_then(|d| d.as_str()).unwrap_or("Document");
+        let title = args
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("Untitled Document");
+        let doc_type = args
+            .get("doc_type")
+            .and_then(|d| d.as_str())
+            .unwrap_or("Document");
         let markdown = args.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
 
         let artifact = Artifact::new_document(&ctx.session_id, title, doc_type, markdown);
@@ -121,7 +133,6 @@ impl Tool for ArtifactCreateDocumentTool {
         }))
     }
 }
-
 
 /// Real image generation. Calls an image model (OpenAI `gpt-image-1` or Google
 /// Gemini image preview), writes the PNG into `<workspace>/generated/images/`
@@ -174,7 +185,10 @@ impl Tool for ArtifactCreateChartTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("Chart");
+        let title = args
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("Chart");
         let chart_type = args
             .get("chart_type")
             .and_then(|t| t.as_str())
@@ -291,7 +305,13 @@ fn slugify(s: &str) -> String {
     let base: String = s
         .trim_end_matches(".png")
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     let base = base.trim_matches('-');
     let base = if base.is_empty() { "image" } else { base };
@@ -332,15 +352,24 @@ impl Tool for ArtifactCreateImageTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         use base64::Engine;
-        let tool_err = |m: String| OdonError::Tool { tool: "artifact_create_image".into(), message: m };
+        let tool_err = |m: String| OdonError::Tool {
+            tool: "artifact_create_image".into(),
+            message: m,
+        };
 
-        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("image");
+        let title = args
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("image");
         let prompt = args
             .get("prompt")
             .and_then(|p| p.as_str())
             .filter(|p| !p.trim().is_empty())
             .ok_or_else(|| tool_err("'prompt' is required".into()))?;
-        let size = args.get("size").and_then(|s| s.as_str()).unwrap_or("1024x1024");
+        let size = args
+            .get("size")
+            .and_then(|s| s.as_str())
+            .unwrap_or("1024x1024");
         let want = args.get("provider").and_then(|p| p.as_str());
 
         let backend = pick_backend(ctx, want);
@@ -355,7 +384,10 @@ impl Tool for ArtifactCreateImageTool {
                 if backend.kind == "openai" {
                     let model = "gpt-image-1";
                     let resp = client
-                        .post(format!("{}/images/generations", backend.base_url.trim_end_matches('/')))
+                        .post(format!(
+                            "{}/images/generations",
+                            backend.base_url.trim_end_matches('/')
+                        ))
                         .bearer_auth(&backend.key)
                         .json(&json!({ "model": model, "prompt": prompt, "size": size, "n": 1 }))
                         .send()
@@ -366,20 +398,38 @@ impl Tool for ArtifactCreateImageTool {
                     if !status.is_success() {
                         return Err(tool_err(format!("Image API error {status}: {v}")));
                     }
-                    let item = v.pointer("/data/0").ok_or_else(|| tool_err("Image API returned no data".into()))?;
+                    let item = v
+                        .pointer("/data/0")
+                        .ok_or_else(|| tool_err("Image API returned no data".into()))?;
                     if let Some(b64) = item.get("b64_json").and_then(|b| b.as_str()) {
-                        (base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| tool_err(e.to_string()))?, model.into())
+                        (
+                            base64::engine::general_purpose::STANDARD
+                                .decode(b64)
+                                .map_err(|e| tool_err(e.to_string()))?,
+                            model.into(),
+                        )
                     } else if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-                        let b = client.get(url).send().await.map_err(|e| tool_err(e.to_string()))?
-                            .bytes().await.map_err(|e| tool_err(e.to_string()))?;
+                        let b = client
+                            .get(url)
+                            .send()
+                            .await
+                            .map_err(|e| tool_err(e.to_string()))?
+                            .bytes()
+                            .await
+                            .map_err(|e| tool_err(e.to_string()))?;
                         (b.to_vec(), model.into())
                     } else {
-                        return Err(tool_err("Image API response had neither b64_json nor url".into()));
+                        return Err(tool_err(
+                            "Image API response had neither b64_json nor url".into(),
+                        ));
                     }
                 } else {
                     let model = "gemini-2.5-flash-image";
                     let resp = client
-                        .post(format!("{}/models/{}:generateContent", backend.base_url, model))
+                        .post(format!(
+                            "{}/models/{}:generateContent",
+                            backend.base_url, model
+                        ))
                         .header("x-goog-api-key", &backend.key)
                         .json(&json!({
                             "contents": [{ "parts": [{ "text": prompt }] }],
@@ -398,11 +448,19 @@ impl Tool for ArtifactCreateImageTool {
                         .and_then(|p| p.as_array())
                         .and_then(|parts| {
                             parts.iter().find_map(|p| {
-                                p.get("inlineData").or_else(|| p.get("inline_data")).and_then(|d| d.get("data")).and_then(|d| d.as_str())
+                                p.get("inlineData")
+                                    .or_else(|| p.get("inline_data"))
+                                    .and_then(|d| d.get("data"))
+                                    .and_then(|d| d.as_str())
                             })
                         })
                         .ok_or_else(|| tool_err(format!("Gemini returned no image: {v}")))?;
-                    (base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| tool_err(e.to_string()))?, model.into())
+                    (
+                        base64::engine::general_purpose::STANDARD
+                            .decode(b64)
+                            .map_err(|e| tool_err(e.to_string()))?,
+                        model.into(),
+                    )
                 }
             }
             None => {
@@ -420,7 +478,8 @@ impl Tool for ArtifactCreateImageTool {
         );
         let abs = std::path::Path::new(&ctx.workspace_root).join(&rel);
         if let Some(dir) = abs.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| tool_err(format!("Cannot create {}: {e}", dir.display())))?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| tool_err(format!("Cannot create {}: {e}", dir.display())))?;
         }
         std::fs::write(&abs, &bytes).map_err(|e| tool_err(format!("Cannot save image: {e}")))?;
 
@@ -472,14 +531,21 @@ impl Tool for ArtifactUpdateTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let artifact_id = args.get("artifact_id").and_then(|a| a.as_str()).unwrap_or("");
+        let artifact_id = args
+            .get("artifact_id")
+            .and_then(|a| a.as_str())
+            .unwrap_or("");
         let content = args.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
         if let Some(storage) = &ctx.storage {
             if let Ok(mut art) = storage.get_artifact(artifact_id) {
                 art.summary = format!("Updated: {}", content.chars().take(60).collect::<String>());
                 match &mut art.payload {
-                    odon_core::ArtifactPayload::Document { markdown, size_bytes, .. } => {
+                    odon_core::ArtifactPayload::Document {
+                        markdown,
+                        size_bytes,
+                        ..
+                    } => {
                         *markdown = content.to_string();
                         *size_bytes = content.len();
                     }
@@ -494,7 +560,9 @@ impl Tool for ArtifactUpdateTool {
                     _ => {}
                 }
                 let _ = storage.save_artifact(&art);
-                return Ok(json!({ "updated": true, "artifact_id": artifact_id, "size_bytes": content.len() }));
+                return Ok(
+                    json!({ "updated": true, "artifact_id": artifact_id, "size_bytes": content.len() }),
+                );
             }
         }
 
@@ -529,7 +597,10 @@ impl Tool for ArtifactImportTool {
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let path_str = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         if path_str.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "Path is required".into() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Path is required".into(),
+            });
         }
 
         let p = std::path::Path::new(path_str);
@@ -551,8 +622,15 @@ impl Tool for ArtifactImportTool {
             message: format!("Failed to read file: {e}"),
         })?;
 
-        let file_name = abs.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let ext = abs.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let file_name = abs
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let ext = abs
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
         let title = args
             .get("title")
             .and_then(|t| t.as_str())
@@ -565,7 +643,8 @@ impl Tool for ArtifactImportTool {
             .unwrap_or_else(|| format!("Imported from {}", path_str));
 
         let artifact = match ext.as_str() {
-            "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "html" | "css" | "json" | "sh" | "yaml" | "yml" | "toml" => {
+            "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "html" | "css" | "json" | "sh"
+            | "yaml" | "yml" | "toml" => {
                 let code_text = String::from_utf8_lossy(&bytes).to_string();
                 let lang = match ext.as_str() {
                     "rs" => "rust",
@@ -591,19 +670,17 @@ impl Tool for ArtifactImportTool {
                     }],
                 )
             }
-            "png" | "jpg" | "jpeg" | "webp" | "gif" => {
-                Artifact::new_image(
-                    &ctx.session_id,
-                    &title,
-                    &summary,
-                    1024,
-                    1024,
-                    "imported",
-                    Some(abs.to_string_lossy().to_string()),
-                    Some(format!("/api/files/{}", path_str.replace('\\', "/"))),
-                    bytes.len(),
-                )
-            }
+            "png" | "jpg" | "jpeg" | "webp" | "gif" => Artifact::new_image(
+                &ctx.session_id,
+                &title,
+                &summary,
+                1024,
+                1024,
+                "imported",
+                Some(abs.to_string_lossy().to_string()),
+                Some(format!("/api/files/{}", path_str.replace('\\', "/"))),
+                bytes.len(),
+            ),
             _ => {
                 let doc_text = String::from_utf8_lossy(&bytes).to_string();
                 let doc_type = if ext == "md" { "markdown" } else { "text" };
@@ -612,10 +689,12 @@ impl Tool for ArtifactImportTool {
         };
 
         if let Some(storage) = &ctx.storage {
-            storage.save_artifact(&artifact).map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Failed to save artifact to storage: {e}"),
-            })?;
+            storage
+                .save_artifact(&artifact)
+                .map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Failed to save artifact to storage: {e}"),
+                })?;
         }
 
         Ok(json!({
@@ -628,4 +707,3 @@ impl Tool for ArtifactImportTool {
         }))
     }
 }
-

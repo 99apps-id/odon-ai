@@ -74,12 +74,13 @@ impl Tool for FsReadTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'path' parameter".to_string(),
-            }
-        })?;
+        let path_str =
+            args.get("path")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'path' parameter".to_string(),
+                })?;
 
         let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         let content = tokio::fs::read_to_string(&full_path)
@@ -117,12 +118,13 @@ impl Tool for FsWriteTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'path' parameter".to_string(),
-            }
-        })?;
+        let path_str =
+            args.get("path")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'path' parameter".to_string(),
+                })?;
         let content = args
             .get("content")
             .and_then(|c| c.as_str())
@@ -219,24 +221,27 @@ impl Tool for FsEditTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'path' parameter".to_string(),
-            }
-        })?;
-        let target = args.get("target").and_then(|t| t.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'target' parameter".to_string(),
-            }
-        })?;
-        let replacement = args.get("replacement").and_then(|r| r.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let path_str =
+            args.get("path")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'path' parameter".to_string(),
+                })?;
+        let target =
+            args.get("target")
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'target' parameter".to_string(),
+                })?;
+        let replacement = args
+            .get("replacement")
+            .and_then(|r| r.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'replacement' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         let content = tokio::fs::read_to_string(&full_path)
@@ -296,12 +301,13 @@ impl Tool for FsSearchTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let query = args.get("query").and_then(|q| q.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let query = args
+            .get("query")
+            .and_then(|q| q.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'query' parameter".to_string(),
-            }
-        })?;
+            })?;
         let subpath = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
         let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(30) as usize;
 
@@ -325,7 +331,11 @@ impl Tool for FsSearchTool {
                 let path = entry.path();
                 let file_name = entry.file_name().to_string_lossy().to_string();
 
-                if file_name.starts_with('.') || file_name == "target" || file_name == "node_modules" || file_name == "dist" {
+                if file_name.starts_with('.')
+                    || file_name == "target"
+                    || file_name == "node_modules"
+                    || file_name == "dist"
+                {
                     continue;
                 }
 
@@ -343,7 +353,11 @@ impl Tool for FsSearchTool {
                         if let Ok(content) = tokio::fs::read_to_string(&path).await {
                             for (line_idx, line) in content.lines().enumerate() {
                                 if line.contains(query) {
-                                    let rel_path = path.strip_prefix(&root_dir).unwrap_or(&path).to_string_lossy().to_string();
+                                    let rel_path = path
+                                        .strip_prefix(&root_dir)
+                                        .unwrap_or(&path)
+                                        .to_string_lossy()
+                                        .to_string();
                                     matches.push(json!({
                                         "file": rel_path,
                                         "line": line_idx + 1,
@@ -391,12 +405,13 @@ impl Tool for FsDeleteTool {
         RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'path' parameter".to_string(),
-            }
-        })?;
+        let path_str =
+            args.get("path")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'path' parameter".to_string(),
+                })?;
 
         let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         tokio::fs::remove_file(&full_path)
@@ -433,12 +448,13 @@ impl Tool for FsMkdirTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'path' parameter".to_string(),
-            }
-        })?;
+        let path_str =
+            args.get("path")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'path' parameter".to_string(),
+                })?;
 
         let full_path = resolve_path(&ctx.workspace_root, path_str)?;
         tokio::fs::create_dir_all(&full_path)
@@ -476,18 +492,20 @@ impl Tool for FsMoveTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let from_str = args.get("from").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'from' parameter".to_string(),
-            }
-        })?;
-        let to_str = args.get("to").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let from_str =
+            args.get("from")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'from' parameter".to_string(),
+                })?;
+        let to_str = args
+            .get("to")
+            .and_then(|p| p.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'to' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let from_path = resolve_path(&ctx.workspace_root, from_str)?;
         let to_path = resolve_path(&ctx.workspace_root, to_str)?;
@@ -531,18 +549,20 @@ impl Tool for FsCopyTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let from_str = args.get("from").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'from' parameter".to_string(),
-            }
-        })?;
-        let to_str = args.get("to").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let from_str =
+            args.get("from")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'from' parameter".to_string(),
+                })?;
+        let to_str = args
+            .get("to")
+            .and_then(|p| p.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'to' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let from_path = resolve_path(&ctx.workspace_root, from_str)?;
         let to_path = resolve_path(&ctx.workspace_root, to_str)?;
@@ -611,7 +631,10 @@ impl Tool for FsGlobTool {
                 let path = entry.path();
                 let file_name = entry.file_name().to_string_lossy().to_string();
 
-                if file_name.starts_with('.') || file_name == "target" || file_name == "node_modules" {
+                if file_name.starts_with('.')
+                    || file_name == "target"
+                    || file_name == "node_modules"
+                {
                     continue;
                 }
 
@@ -619,8 +642,15 @@ impl Tool for FsGlobTool {
                     if file_type.is_dir() {
                         queue.push(path);
                     } else if file_type.is_file() {
-                        if clean_pat.is_empty() || file_name.ends_with(clean_pat) || file_name.contains(clean_pat) {
-                            let rel = path.strip_prefix(&root_dir).unwrap_or(&path).to_string_lossy().to_string();
+                        if clean_pat.is_empty()
+                            || file_name.ends_with(clean_pat)
+                            || file_name.contains(clean_pat)
+                        {
+                            let rel = path
+                                .strip_prefix(&root_dir)
+                                .unwrap_or(&path)
+                                .to_string_lossy()
+                                .to_string();
                             matches.push(rel);
                         }
                     }
@@ -666,31 +696,40 @@ impl Tool for MultiEditTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let path_str = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| {
-            OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'path' parameter".to_string(),
-            }
-        })?;
-        let edits = args.get("edits").and_then(|e| e.as_array()).ok_or_else(|| {
-            OdonError::Tool {
+        let path_str =
+            args.get("path")
+                .and_then(|p| p.as_str())
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'path' parameter".to_string(),
+                })?;
+        let edits = args
+            .get("edits")
+            .and_then(|e| e.as_array())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'edits' array parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let full_path = resolve_path(&ctx.workspace_root, path_str)?;
-        let mut content = tokio::fs::read_to_string(&full_path)
-            .await
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Failed to read file {}: {}", path_str, e),
-            })?;
+        let mut content =
+            tokio::fs::read_to_string(&full_path)
+                .await
+                .map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Failed to read file {}: {}", path_str, e),
+                })?;
 
         let mut applied = 0;
         for edit in edits {
-            let old_str = edit.get("old_string").and_then(|s| s.as_str()).unwrap_or("");
-            let new_str = edit.get("new_string").and_then(|s| s.as_str()).unwrap_or("");
+            let old_str = edit
+                .get("old_string")
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            let new_str = edit
+                .get("new_string")
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
             if !old_str.is_empty() && content.contains(old_str) {
                 content = content.replacen(old_str, new_str, 1);
                 applied += 1;
@@ -712,61 +751,121 @@ impl Tool for MultiEditTool {
 pub struct TermigoReadFileTool;
 #[async_trait]
 impl Tool for TermigoReadFileTool {
-    fn name(&self) -> &str { "read_file" }
-    fn description(&self) -> &str { "Read content of a file at the specified path" }
-    fn parameters_schema(&self) -> Value { FsReadTool.parameters_schema() }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsReadTool.execute(ctx, args).await }
+    fn name(&self) -> &str {
+        "read_file"
+    }
+    fn description(&self) -> &str {
+        "Read content of a file at the specified path"
+    }
+    fn parameters_schema(&self) -> Value {
+        FsReadTool.parameters_schema()
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        FsReadTool.execute(ctx, args).await
+    }
 }
 
 pub struct TermigoWriteFileTool;
 #[async_trait]
 impl Tool for TermigoWriteFileTool {
-    fn name(&self) -> &str { "write_file" }
-    fn description(&self) -> &str { "Create or overwrite a file with the given content" }
-    fn parameters_schema(&self) -> Value { FsWriteTool.parameters_schema() }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsWriteTool.execute(ctx, args).await }
+    fn name(&self) -> &str {
+        "write_file"
+    }
+    fn description(&self) -> &str {
+        "Create or overwrite a file with the given content"
+    }
+    fn parameters_schema(&self) -> Value {
+        FsWriteTool.parameters_schema()
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        FsWriteTool.execute(ctx, args).await
+    }
 }
 
 pub struct TermigoEditTool;
 #[async_trait]
 impl Tool for TermigoEditTool {
-    fn name(&self) -> &str { "edit" }
-    fn description(&self) -> &str { "Replace target text in a file with replacement text" }
-    fn parameters_schema(&self) -> Value { FsEditTool.parameters_schema() }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsEditTool.execute(ctx, args).await }
+    fn name(&self) -> &str {
+        "edit"
+    }
+    fn description(&self) -> &str {
+        "Replace target text in a file with replacement text"
+    }
+    fn parameters_schema(&self) -> Value {
+        FsEditTool.parameters_schema()
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        FsEditTool.execute(ctx, args).await
+    }
 }
 
 pub struct TermigoListDirTool;
 #[async_trait]
 impl Tool for TermigoListDirTool {
-    fn name(&self) -> &str { "list_directory" }
-    fn description(&self) -> &str { "List immediate entries in a directory" }
-    fn parameters_schema(&self) -> Value { FsListTool.parameters_schema() }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsListTool.execute(ctx, args).await }
+    fn name(&self) -> &str {
+        "list_directory"
+    }
+    fn description(&self) -> &str {
+        "List immediate entries in a directory"
+    }
+    fn parameters_schema(&self) -> Value {
+        FsListTool.parameters_schema()
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        FsListTool.execute(ctx, args).await
+    }
 }
 
 pub struct TermigoDeleteFileTool;
 #[async_trait]
 impl Tool for TermigoDeleteFileTool {
-    fn name(&self) -> &str { "delete_file" }
-    fn description(&self) -> &str { "Delete a file or directory" }
-    fn parameters_schema(&self) -> Value { FsDeleteTool.parameters_schema() }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsDeleteTool.execute(ctx, args).await }
+    fn name(&self) -> &str {
+        "delete_file"
+    }
+    fn description(&self) -> &str {
+        "Delete a file or directory"
+    }
+    fn parameters_schema(&self) -> Value {
+        FsDeleteTool.parameters_schema()
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        FsDeleteTool.execute(ctx, args).await
+    }
 }
 
 pub struct TermigoGrepTool;
 #[async_trait]
 impl Tool for TermigoGrepTool {
-    fn name(&self) -> &str { "grep" }
-    fn description(&self) -> &str { "Search file contents in the workspace using text query" }
-    fn parameters_schema(&self) -> Value { FsSearchTool.parameters_schema() }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> { FsSearchTool.execute(ctx, args).await }
+    fn name(&self) -> &str {
+        "grep"
+    }
+    fn description(&self) -> &str {
+        "Search file contents in the workspace using text query"
+    }
+    fn parameters_schema(&self) -> Value {
+        FsSearchTool.parameters_schema()
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        FsSearchTool.execute(ctx, args).await
+    }
 }
 
 #[cfg(test)]

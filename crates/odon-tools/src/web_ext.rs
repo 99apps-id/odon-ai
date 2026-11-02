@@ -104,8 +104,12 @@ mod path_tests {
 pub struct HttpPutTool;
 #[async_trait]
 impl Tool for HttpPutTool {
-    fn name(&self) -> &str { "http_put" }
-    fn description(&self) -> &str { "Send an HTTP PUT request with JSON payload" }
+    fn name(&self) -> &str {
+        "http_put"
+    }
+    fn description(&self) -> &str {
+        "Send an HTTP PUT request with JSON payload"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -116,17 +120,28 @@ impl Tool for HttpPutTool {
             "required": ["url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let body = args.get("body").cloned().unwrap_or(json!({}));
         let validated = net_guard::validate_url(url).await?;
         let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let resp = client.put(validated.as_str()).json(&body).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = client
+            .put(validated.as_str())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         Ok(json!({ "status_code": status, "response": text }))
@@ -136,8 +151,12 @@ impl Tool for HttpPutTool {
 pub struct HttpPatchTool;
 #[async_trait]
 impl Tool for HttpPatchTool {
-    fn name(&self) -> &str { "http_patch" }
-    fn description(&self) -> &str { "Send an HTTP PATCH request with partial update payload" }
+    fn name(&self) -> &str {
+        "http_patch"
+    }
+    fn description(&self) -> &str {
+        "Send an HTTP PATCH request with partial update payload"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -148,17 +167,28 @@ impl Tool for HttpPatchTool {
             "required": ["url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let body = args.get("body").cloned().unwrap_or(json!({}));
         let validated = net_guard::validate_url(url).await?;
         let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let resp = client.patch(validated.as_str()).json(&body).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = client
+            .patch(validated.as_str())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         Ok(json!({ "status_code": status, "response": text }))
@@ -168,8 +198,12 @@ impl Tool for HttpPatchTool {
 pub struct HttpDeleteTool;
 #[async_trait]
 impl Tool for HttpDeleteTool {
-    fn name(&self) -> &str { "http_delete" }
-    fn description(&self) -> &str { "Send an HTTP DELETE request to target resource" }
+    fn name(&self) -> &str {
+        "http_delete"
+    }
+    fn description(&self) -> &str {
+        "Send an HTTP DELETE request to target resource"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -179,16 +213,26 @@ impl Tool for HttpDeleteTool {
             "required": ["url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
         let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let resp = client.delete(validated.as_str()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = client
+            .delete(validated.as_str())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         Ok(json!({ "status_code": status, "response": text }))
@@ -198,8 +242,12 @@ impl Tool for HttpDeleteTool {
 pub struct HttpDownloadTool;
 #[async_trait]
 impl Tool for HttpDownloadTool {
-    fn name(&self) -> &str { "http_download" }
-    fn description(&self) -> &str { "Download a remote file URL directly into the workspace" }
+    fn name(&self) -> &str {
+        "http_download"
+    }
+    fn description(&self) -> &str {
+        "Download a remote file URL directly into the workspace"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -210,36 +258,60 @@ impl Tool for HttpDownloadTool {
             "required": ["url", "destination"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let dst = args.get("destination").and_then(|d| d.as_str()).unwrap_or("");
+        let dst = args
+            .get("destination")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
         let full = safe_workspace_path(&ctx.workspace_root, dst)?;
 
         let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let resp = client.get(validated.as_str()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
-        let bytes = resp.bytes().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = client
+            .get(validated.as_str())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
+        let bytes = resp.bytes().await.map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
 
         if let Some(parent) = full.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        fs::write(&full, &bytes).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        fs::write(&full, &bytes).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
 
-        Ok(json!({ "url": url, "destination": dst, "bytes_downloaded": bytes.len(), "status": "saved" }))
+        Ok(
+            json!({ "url": url, "destination": dst, "bytes_downloaded": bytes.len(), "status": "saved" }),
+        )
     }
 }
 
 pub struct HttpUploadTool;
 #[async_trait]
 impl Tool for HttpUploadTool {
-    fn name(&self) -> &str { "http_upload" }
-    fn description(&self) -> &str { "Upload a local workspace file to a remote HTTP endpoint" }
+    fn name(&self) -> &str {
+        "http_upload"
+    }
+    fn description(&self) -> &str {
+        "Upload a local workspace file to a remote HTTP endpoint"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -250,20 +322,34 @@ impl Tool for HttpUploadTool {
             "required": ["file_path", "url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("file_path").and_then(|f| f.as_str()).unwrap_or("");
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let full = safe_workspace_path(&ctx.workspace_root, rel)?;
-        let bytes = fs::read(&full).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let bytes = fs::read(&full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
         let validated = net_guard::validate_url(url).await?;
 
         let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let resp = client.post(validated.as_str()).body(bytes).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = client
+            .post(validated.as_str())
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
 
         Ok(json!({ "file_path": rel, "url": url, "status_code": resp.status().as_u16() }))
     }
@@ -272,8 +358,12 @@ impl Tool for HttpUploadTool {
 pub struct WebSearchNewsTool;
 #[async_trait]
 impl Tool for WebSearchNewsTool {
-    fn name(&self) -> &str { "web_search_news" }
-    fn description(&self) -> &str { "Search recent tech, software, and world news articles via Google News and HackerNews" }
+    fn name(&self) -> &str {
+        "web_search_news"
+    }
+    fn description(&self) -> &str {
+        "Search recent tech, software, and world news articles via Google News and HackerNews"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -284,7 +374,9 @@ impl Tool for WebSearchNewsTool {
             "required": ["query"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
         let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
@@ -313,10 +405,28 @@ impl Tool for WebSearchNewsTool {
                 if let (Some(it_re), Some(t_re), Some(l_re)) = (item_re, title_re, link_re) {
                     for cap in it_re.captures_iter(&xml).take(limit) {
                         let item_xml = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                        let title = t_re.captures(item_xml).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
-                        let link = l_re.captures(item_xml).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
-                        let pubdate = pubdate_re.as_ref().and_then(|r| r.captures(item_xml)).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("");
-                        let source = source_re.as_ref().and_then(|r| r.captures(item_xml)).and_then(|c| c.get(1)).map(|m| m.as_str().trim()).unwrap_or("Google News");
+                        let title = t_re
+                            .captures(item_xml)
+                            .and_then(|c| c.get(1))
+                            .map(|m| m.as_str().trim())
+                            .unwrap_or("");
+                        let link = l_re
+                            .captures(item_xml)
+                            .and_then(|c| c.get(1))
+                            .map(|m| m.as_str().trim())
+                            .unwrap_or("");
+                        let pubdate = pubdate_re
+                            .as_ref()
+                            .and_then(|r| r.captures(item_xml))
+                            .and_then(|c| c.get(1))
+                            .map(|m| m.as_str().trim())
+                            .unwrap_or("");
+                        let source = source_re
+                            .as_ref()
+                            .and_then(|r| r.captures(item_xml))
+                            .and_then(|c| c.get(1))
+                            .map(|m| m.as_str().trim())
+                            .unwrap_or("Google News");
 
                         if !title.is_empty() && !link.is_empty() {
                             articles.push(json!({
@@ -375,8 +485,12 @@ impl Tool for WebSearchNewsTool {
 pub struct WebSearchCodeTool;
 #[async_trait]
 impl Tool for WebSearchCodeTool {
-    fn name(&self) -> &str { "web_search_code" }
-    fn description(&self) -> &str { "Search public code repositories and packages on GitHub and crates.io" }
+    fn name(&self) -> &str {
+        "web_search_code"
+    }
+    fn description(&self) -> &str {
+        "Search public code repositories and packages on GitHub and crates.io"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -387,7 +501,9 @@ impl Tool for WebSearchCodeTool {
             "required": ["query"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
         let lang = args.get("language").and_then(|l| l.as_str()).unwrap_or("");
@@ -411,14 +527,26 @@ impl Tool for WebSearchCodeTool {
             urlencoding::encode(&query_str)
         );
 
-        if let Ok(res) = client.get(&gh_url).header("Accept", "application/vnd.github.v3+json").send().await {
+        if let Ok(res) = client
+            .get(&gh_url)
+            .header("Accept", "application/vnd.github.v3+json")
+            .send()
+            .await
+        {
             if let Ok(val) = res.json::<Value>().await {
                 if let Some(items) = val.get("items").and_then(|i| i.as_array()) {
                     for item in items {
-                        let full_name = item.get("full_name").and_then(|n| n.as_str()).unwrap_or("");
+                        let full_name =
+                            item.get("full_name").and_then(|n| n.as_str()).unwrap_or("");
                         let html_url = item.get("html_url").and_then(|u| u.as_str()).unwrap_or("");
-                        let desc = item.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                        let stars = item.get("stargazers_count").and_then(|s| s.as_i64()).unwrap_or(0);
+                        let desc = item
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
+                        let stars = item
+                            .get("stargazers_count")
+                            .and_then(|s| s.as_i64())
+                            .unwrap_or(0);
                         let language = item.get("language").and_then(|l| l.as_str()).unwrap_or("");
 
                         results.push(json!({
@@ -445,8 +573,12 @@ impl Tool for WebSearchCodeTool {
 pub struct SecurityAuditHeadersTool;
 #[async_trait]
 impl Tool for SecurityAuditHeadersTool {
-    fn name(&self) -> &str { "security_audit_headers" }
-    fn description(&self) -> &str { "Audit HTTP security headers (CSP, HSTS, X-Frame-Options, CORS, Permissions-Policy)" }
+    fn name(&self) -> &str {
+        "security_audit_headers"
+    }
+    fn description(&self) -> &str {
+        "Audit HTTP security headers (CSP, HSTS, X-Frame-Options, CORS, Permissions-Policy)"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -456,32 +588,65 @@ impl Tool for SecurityAuditHeadersTool {
             "required": ["url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
 
-        let resp = client.get(validated.as_str()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let resp = client
+            .get(validated.as_str())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let hdrs = resp.headers();
 
-        let csp = hdrs.get("content-security-policy").and_then(|v| v.to_str().ok());
-        let hsts = hdrs.get("strict-transport-security").and_then(|v| v.to_str().ok());
+        let csp = hdrs
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok());
+        let hsts = hdrs
+            .get("strict-transport-security")
+            .and_then(|v| v.to_str().ok());
         let x_frame = hdrs.get("x-frame-options").and_then(|v| v.to_str().ok());
-        let x_content = hdrs.get("x-content-type-options").and_then(|v| v.to_str().ok());
-        let cors = hdrs.get("access-control-allow-origin").and_then(|v| v.to_str().ok());
+        let x_content = hdrs
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok());
+        let cors = hdrs
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok());
 
         let mut score = 100;
         let mut missing = Vec::new();
-        if csp.is_none() { score -= 25; missing.push("Content-Security-Policy"); }
-        if hsts.is_none() { score -= 20; missing.push("Strict-Transport-Security"); }
-        if x_frame.is_none() { score -= 15; missing.push("X-Frame-Options"); }
-        if x_content.is_none() { score -= 10; missing.push("X-Content-Type-Options"); }
+        if csp.is_none() {
+            score -= 25;
+            missing.push("Content-Security-Policy");
+        }
+        if hsts.is_none() {
+            score -= 20;
+            missing.push("Strict-Transport-Security");
+        }
+        if x_frame.is_none() {
+            score -= 15;
+            missing.push("X-Frame-Options");
+        }
+        if x_content.is_none() {
+            score -= 10;
+            missing.push("X-Content-Type-Options");
+        }
 
         Ok(json!({
             "url": url,
@@ -501,8 +666,12 @@ impl Tool for SecurityAuditHeadersTool {
 pub struct SecurityAuditCertTool;
 #[async_trait]
 impl Tool for SecurityAuditCertTool {
-    fn name(&self) -> &str { "security_audit_cert" }
-    fn description(&self) -> &str { "Inspect SSL/TLS certificate validity, issuer, and expiration date for HTTPS host" }
+    fn name(&self) -> &str {
+        "security_audit_cert"
+    }
+    fn description(&self) -> &str {
+        "Inspect SSL/TLS certificate validity, issuer, and expiration date for HTTPS host"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -512,9 +681,14 @@ impl Tool for SecurityAuditCertTool {
             "required": ["host"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let host = args.get("host").and_then(|h| h.as_str()).unwrap_or("github.com");
+        let host = args
+            .get("host")
+            .and_then(|h| h.as_str())
+            .unwrap_or("github.com");
         Ok(json!({
             "host": host,
             "tls_valid": true,
@@ -528,8 +702,12 @@ impl Tool for SecurityAuditCertTool {
 pub struct NetworkTracerouteTool;
 #[async_trait]
 impl Tool for NetworkTracerouteTool {
-    fn name(&self) -> &str { "network_traceroute" }
-    fn description(&self) -> &str { "Trace network latency and hop route to target destination" }
+    fn name(&self) -> &str {
+        "network_traceroute"
+    }
+    fn description(&self) -> &str {
+        "Trace network latency and hop route to target destination"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -539,9 +717,14 @@ impl Tool for NetworkTracerouteTool {
             "required": ["host"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let host = args.get("host").and_then(|h| h.as_str()).unwrap_or("1.1.1.1");
+        let host = args
+            .get("host")
+            .and_then(|h| h.as_str())
+            .unwrap_or("1.1.1.1");
         Ok(json!({
             "target": host,
             "hops": [
@@ -556,8 +739,12 @@ impl Tool for NetworkTracerouteTool {
 pub struct WebScrapeTool;
 #[async_trait]
 impl Tool for WebScrapeTool {
-    fn name(&self) -> &str { "web_scrape" }
-    fn description(&self) -> &str { "Scrape web page and extract structured text, links, and markdown content" }
+    fn name(&self) -> &str {
+        "web_scrape"
+    }
+    fn description(&self) -> &str {
+        "Scrape web page and extract structured text, links, and markdown content"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -567,17 +754,30 @@ impl Tool for WebScrapeTool {
             "required": ["url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
-        let resp = client.get(validated.as_str()).send().await
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
+        let resp = client
+            .get(validated.as_str())
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let html = resp.text().await.unwrap_or_default();
 
         let re_tag = regex::Regex::new(r"<[^>]*>").unwrap();
@@ -592,8 +792,12 @@ impl Tool for WebScrapeTool {
 pub struct UrlPreviewTool;
 #[async_trait]
 impl Tool for UrlPreviewTool {
-    fn name(&self) -> &str { "url_preview" }
-    fn description(&self) -> &str { "Fetch metadata, title, favicon, and OpenGraph preview for a URL" }
+    fn name(&self) -> &str {
+        "url_preview"
+    }
+    fn description(&self) -> &str {
+        "Fetch metadata, title, favicon, and OpenGraph preview for a URL"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -603,7 +807,9 @@ impl Tool for UrlPreviewTool {
             "required": ["url"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;

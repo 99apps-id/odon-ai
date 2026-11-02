@@ -124,12 +124,30 @@ impl OpenAiCompatibleProvider {
             HeaderValue::from_str(&format!("Bearer {token}"))
                 .map_err(|e| OdonError::Auth(format!("Invalid Copilot token: {e}")))?,
         );
-        headers.insert("copilot-integration-id", HeaderValue::from_static("vscode-chat"));
-        headers.insert("editor-version", HeaderValue::from_static(COPILOT_EDITOR_VERSION));
-        headers.insert("editor-plugin-version", HeaderValue::from_static(COPILOT_PLUGIN_VERSION));
-        headers.insert(USER_AGENT, HeaderValue::from_static("GitHubCopilotChat/0.38.0"));
-        headers.insert("openai-intent", HeaderValue::from_static("conversation-panel"));
-        headers.insert("x-github-api-version", HeaderValue::from_static("2025-04-01"));
+        headers.insert(
+            "copilot-integration-id",
+            HeaderValue::from_static("vscode-chat"),
+        );
+        headers.insert(
+            "editor-version",
+            HeaderValue::from_static(COPILOT_EDITOR_VERSION),
+        );
+        headers.insert(
+            "editor-plugin-version",
+            HeaderValue::from_static(COPILOT_PLUGIN_VERSION),
+        );
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("GitHubCopilotChat/0.38.0"),
+        );
+        headers.insert(
+            "openai-intent",
+            HeaderValue::from_static("conversation-panel"),
+        );
+        headers.insert(
+            "x-github-api-version",
+            HeaderValue::from_static("2025-04-01"),
+        );
         headers.insert(
             "x-vscode-user-agent-library-version",
             HeaderValue::from_static("electron-fetch"),
@@ -694,11 +712,19 @@ impl OpenAiCompatibleProvider {
     }
 
     pub fn new_qwen(api_key: impl Into<String>) -> Self {
-        Self::new("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", api_key, Some("qwen"))
+        Self::new(
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            api_key,
+            Some("qwen"),
+        )
     }
 
     pub fn new_alibaba(api_key: impl Into<String>) -> Self {
-        Self::new("https://dashscope.aliyuncs.com/compatible-mode/v1", api_key, Some("alibaba"))
+        Self::new(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key,
+            Some("alibaba"),
+        )
     }
 
     pub fn new_stepfun(api_key: impl Into<String>) -> Self {
@@ -719,7 +745,9 @@ impl ModelProvider for OpenAiCompatibleProvider {
         cancellation: CancellationToken,
     ) -> Result<()> {
         if self.provider_label == "github-copilot" {
-            return self.stream_copilot(request, event_sender, cancellation).await;
+            return self
+                .stream_copilot(request, event_sender, cancellation)
+                .await;
         }
 
         if self.provider_label == "openai" && openai_prefers_responses(&request.model) {
@@ -751,8 +779,14 @@ impl ModelProvider for OpenAiCompatibleProvider {
 
         if self.provider_label == "github-copilot" {
             headers.insert("Editor-Version", HeaderValue::from_static("vscode/1.90.0"));
-            headers.insert("Editor-Plugin-Version", HeaderValue::from_static("copilot-chat/0.38.0"));
-            headers.insert(USER_AGENT, HeaderValue::from_static("GitHubCopilotChat/0.38.0"));
+            headers.insert(
+                "Editor-Plugin-Version",
+                HeaderValue::from_static("copilot-chat/0.38.0"),
+            );
+            headers.insert(
+                USER_AGENT,
+                HeaderValue::from_static("GitHubCopilotChat/0.38.0"),
+            );
         }
 
         // Format messages
@@ -784,16 +818,21 @@ impl ModelProvider for OpenAiCompatibleProvider {
                         "content": if msg.content.text.is_empty() { serde_json::Value::Null } else { json!(msg.content.text) },
                     });
                     if !msg.content.tool_calls.is_empty() {
-                        let tcs: Vec<_> = msg.content.tool_calls.iter().map(|tc| {
-                            json!({
-                                "id": tc.call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.tool_name,
-                                    "arguments": tc.arguments.to_string(),
-                                }
+                        let tcs: Vec<_> = msg
+                            .content
+                            .tool_calls
+                            .iter()
+                            .map(|tc| {
+                                json!({
+                                    "id": tc.call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.tool_name,
+                                        "arguments": tc.arguments.to_string(),
+                                    }
+                                })
                             })
-                        }).collect();
+                            .collect();
                         obj["tool_calls"] = json!(tcs);
                     }
                     messages_payload.push(obj);
@@ -816,7 +855,10 @@ impl ModelProvider for OpenAiCompatibleProvider {
             }
         }
 
-        let model_str = if request.model == "odon-auto" || request.model == "auto" || request.model.is_empty() {
+        let model_str = if request.model == "odon-auto"
+            || request.model == "auto"
+            || request.model.is_empty()
+        {
             match self.provider_label.as_str() {
                 "deepseek" => "deepseek-chat",
                 "qwen" => "qwen-max-latest",
@@ -833,7 +875,10 @@ impl ModelProvider for OpenAiCompatibleProvider {
                 _ => "gpt-4o",
             }
         } else if self.provider_label == "github-copilot" {
-            request.model.strip_prefix("copilot-").unwrap_or(&request.model)
+            request
+                .model
+                .strip_prefix("copilot-")
+                .unwrap_or(&request.model)
         } else {
             &request.model
         };
@@ -841,7 +886,8 @@ impl ModelProvider for OpenAiCompatibleProvider {
         if model_str.trim().is_empty() {
             return Err(OdonError::Provider {
                 provider: self.provider_label.clone(),
-                message: "The configured model ID is empty. Choose a model in the model menu.".to_string(),
+                message: "The configured model ID is empty. Choose a model in the model menu."
+                    .to_string(),
             });
         }
 
@@ -896,15 +942,22 @@ impl ModelProvider for OpenAiCompatibleProvider {
                             status,
                             attempt
                         );
-                        tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64))
+                            .await;
                         continue;
                     }
                     break response;
                 }
                 Err(e) if attempt < 2 && (e.is_timeout() || e.is_connect()) => {
                     attempt += 1;
-                    tracing::warn!("{} request failed ({}): retry {}/2", self.provider_label, e, attempt);
-                    tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64)).await;
+                    tracing::warn!(
+                        "{} request failed ({}): retry {}/2",
+                        self.provider_label,
+                        e,
+                        attempt
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64))
+                        .await;
                 }
                 Err(e) => {
                     return Err(OdonError::Provider {
@@ -1028,7 +1081,8 @@ mod tests {
 
         let endpoint = OdonError::Provider {
             provider: "github-copilot".to_string(),
-            message: "The requested model is not accessible via the /chat/completions endpoint.".to_string(),
+            message: "The requested model is not accessible via the /chat/completions endpoint."
+                .to_string(),
         };
         assert!(copilot_escalate(&endpoint));
 
@@ -1065,7 +1119,10 @@ mod tests {
         assert_eq!(value("user-agent"), "GitHubCopilotChat/0.38.0");
         assert_eq!(value("openai-intent"), "conversation-panel");
         assert_eq!(value("x-github-api-version"), "2025-04-01");
-        assert_eq!(value("x-vscode-user-agent-library-version"), "electron-fetch");
+        assert_eq!(
+            value("x-vscode-user-agent-library-version"),
+            "electron-fetch"
+        );
         assert_eq!(value("x-initiator"), "user");
         assert!(!value("session_id").is_empty());
         assert!(value("x-request-id").starts_with("copilot-"));

@@ -82,8 +82,12 @@ fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
 pub struct FsStatTool;
 #[async_trait]
 impl Tool for FsStatTool {
-    fn name(&self) -> &str { "fs_stat" }
-    fn description(&self) -> &str { "Get comprehensive metadata and statistics for a file or directory" }
+    fn name(&self) -> &str {
+        "fs_stat"
+    }
+    fn description(&self) -> &str {
+        "Get comprehensive metadata and statistics for a file or directory"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -93,12 +97,17 @@ impl Tool for FsStatTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let rel = args.get("path").and_then(|p| p.as_str()).ok_or_else(|| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Missing 'path' argument".to_string(),
-        })?;
+        let rel = args
+            .get("path")
+            .and_then(|p| p.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'path' argument".to_string(),
+            })?;
         let full = resolve_path(&ctx.workspace_root, rel)?;
         let meta = fs::metadata(&full).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
@@ -131,8 +140,12 @@ impl Tool for FsStatTool {
 pub struct FsChmodTool;
 #[async_trait]
 impl Tool for FsChmodTool {
-    fn name(&self) -> &str { "fs_chmod" }
-    fn description(&self) -> &str { "Change file permissions or readonly state" }
+    fn name(&self) -> &str {
+        "fs_chmod"
+    }
+    fn description(&self) -> &str {
+        "Change file permissions or readonly state"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -143,18 +156,28 @@ impl Tool for FsChmodTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-        let readonly = args.get("readonly").and_then(|r| r.as_bool()).unwrap_or(false);
+        let readonly = args
+            .get("readonly")
+            .and_then(|r| r.as_bool())
+            .unwrap_or(false);
         let full = resolve_path(&ctx.workspace_root, rel)?;
 
         let mut perms = fs::metadata(&full)
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?
             .permissions();
         perms.set_readonly(readonly);
-        fs::set_permissions(&full, perms)
-            .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        fs::set_permissions(&full, perms).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
 
         Ok(json!({ "path": rel, "readonly": readonly, "status": "updated" }))
     }
@@ -164,8 +187,12 @@ impl Tool for FsChmodTool {
 pub struct FsChownTool;
 #[async_trait]
 impl Tool for FsChownTool {
-    fn name(&self) -> &str { "fs_chown" }
-    fn description(&self) -> &str { "Inspect or update ownership metadata for a workspace file" }
+    fn name(&self) -> &str {
+        "fs_chown"
+    }
+    fn description(&self) -> &str {
+        "Inspect or update ownership metadata for a workspace file"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -176,11 +203,15 @@ impl Tool for FsChownTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let _ = resolve_path(&ctx.workspace_root, rel)?;
-        Ok(json!({ "path": rel, "owner": args.get("owner").and_then(|o| o.as_str()).unwrap_or("current"), "status": "verified" }))
+        Ok(
+            json!({ "path": rel, "owner": args.get("owner").and_then(|o| o.as_str()).unwrap_or("current"), "status": "verified" }),
+        )
     }
 }
 
@@ -188,8 +219,12 @@ impl Tool for FsChownTool {
 pub struct FsSymlinkCreateTool;
 #[async_trait]
 impl Tool for FsSymlinkCreateTool {
-    fn name(&self) -> &str { "fs_symlink_create" }
-    fn description(&self) -> &str { "Create a symbolic link within the workspace" }
+    fn name(&self) -> &str {
+        "fs_symlink_create"
+    }
+    fn description(&self) -> &str {
+        "Create a symbolic link within the workspace"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -200,7 +235,9 @@ impl Tool for FsSymlinkCreateTool {
             "required": ["target", "link_path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let target_rel = args.get("target").and_then(|t| t.as_str()).unwrap_or("");
         let link_rel = args.get("link_path").and_then(|l| l.as_str()).unwrap_or("");
@@ -210,14 +247,18 @@ impl Tool for FsSymlinkCreateTool {
         #[cfg(target_os = "windows")]
         {
             if target_full.is_dir() {
-                std::os::windows::fs::symlink_dir(&target_full, &link_full).map_err(|e| OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: format!("Symlink failed: {e}"),
+                std::os::windows::fs::symlink_dir(&target_full, &link_full).map_err(|e| {
+                    OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: format!("Symlink failed: {e}"),
+                    }
                 })?;
             } else {
-                std::os::windows::fs::symlink_file(&target_full, &link_full).map_err(|e| OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: format!("Symlink failed: {e}"),
+                std::os::windows::fs::symlink_file(&target_full, &link_full).map_err(|e| {
+                    OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: format!("Symlink failed: {e}"),
+                    }
                 })?;
             }
         }
@@ -237,8 +278,12 @@ impl Tool for FsSymlinkCreateTool {
 pub struct FsReadlinkTool;
 #[async_trait]
 impl Tool for FsReadlinkTool {
-    fn name(&self) -> &str { "fs_readlink" }
-    fn description(&self) -> &str { "Resolve target destination of a symbolic link" }
+    fn name(&self) -> &str {
+        "fs_readlink"
+    }
+    fn description(&self) -> &str {
+        "Resolve target destination of a symbolic link"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -248,7 +293,9 @@ impl Tool for FsReadlinkTool {
             "required": ["link_path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("link_path").and_then(|l| l.as_str()).unwrap_or("");
         let full = resolve_path(&ctx.workspace_root, rel)?;
@@ -264,8 +311,12 @@ impl Tool for FsReadlinkTool {
 pub struct FsDiffTool;
 #[async_trait]
 impl Tool for FsDiffTool {
-    fn name(&self) -> &str { "fs_diff" }
-    fn description(&self) -> &str { "Compute line-by-line unified diff between two files" }
+    fn name(&self) -> &str {
+        "fs_diff"
+    }
+    fn description(&self) -> &str {
+        "Compute line-by-line unified diff between two files"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -276,7 +327,9 @@ impl Tool for FsDiffTool {
             "required": ["file_a", "file_b"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let fa = args.get("file_a").and_then(|f| f.as_str()).unwrap_or("");
         let fb = args.get("file_b").and_then(|f| f.as_str()).unwrap_or("");
@@ -320,8 +373,12 @@ impl Tool for FsDiffTool {
 pub struct FsPatchTool;
 #[async_trait]
 impl Tool for FsPatchTool {
-    fn name(&self) -> &str { "fs_patch" }
-    fn description(&self) -> &str { "Apply replacements or patch blocks to a target file" }
+    fn name(&self) -> &str {
+        "fs_patch"
+    }
+    fn description(&self) -> &str {
+        "Apply replacements or patch blocks to a target file"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -333,7 +390,9 @@ impl Tool for FsPatchTool {
             "required": ["path", "search", "replace"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let search = args.get("search").and_then(|s| s.as_str()).unwrap_or("");
@@ -366,8 +425,12 @@ impl Tool for FsPatchTool {
 pub struct FsTreeTool;
 #[async_trait]
 impl Tool for FsTreeTool {
-    fn name(&self) -> &str { "fs_tree" }
-    fn description(&self) -> &str { "Generate a structured ASCII directory tree view of the workspace" }
+    fn name(&self) -> &str {
+        "fs_tree"
+    }
+    fn description(&self) -> &str {
+        "Generate a structured ASCII directory tree view of the workspace"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -377,7 +440,9 @@ impl Tool for FsTreeTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
         let max_depth = args.get("max_depth").and_then(|d| d.as_u64()).unwrap_or(3) as usize;
@@ -387,21 +452,31 @@ impl Tool for FsTreeTool {
         lines.push(format!("{}/", rel));
 
         fn build_tree(dir: &Path, prefix: &str, depth: usize, max: usize, lines: &mut Vec<String>) {
-            if depth >= max { return; }
+            if depth >= max {
+                return;
+            }
             if let Ok(entries) = fs::read_dir(dir) {
                 let mut sorted: Vec<_> = entries.filter_map(std::result::Result::ok).collect();
                 sorted.sort_by_key(|e| e.file_name());
                 let total = sorted.len();
                 for (i, entry) in sorted.into_iter().enumerate() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') || name == "target" || name == "node_modules" { continue; }
+                    if name.starts_with('.') || name == "target" || name == "node_modules" {
+                        continue;
+                    }
                     let is_last = i == total - 1;
                     let connector = if is_last { "└── " } else { "├── " };
                     let sub_prefix = if is_last { "    " } else { "│   " };
                     let path = entry.path();
                     if path.is_dir() {
                         lines.push(format!("{}{}{}/", prefix, connector, name));
-                        build_tree(&path, &format!("{}{}", prefix, sub_prefix), depth + 1, max, lines);
+                        build_tree(
+                            &path,
+                            &format!("{}{}", prefix, sub_prefix),
+                            depth + 1,
+                            max,
+                            lines,
+                        );
                     } else {
                         lines.push(format!("{}{}{}", prefix, connector, name));
                     }
@@ -418,8 +493,12 @@ impl Tool for FsTreeTool {
 pub struct FsDuTool;
 #[async_trait]
 impl Tool for FsDuTool {
-    fn name(&self) -> &str { "fs_du" }
-    fn description(&self) -> &str { "Calculate disk usage and size breakdown of directories and files" }
+    fn name(&self) -> &str {
+        "fs_du"
+    }
+    fn description(&self) -> &str {
+        "Calculate disk usage and size breakdown of directories and files"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -428,7 +507,9 @@ impl Tool for FsDuTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
         let root = resolve_path(&ctx.workspace_root, rel)?;
@@ -474,8 +555,12 @@ impl Tool for FsDuTool {
 pub struct FsCopyRecursiveTool;
 #[async_trait]
 impl Tool for FsCopyRecursiveTool {
-    fn name(&self) -> &str { "fs_copy_recursive" }
-    fn description(&self) -> &str { "Recursively copy a directory and its contents safely within workspace" }
+    fn name(&self) -> &str {
+        "fs_copy_recursive"
+    }
+    fn description(&self) -> &str {
+        "Recursively copy a directory and its contents safely within workspace"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -486,10 +571,15 @@ impl Tool for FsCopyRecursiveTool {
             "required": ["source", "destination"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let src_rel = args.get("source").and_then(|s| s.as_str()).unwrap_or("");
-        let dst_rel = args.get("destination").and_then(|d| d.as_str()).unwrap_or("");
+        let dst_rel = args
+            .get("destination")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
         let src = resolve_path(&ctx.workspace_root, src_rel)?;
         let dst = resolve_path(&ctx.workspace_root, dst_rel)?;
 
@@ -520,8 +610,12 @@ impl Tool for FsCopyRecursiveTool {
 pub struct FsMoveRecursiveTool;
 #[async_trait]
 impl Tool for FsMoveRecursiveTool {
-    fn name(&self) -> &str { "fs_move_recursive" }
-    fn description(&self) -> &str { "Recursively move/rename a directory within workspace" }
+    fn name(&self) -> &str {
+        "fs_move_recursive"
+    }
+    fn description(&self) -> &str {
+        "Recursively move/rename a directory within workspace"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -532,10 +626,15 @@ impl Tool for FsMoveRecursiveTool {
             "required": ["source", "destination"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let src_rel = args.get("source").and_then(|s| s.as_str()).unwrap_or("");
-        let dst_rel = args.get("destination").and_then(|d| d.as_str()).unwrap_or("");
+        let dst_rel = args
+            .get("destination")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
         let src = resolve_path(&ctx.workspace_root, src_rel)?;
         let dst = resolve_path(&ctx.workspace_root, dst_rel)?;
 
@@ -555,8 +654,12 @@ impl Tool for FsMoveRecursiveTool {
 pub struct FsFindTool;
 #[async_trait]
 impl Tool for FsFindTool {
-    fn name(&self) -> &str { "fs_find" }
-    fn description(&self) -> &str { "Find files by name substring, extension, and size criteria" }
+    fn name(&self) -> &str {
+        "fs_find"
+    }
+    fn description(&self) -> &str {
+        "Find files by name substring, extension, and size criteria"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -567,32 +670,60 @@ impl Tool for FsFindTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name_filter = args.get("name").and_then(|n| n.as_str()).map(|n| n.to_lowercase());
-        let ext_filter = args.get("extension").and_then(|e| e.as_str()).map(|e| e.trim_start_matches('.').to_lowercase());
+        let name_filter = args
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|n| n.to_lowercase());
+        let ext_filter = args
+            .get("extension")
+            .and_then(|e| e.as_str())
+            .map(|e| e.trim_start_matches('.').to_lowercase());
         let search_root_rel = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
         let search_root = resolve_path(&ctx.workspace_root, search_root_rel)?;
 
         let mut matches = Vec::new();
-        fn scan(dir: &Path, root_len: usize, name_f: &Option<String>, ext_f: &Option<String>, matches: &mut Vec<Value>) {
-            if matches.len() >= 100 { return; }
+        fn scan(
+            dir: &Path,
+            root_len: usize,
+            name_f: &Option<String>,
+            ext_f: &Option<String>,
+            matches: &mut Vec<Value>,
+        ) {
+            if matches.len() >= 100 {
+                return;
+            }
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.filter_map(std::result::Result::ok) {
                     let p = entry.path();
                     let file_name = entry.file_name().to_string_lossy().to_string();
-                    if file_name.starts_with('.') || file_name == "target" || file_name == "node_modules" { continue; }
+                    if file_name.starts_with('.')
+                        || file_name == "target"
+                        || file_name == "node_modules"
+                    {
+                        continue;
+                    }
 
                     if p.is_dir() {
                         scan(&p, root_len, name_f, ext_f, matches);
                     } else if p.is_file() {
-                        let matches_name = name_f.as_ref().map_or(true, |n| file_name.to_lowercase().contains(n));
+                        let matches_name = name_f
+                            .as_ref()
+                            .map_or(true, |n| file_name.to_lowercase().contains(n));
                         let matches_ext = ext_f.as_ref().map_or(true, |e| {
-                            p.extension().and_then(|ext| ext.to_str()).map_or(false, |ext| ext.eq_ignore_ascii_case(e))
+                            p.extension()
+                                .and_then(|ext| ext.to_str())
+                                .map_or(false, |ext| ext.eq_ignore_ascii_case(e))
                         });
 
                         if matches_name && matches_ext {
-                            let rel = p.to_string_lossy()[root_len..].replace('\\', "/").trim_start_matches('/').to_string();
+                            let rel = p.to_string_lossy()[root_len..]
+                                .replace('\\', "/")
+                                .trim_start_matches('/')
+                                .to_string();
                             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
                             matches.push(json!({ "path": rel, "size_bytes": size }));
                         }
@@ -602,7 +733,13 @@ impl Tool for FsFindTool {
         }
 
         let root_str = search_root.to_string_lossy().to_string();
-        scan(&search_root, root_str.len(), &name_filter, &ext_filter, &mut matches);
+        scan(
+            &search_root,
+            root_str.len(),
+            &name_filter,
+            &ext_filter,
+            &mut matches,
+        );
 
         Ok(json!({ "total_found": matches.len(), "files": matches }))
     }
@@ -612,8 +749,12 @@ impl Tool for FsFindTool {
 pub struct FsZipTool;
 #[async_trait]
 impl Tool for FsZipTool {
-    fn name(&self) -> &str { "fs_zip" }
-    fn description(&self) -> &str { "Create a compressed archive bundle of files or directory" }
+    fn name(&self) -> &str {
+        "fs_zip"
+    }
+    fn description(&self) -> &str {
+        "Create a compressed archive bundle of files or directory"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -624,10 +765,15 @@ impl Tool for FsZipTool {
             "required": ["source", "archive_path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let src = args.get("source").and_then(|s| s.as_str()).unwrap_or("");
-        let arc = args.get("archive_path").and_then(|a| a.as_str()).unwrap_or("");
+        let arc = args
+            .get("archive_path")
+            .and_then(|a| a.as_str())
+            .unwrap_or("");
         let src_full = resolve_path(&ctx.workspace_root, src)?;
         let arc_full = resolve_path(&ctx.workspace_root, arc)?;
         if !src_full.exists() {
@@ -677,8 +823,12 @@ impl Tool for FsZipTool {
 pub struct FsUnzipTool;
 #[async_trait]
 impl Tool for FsUnzipTool {
-    fn name(&self) -> &str { "fs_unzip" }
-    fn description(&self) -> &str { "Extract an archive file to a destination directory" }
+    fn name(&self) -> &str {
+        "fs_unzip"
+    }
+    fn description(&self) -> &str {
+        "Extract an archive file to a destination directory"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -689,10 +839,18 @@ impl Tool for FsUnzipTool {
             "required": ["archive_path", "destination"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let arc = args.get("archive_path").and_then(|a| a.as_str()).unwrap_or("");
-        let dst = args.get("destination").and_then(|d| d.as_str()).unwrap_or("");
+        let arc = args
+            .get("archive_path")
+            .and_then(|a| a.as_str())
+            .unwrap_or("");
+        let dst = args
+            .get("destination")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
         let arc_full = resolve_path(&ctx.workspace_root, arc)?;
         let dst_full = resolve_path(&ctx.workspace_root, dst)?;
         let file = fs::File::open(&arc_full).map_err(|e| OdonError::Tool {
@@ -756,8 +914,12 @@ impl Tool for FsUnzipTool {
 pub struct TermigoMultiPasteTool;
 #[async_trait]
 impl Tool for TermigoMultiPasteTool {
-    fn name(&self) -> &str { "termigo_multi_paste" }
-    fn description(&self) -> &str { "Batch write or paste multiple code snippets to files" }
+    fn name(&self) -> &str {
+        "termigo_multi_paste"
+    }
+    fn description(&self) -> &str {
+        "Batch write or paste multiple code snippets to files"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -777,21 +939,32 @@ impl Tool for TermigoMultiPasteTool {
             "required": ["snippets"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let snippets = args.get("snippets").and_then(|s| s.as_array()).ok_or_else(|| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Missing 'snippets' array".to_string(),
-        })?;
+        let snippets = args
+            .get("snippets")
+            .and_then(|s| s.as_array())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'snippets' array".to_string(),
+            })?;
 
         let mut written = Vec::new();
         for item in snippets {
-            if let (Some(rel), Some(content)) = (item.get("path").and_then(|p| p.as_str()), item.get("content").and_then(|c| c.as_str())) {
+            if let (Some(rel), Some(content)) = (
+                item.get("path").and_then(|p| p.as_str()),
+                item.get("content").and_then(|c| c.as_str()),
+            ) {
                 let full = resolve_path(&ctx.workspace_root, rel)?;
                 if let Some(parent) = full.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                fs::write(&full, content).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+                fs::write(&full, content).map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
                 written.push(rel.to_string());
             }
         }
@@ -802,8 +975,12 @@ impl Tool for TermigoMultiPasteTool {
 pub struct TermigoCopySelectionTool;
 #[async_trait]
 impl Tool for TermigoCopySelectionTool {
-    fn name(&self) -> &str { "termigo_copy_selection" }
-    fn description(&self) -> &str { "Copy a slice of file lines into the clipboard buffer" }
+    fn name(&self) -> &str {
+        "termigo_copy_selection"
+    }
+    fn description(&self) -> &str {
+        "Copy a slice of file lines into the clipboard buffer"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -815,14 +992,22 @@ impl Tool for TermigoCopySelectionTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let start = args.get("start_line").and_then(|s| s.as_u64()).unwrap_or(1) as usize;
-        let end = args.get("end_line").and_then(|e| e.as_u64()).unwrap_or(usize::MAX as u64) as usize;
+        let end = args
+            .get("end_line")
+            .and_then(|e| e.as_u64())
+            .unwrap_or(usize::MAX as u64) as usize;
 
         let full = resolve_path(&ctx.workspace_root, rel)?;
-        let content = fs::read_to_string(&full).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let content = fs::read_to_string(&full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
         let lines: Vec<&str> = content.lines().collect();
 
         let s_idx = start.saturating_sub(1).min(lines.len());
@@ -840,10 +1025,18 @@ impl Tool for TermigoCopySelectionTool {
 pub struct TermigoPasteBufferHistoryTool;
 #[async_trait]
 impl Tool for TermigoPasteBufferHistoryTool {
-    fn name(&self) -> &str { "termigo_paste_buffer_history" }
-    fn description(&self) -> &str { "Get recent clipboard and paste buffer history" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "termigo_paste_buffer_history"
+    }
+    fn description(&self) -> &str {
+        "Get recent clipboard and paste buffer history"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         Ok(json!({
             "buffers": [
@@ -858,8 +1051,12 @@ impl Tool for TermigoPasteBufferHistoryTool {
 pub struct EditorOpenTool;
 #[async_trait]
 impl Tool for EditorOpenTool {
-    fn name(&self) -> &str { "editor_open" }
-    fn description(&self) -> &str { "Open and focus a file in the desktop code editor at line and column" }
+    fn name(&self) -> &str {
+        "editor_open"
+    }
+    fn description(&self) -> &str {
+        "Open and focus a file in the desktop code editor at line and column"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -871,7 +1068,9 @@ impl Tool for EditorOpenTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let line = args.get("line").and_then(|l| l.as_u64()).unwrap_or(1);
@@ -884,8 +1083,12 @@ impl Tool for EditorOpenTool {
 pub struct EditorRevealTool;
 #[async_trait]
 impl Tool for EditorRevealTool {
-    fn name(&self) -> &str { "editor_reveal" }
-    fn description(&self) -> &str { "Reveal and highlight a file or directory in the workspace file tree" }
+    fn name(&self) -> &str {
+        "editor_reveal"
+    }
+    fn description(&self) -> &str {
+        "Reveal and highlight a file or directory in the workspace file tree"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -895,7 +1098,9 @@ impl Tool for EditorRevealTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let _ = resolve_path(&ctx.workspace_root, rel)?;
@@ -906,8 +1111,12 @@ impl Tool for EditorRevealTool {
 pub struct EditorSaveTool;
 #[async_trait]
 impl Tool for EditorSaveTool {
-    fn name(&self) -> &str { "editor_save" }
-    fn description(&self) -> &str { "Save current active editor buffer to workspace file" }
+    fn name(&self) -> &str {
+        "editor_save"
+    }
+    fn description(&self) -> &str {
+        "Save current active editor buffer to workspace file"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -918,12 +1127,17 @@ impl Tool for EditorSaveTool {
             "required": ["path", "content"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let content = args.get("content").and_then(|c| c.as_str()).unwrap_or("");
         let full = resolve_path(&ctx.workspace_root, rel)?;
-        fs::write(&full, content).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        fs::write(&full, content).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
         Ok(json!({ "path": rel, "status": "saved" }))
     }
 }
@@ -931,8 +1145,12 @@ impl Tool for EditorSaveTool {
 pub struct EditorReloadTool;
 #[async_trait]
 impl Tool for EditorReloadTool {
-    fn name(&self) -> &str { "editor_reload" }
-    fn description(&self) -> &str { "Reload file contents from disk into the editor" }
+    fn name(&self) -> &str {
+        "editor_reload"
+    }
+    fn description(&self) -> &str {
+        "Reload file contents from disk into the editor"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -942,12 +1160,16 @@ impl Tool for EditorReloadTool {
             "required": ["path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let full = resolve_path(&ctx.workspace_root, rel)?;
-        let content = fs::read_to_string(&full).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let content = fs::read_to_string(&full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
         Ok(json!({ "path": rel, "content": content, "status": "reloaded" }))
     }
 }
-

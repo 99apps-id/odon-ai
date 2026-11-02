@@ -24,8 +24,12 @@ fn daemon_base_url() -> String {
 pub struct ArtifactDeleteTool;
 #[async_trait]
 impl Tool for ArtifactDeleteTool {
-    fn name(&self) -> &str { "artifact_delete" }
-    fn description(&self) -> &str { "Delete an artifact by ID" }
+    fn name(&self) -> &str {
+        "artifact_delete"
+    }
+    fn description(&self) -> &str {
+        "Delete an artifact by ID"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -35,7 +39,9 @@ impl Tool for ArtifactDeleteTool {
             "required": ["id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
         if let Some(storage) = &ctx.storage {
@@ -49,8 +55,12 @@ impl Tool for ArtifactDeleteTool {
 pub struct ArtifactExportTool;
 #[async_trait]
 impl Tool for ArtifactExportTool {
-    fn name(&self) -> &str { "artifact_export" }
-    fn description(&self) -> &str { "Export an artifact directly to a workspace file on disk" }
+    fn name(&self) -> &str {
+        "artifact_export"
+    }
+    fn description(&self) -> &str {
+        "Export an artifact directly to a workspace file on disk"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -61,10 +71,18 @@ impl Tool for ArtifactExportTool {
             "required": ["artifact_id", "destination_path"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let art_id = args.get("artifact_id").and_then(|a| a.as_str()).unwrap_or("");
-        let dest = args.get("destination_path").and_then(|d| d.as_str()).unwrap_or("");
+        let art_id = args
+            .get("artifact_id")
+            .and_then(|a| a.as_str())
+            .unwrap_or("");
+        let dest = args
+            .get("destination_path")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
 
         if let Some(storage) = &ctx.storage {
             if let Ok(art) = storage.get_artifact(art_id) {
@@ -74,14 +92,21 @@ impl Tool for ArtifactExportTool {
                 }
                 let text_content = match &art.payload {
                     odon_core::ArtifactPayload::Document { markdown, .. } => markdown.clone(),
-                    odon_core::ArtifactPayload::Code { files, .. } => {
-                        files.iter().map(|f| format!("// {}\n{}\n", f.path, f.content)).collect::<Vec<_>>().join("\n")
-                    }
+                    odon_core::ArtifactPayload::Code { files, .. } => files
+                        .iter()
+                        .map(|f| format!("// {}\n{}\n", f.path, f.content))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                     odon_core::ArtifactPayload::Patch { diff, .. } => diff.clone(),
                     _ => art.summary.clone(),
                 };
-                fs::write(&full, &text_content).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
-                return Ok(json!({ "artifact_id": art_id, "exported_to": dest, "bytes": text_content.len() }));
+                fs::write(&full, &text_content).map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
+                return Ok(
+                    json!({ "artifact_id": art_id, "exported_to": dest, "bytes": text_content.len() }),
+                );
             }
         }
         Ok(json!({ "artifact_id": art_id, "exported_to": dest }))
@@ -92,10 +117,18 @@ impl Tool for ArtifactExportTool {
 pub struct ApprovalListTool;
 #[async_trait]
 impl Tool for ApprovalListTool {
-    fn name(&self) -> &str { "approval_list" }
-    fn description(&self) -> &str { "List currently pending security approval requests requiring authorization" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "approval_list"
+    }
+    fn description(&self) -> &str {
+        "List currently pending security approval requests requiring authorization"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
         let pending = ctx.approval_engine.list_pending().await;
         Ok(json!({ "total": pending.len(), "requests": pending }))
@@ -105,8 +138,12 @@ impl Tool for ApprovalListTool {
 pub struct ApprovalDecideTool;
 #[async_trait]
 impl Tool for ApprovalDecideTool {
-    fn name(&self) -> &str { "approval_decide" }
-    fn description(&self) -> &str { "Submit a decision (approve_once, approve_always, deny) for an approval request" }
+    fn name(&self) -> &str {
+        "approval_decide"
+    }
+    fn description(&self) -> &str {
+        "Submit a decision (approve_once, approve_always, deny) for an approval request"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -118,15 +155,24 @@ impl Tool for ApprovalDecideTool {
             "required": ["id", "decision"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
-        let dec_str = args.get("decision").and_then(|d| d.as_str()).unwrap_or("approved");
+        let dec_str = args
+            .get("decision")
+            .and_then(|d| d.as_str())
+            .unwrap_or("approved");
         let dec = match dec_str.to_ascii_lowercase().as_str() {
             "approved" | "approve_once" => ApprovalDecision::Approved,
             "approved_always" | "approve_always" => ApprovalDecision::ApprovedAlways,
             _ => ApprovalDecision::Rejected {
-                reason: args.get("reason").and_then(|r| r.as_str()).unwrap_or("Denied").to_string(),
+                reason: args
+                    .get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("Denied")
+                    .to_string(),
             },
         };
         let resolved = ctx.approval_engine.submit_decision(id, dec).await;
@@ -138,13 +184,24 @@ impl Tool for ApprovalDecideTool {
 pub struct SessionListTool;
 #[async_trait]
 impl Tool for SessionListTool {
-    fn name(&self) -> &str { "session_list" }
-    fn description(&self) -> &str { "List active and historical conversation sessions" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "session_list"
+    }
+    fn description(&self) -> &str {
+        "List active and historical conversation sessions"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
         if let Some(storage) = &ctx.storage {
-            let list = storage.list_sessions().map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+            let list = storage.list_sessions().map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
             return Ok(json!({ "sessions": list }));
         }
         Ok(json!({ "sessions": [] }))
@@ -154,8 +211,12 @@ impl Tool for SessionListTool {
 pub struct SessionExportTool;
 #[async_trait]
 impl Tool for SessionExportTool {
-    fn name(&self) -> &str { "session_export" }
-    fn description(&self) -> &str { "Export complete session transcript and artifacts as JSON or Markdown" }
+    fn name(&self) -> &str {
+        "session_export"
+    }
+    fn description(&self) -> &str {
+        "Export complete session transcript and artifacts as JSON or Markdown"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -165,17 +226,29 @@ impl Tool for SessionExportTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let s_id = args.get("session_id").and_then(|s| s.as_str()).unwrap_or(&ctx.session_id);
-        let fmt = args.get("format").and_then(|f| f.as_str()).unwrap_or("markdown");
+        let s_id = args
+            .get("session_id")
+            .and_then(|s| s.as_str())
+            .unwrap_or(&ctx.session_id);
+        let fmt = args
+            .get("format")
+            .and_then(|f| f.as_str())
+            .unwrap_or("markdown");
 
         if let Some(storage) = &ctx.storage {
             let msgs = storage.list_messages(s_id).unwrap_or_default();
             if fmt == "json" {
                 return Ok(json!({ "session_id": s_id, "messages": msgs }));
             } else {
-                let md = msgs.into_iter().map(|m| format!("### {:?}\n\n{}\n", m.role, m.content.text)).collect::<Vec<_>>().join("\n---\n\n");
+                let md = msgs
+                    .into_iter()
+                    .map(|m| format!("### {:?}\n\n{}\n", m.role, m.content.text))
+                    .collect::<Vec<_>>()
+                    .join("\n---\n\n");
                 return Ok(json!({ "session_id": s_id, "markdown": md }));
             }
         }
@@ -186,8 +259,12 @@ impl Tool for SessionExportTool {
 pub struct SessionSwitchTool;
 #[async_trait]
 impl Tool for SessionSwitchTool {
-    fn name(&self) -> &str { "session_switch" }
-    fn description(&self) -> &str { "Switch context to a different existing conversation session by ID" }
+    fn name(&self) -> &str {
+        "session_switch"
+    }
+    fn description(&self) -> &str {
+        "Switch context to a different existing conversation session by ID"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -197,16 +274,24 @@ impl Tool for SessionSwitchTool {
             "required": ["session_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     fn availability(&self) -> crate::registry::ToolAvailability {
         crate::registry::ToolAvailability::Unavailable {
             reason: "Session switching must be performed by the agent runtime; a tool call cannot mutate its immutable execution context".to_string(),
         }
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let s_id = args.get("session_id").and_then(|s| s.as_str()).unwrap_or("");
+        let s_id = args
+            .get("session_id")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
         if s_id.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "session_id is required".into() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "session_id is required".into(),
+            });
         }
 
         if let Some(storage) = &ctx.storage {
@@ -231,10 +316,18 @@ impl Tool for SessionSwitchTool {
 pub struct RelayStatusTool;
 #[async_trait]
 impl Tool for RelayStatusTool {
-    fn name(&self) -> &str { "relay_status" }
-    fn description(&self) -> &str { "Inspect multichannel headless relay statuses (Telegram, WhatsApp, Slack)" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "relay_status"
+    }
+    fn description(&self) -> &str {
+        "Inspect multichannel headless relay statuses (Telegram, WhatsApp, Slack)"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let env_present = |name: &str| {
             std::env::var(name)
@@ -268,10 +361,18 @@ impl Tool for RelayStatusTool {
 pub struct AutomationListTool;
 #[async_trait]
 impl Tool for AutomationListTool {
-    fn name(&self) -> &str { "automation_list" }
-    fn description(&self) -> &str { "List all scheduled background automations and recurring workflows" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "automation_list"
+    }
+    fn description(&self) -> &str {
+        "List all scheduled background automations and recurring workflows"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let path = odon_home().join(".odon").join("automations.json");
         let automations: Value = fs::read_to_string(&path)
@@ -285,8 +386,12 @@ impl Tool for AutomationListTool {
 pub struct AutomationTriggerTool;
 #[async_trait]
 impl Tool for AutomationTriggerTool {
-    fn name(&self) -> &str { "automation_trigger" }
-    fn description(&self) -> &str { "Trigger immediate execution of an automation workflow by ID" }
+    fn name(&self) -> &str {
+        "automation_trigger"
+    }
+    fn description(&self) -> &str {
+        "Trigger immediate execution of an automation workflow by ID"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -296,7 +401,9 @@ impl Tool for AutomationTriggerTool {
             "required": ["id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
         if id.is_empty() {
@@ -307,7 +414,11 @@ impl Tool for AutomationTriggerTool {
         }
         // Automations are owned by the daemon; trigger the real endpoint so
         // this tool reflects actual execution instead of pretending.
-        let url = format!("{}/api/automations/{}/trigger", daemon_base_url().trim_end_matches('/'), id);
+        let url = format!(
+            "{}/api/automations/{}/trigger",
+            daemon_base_url().trim_end_matches('/'),
+            id
+        );
         let resp = reqwest::Client::new()
             .post(&url)
             .timeout(std::time::Duration::from_secs(10))
@@ -327,8 +438,12 @@ impl Tool for AutomationTriggerTool {
 pub struct McpAddServerTool;
 #[async_trait]
 impl Tool for McpAddServerTool {
-    fn name(&self) -> &str { "mcp_add_server" }
-    fn description(&self) -> &str { "Register a new external MCP server (stdio or sse)" }
+    fn name(&self) -> &str {
+        "mcp_add_server"
+    }
+    fn description(&self) -> &str {
+        "Register a new external MCP server (stdio or sse)"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -343,12 +458,20 @@ impl Tool for McpAddServerTool {
             "required": ["id", "name", "transport"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("custom");
         let name = args.get("name").and_then(|n| n.as_str()).unwrap_or(id);
-        let transport = args.get("transport").and_then(|t| t.as_str()).unwrap_or("stdio");
-        let command = args.get("command").and_then(|c| c.as_str()).map(String::from);
+        let transport = args
+            .get("transport")
+            .and_then(|t| t.as_str())
+            .unwrap_or("stdio");
+        let command = args
+            .get("command")
+            .and_then(|c| c.as_str())
+            .map(String::from);
         let url = args.get("url").and_then(|u| u.as_str()).map(String::from);
         let server_args = args.get("args").and_then(|a| a.as_array()).map(|items| {
             items
@@ -383,10 +506,18 @@ impl Tool for McpAddServerTool {
 pub struct McpListServersTool;
 #[async_trait]
 impl Tool for McpListServersTool {
-    fn name(&self) -> &str { "mcp_list_servers" }
-    fn description(&self) -> &str { "List all configured external MCP servers and their connection statuses" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "mcp_list_servers"
+    }
+    fn description(&self) -> &str {
+        "List all configured external MCP servers and their connection statuses"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let servers = crate::mcp::load_mcp_servers();
         Ok(json!({ "servers": servers }))
@@ -397,10 +528,18 @@ impl Tool for McpListServersTool {
 pub struct SettingsGetTool;
 #[async_trait]
 impl Tool for SettingsGetTool {
-    fn name(&self) -> &str { "settings_get" }
-    fn description(&self) -> &str { "Get current agent execution settings, mode, and security policy" }
-    fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn name(&self) -> &str {
+        "settings_get"
+    }
+    fn description(&self) -> &str {
+        "Get current agent execution settings, mode, and security policy"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
         let policy = ctx.approval_engine.get_policy().await;
         Ok(json!({
@@ -413,8 +552,12 @@ impl Tool for SettingsGetTool {
 pub struct SettingsSetTool;
 #[async_trait]
 impl Tool for SettingsSetTool {
-    fn name(&self) -> &str { "settings_set" }
-    fn description(&self) -> &str { "Update agent execution mode (autonomous, supervised, locked)" }
+    fn name(&self) -> &str {
+        "settings_set"
+    }
+    fn description(&self) -> &str {
+        "Update agent execution mode (autonomous, supervised, locked)"
+    }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -424,9 +567,14 @@ impl Tool for SettingsSetTool {
             "required": ["mode"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let mode_str = args.get("mode").and_then(|m| m.as_str()).unwrap_or("autonomous");
+        let mode_str = args
+            .get("mode")
+            .and_then(|m| m.as_str())
+            .unwrap_or("autonomous");
         let mode = match mode_str.to_lowercase().as_str() {
             "supervised" => odon_security::ExecutionMode::Supervised,
             "locked" => odon_security::ExecutionMode::Locked,

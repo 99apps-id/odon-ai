@@ -24,10 +24,7 @@ impl ChannelAdapter for CliChannel {
         "cli"
     }
 
-    async fn start(
-        &self,
-        _incoming_tx: mpsc::Sender<IncomingChannelMessage>,
-    ) -> Result<()> {
+    async fn start(&self, _incoming_tx: mpsc::Sender<IncomingChannelMessage>) -> Result<()> {
         // CLI interactive loop is controlled directly by the `odon chat` subcommand
         Ok(())
     }
@@ -61,7 +58,11 @@ impl ChannelAdapter for CliChannel {
                     artifact.title, artifact.kind, artifact.summary
                 );
             }
-            AgentEvent::ApprovalRequested { tool_name, description, .. } => {
+            AgentEvent::ApprovalRequested {
+                tool_name,
+                description,
+                ..
+            } => {
                 println!(
                     "\n\x1b[33m⚠ Approval required for: {} ({})\x1b[0m",
                     tool_name, description

@@ -29,12 +29,13 @@ impl Tool for ShellExecTool {
         RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let cmd_str = args.get("command").and_then(|c| c.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let cmd_str = args
+            .get("command")
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'command' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         // Defense-in-depth: refuse catastrophic commands even if a caller
         // bypasses ToolRegistry.
@@ -132,4 +133,3 @@ impl Tool for TerminalExecTool {
         ShellExecTool.execute(ctx, args).await
     }
 }
-

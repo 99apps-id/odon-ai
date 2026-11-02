@@ -77,9 +77,12 @@ fn looks_like_text_file(name: &str, mime: &str) -> bool {
         return true;
     }
     let lower = name.to_lowercase();
-    [".txt", ".md", ".json", ".csv", ".yaml", ".yml", ".py", ".rs", ".ts", ".js", ".html", ".css", ".sh", ".sql"]
-        .iter()
-        .any(|ext| lower.ends_with(ext))
+    [
+        ".txt", ".md", ".json", ".csv", ".yaml", ".yml", ".py", ".rs", ".ts", ".js", ".html",
+        ".css", ".sh", ".sql",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(ext))
 }
 
 impl Default for WhatsAppChannel {
@@ -92,8 +95,12 @@ impl WhatsAppChannel {
     pub fn new(access_token: Option<String>, phone_number_id: Option<String>) -> Self {
         let api_version =
             std::env::var("WHATSAPP_API_VERSION").unwrap_or_else(|_| "v21.0".to_string());
-        let verify_token = std::env::var("WHATSAPP_VERIFY_TOKEN").ok().filter(|v| !v.is_empty());
-        let app_secret = std::env::var("WHATSAPP_APP_SECRET").ok().filter(|v| !v.is_empty());
+        let verify_token = std::env::var("WHATSAPP_VERIFY_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty());
+        let app_secret = std::env::var("WHATSAPP_APP_SECRET")
+            .ok()
+            .filter(|v| !v.is_empty());
         let allowed_numbers = std::env::var("WHATSAPP_ALLOWED_NUMBERS")
             .ok()
             .map(|value| {
@@ -166,12 +173,16 @@ impl WhatsAppChannel {
         };
         let recipient = clean_recipient(to);
         if recipient.is_empty() {
-            return Err(OdonError::Channel(format!("Invalid WhatsApp recipient: {to}")));
+            return Err(OdonError::Channel(format!(
+                "Invalid WhatsApp recipient: {to}"
+            )));
         }
 
         for chunk in split_message(text, MAX_MESSAGE) {
-            let url =
-                format!("https://graph.facebook.com/{}/{}/messages", self.api_version, phone_id);
+            let url = format!(
+                "https://graph.facebook.com/{}/{}/messages",
+                self.api_version, phone_id
+            );
             let resp = self
                 .client
                 .post(&url)
@@ -201,7 +212,10 @@ impl WhatsAppChannel {
 
     async fn download_media(&self, media_id: &str) -> Option<(Vec<u8>, String)> {
         let token = self.access_token.as_ref()?;
-        let meta_url = format!("https://graph.facebook.com/{}/{}", self.api_version, media_id);
+        let meta_url = format!(
+            "https://graph.facebook.com/{}/{}",
+            self.api_version, media_id
+        );
         let meta = self
             .client
             .get(&meta_url)
@@ -221,13 +235,7 @@ impl WhatsAppChannel {
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let resp = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .send()
-            .await
-            .ok()?;
+        let resp = self.client.get(url).bearer_auth(token).send().await.ok()?;
         if !resp.status().is_success() {
             warn!("WhatsApp media download failed: HTTP {}", resp.status());
             return None;
@@ -248,7 +256,9 @@ impl WhatsAppChannel {
         let mut attachments = Vec::new();
 
         for kind in ["image", "document"] {
-            let Some(media) = message.get(kind) else { continue };
+            let Some(media) = message.get(kind) else {
+                continue;
+            };
             let Some(media_id) = media.get("id").and_then(|i| i.as_str()) else {
                 continue;
             };
@@ -261,7 +271,13 @@ impl WhatsAppChannel {
             let file_name = media
                 .get("filename")
                 .and_then(|f| f.as_str())
-                .unwrap_or_else(|| if kind == "image" { "whatsapp-image.jpg" } else { "whatsapp-document" })
+                .unwrap_or_else(|| {
+                    if kind == "image" {
+                        "whatsapp-image.jpg"
+                    } else {
+                        "whatsapp-document"
+                    }
+                })
                 .to_string();
 
             if mime.starts_with("image/") || mime == "application/pdf" {
@@ -311,7 +327,9 @@ impl WhatsAppChannel {
                 continue;
             };
             for change in changes {
-                let Some(value) = change.get("value") else { continue };
+                let Some(value) = change.get("value") else {
+                    continue;
+                };
                 if value.get("messaging_product").and_then(|m| m.as_str()) != Some("whatsapp") {
                     continue;
                 }
@@ -372,10 +390,7 @@ impl ChannelAdapter for WhatsAppChannel {
         "whatsapp"
     }
 
-    async fn start(
-        &self,
-        _incoming_tx: mpsc::Sender<IncomingChannelMessage>,
-    ) -> Result<()> {
+    async fn start(&self, _incoming_tx: mpsc::Sender<IncomingChannelMessage>) -> Result<()> {
         if !self.is_configured() {
             info!(
                 "WhatsApp relay disabled (set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID)"

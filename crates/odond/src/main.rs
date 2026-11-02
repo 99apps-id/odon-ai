@@ -1,12 +1,11 @@
 #![recursion_limit = "512"]
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use axum::{
+    extract::Request,
     extract::{
         ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    extract::Request,
     http::{header, HeaderMap, HeaderName, Method, StatusCode},
     middleware::{self, Next},
     response::{
@@ -20,11 +19,12 @@ use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
 use clap::{Parser, Subcommand};
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 // tokio::io
@@ -80,13 +80,12 @@ enum Commands {
     },
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationJob {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub trigger_type: String, // "interval", "cron", "on_commit", "manual"
+    pub trigger_type: String,  // "interval", "cron", "on_commit", "manual"
     pub trigger_value: String, // e.g. "Every 2 hours", "0 8 * * *", "15m"
     pub prompt: String,
     pub model: String,
@@ -187,7 +186,10 @@ fn user_home() -> PathBuf {
 
 fn expand_home(raw: &str) -> String {
     let trimmed = raw.trim();
-    if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("~/")
+        .or_else(|| trimmed.strip_prefix("~\\"))
+    {
         return user_home().join(rest).to_string_lossy().to_string();
     }
     if trimmed == "~" {
@@ -258,15 +260,18 @@ fn workspace_allowed(config: &WorkspaceConfig, path: &str) -> bool {
 }
 
 fn load_workspace_config(default_workspace: &str) -> WorkspaceConfig {
-    let default = canonical_workspace(default_workspace)
-        .unwrap_or_else(|_| expand_home(default_workspace));
+    let default =
+        canonical_workspace(default_workspace).unwrap_or_else(|_| expand_home(default_workspace));
     let mut allowed = Vec::new();
     if let Ok(data) = std::fs::read_to_string(get_workspaces_path()) {
         if let Ok(saved) = serde_json::from_str::<WorkspaceConfig>(&data) {
             allowed = saved.allowed;
         }
     }
-    if !allowed.iter().any(|item| item.eq_ignore_ascii_case(&default)) {
+    if !allowed
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(&default))
+    {
         allowed.push(default.clone());
     }
     WorkspaceConfig { default, allowed }
@@ -583,9 +588,8 @@ impl WhatsAppBridge {
             }) else {
                 return false;
             };
-            let query = format!(
-                "(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
-            );
+            let query =
+                format!("(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine");
             let Ok(process) = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", &query])
                 .output()
@@ -692,7 +696,8 @@ impl WhatsAppBridge {
         self.stop();
 
         let script = self.script.clone().ok_or_else(|| {
-            "WhatsApp bridge script not found. Expected scripts/whatsapp-bridge/index.mjs".to_string()
+            "WhatsApp bridge script not found. Expected scripts/whatsapp-bridge/index.mjs"
+                .to_string()
         })?;
         if !script.exists() {
             return Err(format!(
@@ -721,10 +726,7 @@ impl WhatsAppBridge {
             .env("WA_AUTH_DIR", &self.auth_dir)
             .env("WA_BRIDGE_TOKEN", &self.token)
             .env("ODON_DAEMON_URL", &self.daemon_url)
-            .env(
-                "WA_ALLOWED_NUMBERS",
-                allowed_numbers.join(","),
-            )
+            .env("WA_ALLOWED_NUMBERS", allowed_numbers.join(","))
             .env("WA_ALLOW_ANYONE", if allow_anyone { "1" } else { "0" })
             .env("WA_BRIDGE_LOG_LEVEL", "silent")
             .stdout(std::process::Stdio::from(log))
@@ -742,9 +744,9 @@ impl WhatsAppBridge {
             command.creation_flags(0x08000000);
         }
 
-        let child = command
-            .spawn()
-            .map_err(|error| format!("Failed to start the WhatsApp bridge (Node.js required): {error}"))?;
+        let child = command.spawn().map_err(|error| {
+            format!("Failed to start the WhatsApp bridge (Node.js required): {error}")
+        })?;
         *self.child.child.lock().unwrap() = Some(child);
         *self.spawned.lock().unwrap() = Some(desired);
 
@@ -891,7 +893,10 @@ fn build_oauth_provider(
             token.account_id.clone(),
             None,
         ))),
-        "muse" => Some(Arc::new(MuseProvider::new(token.access_token.clone(), None))),
+        "muse" => Some(Arc::new(MuseProvider::new(
+            token.access_token.clone(),
+            None,
+        ))),
         "antigravity" => Some(Arc::new(odon_provider::AntigravityProvider::new(
             token.access_token.clone(),
             token.account_id.clone(),
@@ -1099,7 +1104,12 @@ async fn run_automation_job(state: AppState, job: AutomationJob) {
 
     for attempt in 1..=max_attempts {
         attempts = attempt;
-        let session_id = format!("auto_{}_{}_{}", job.id, Utc::now().timestamp_millis(), attempt);
+        let session_id = format!(
+            "auto_{}_{}_{}",
+            job.id,
+            Utc::now().timestamp_millis(),
+            attempt
+        );
         let cancel = tokio_util::sync::CancellationToken::new();
         match state
             .runtime
@@ -1250,7 +1260,9 @@ struct AppState {
 /// are never logged.
 fn load_dotenv_files() {
     for name in [".env.local", ".env"] {
-        let Ok(text) = std::fs::read_to_string(name) else { continue };
+        let Ok(text) = std::fs::read_to_string(name) else {
+            continue;
+        };
         // Tolerate a UTF-8 BOM (Windows editors/PowerShell add one), which would
         // otherwise corrupt the first key.
         let text = text.trim_start_matches('\u{feff}');
@@ -1259,7 +1271,9 @@ fn load_dotenv_files() {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let Some((key, value)) = line.split_once('=') else { continue };
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
             let key = key.trim();
             let value = value.trim().trim_matches('"').trim_matches('\'');
             if key.is_empty() || value.is_empty() || std::env::var_os(key).is_some() {
@@ -1326,7 +1340,10 @@ async fn main() -> anyhow::Result<()> {
         } => {
             println!("====================================================");
             println!("   ODON Daemon (odond) - Starting Services");
-            println!("   Open Digital Orchestration Network v{}", env!("CARGO_PKG_VERSION"));
+            println!(
+                "   Open Digital Orchestration Network v{}",
+                env!("CARGO_PKG_VERSION")
+            );
             println!("====================================================");
             info!("Workspace root: {}", workspace);
 
@@ -1340,7 +1357,6 @@ async fn main() -> anyhow::Result<()> {
             let policy = SecurityPolicy::default();
             let approval = Arc::new(ApprovalEngine::new(policy).with_events(event_tx.clone()));
             let audit = Arc::new(AuditLogger::new());
-
 
             // 4. Tools Registry
             let tools = Arc::new(odon_tools::build_full_tool_registry());
@@ -1368,7 +1384,9 @@ async fn main() -> anyhow::Result<()> {
             let bind_host = if let Some(rest) = bind.strip_prefix('[') {
                 rest.split(']').next().unwrap_or("")
             } else {
-                bind.rsplit_once(':').map(|(host, _)| host).unwrap_or(bind.as_str())
+                bind.rsplit_once(':')
+                    .map(|(host, _)| host)
+                    .unwrap_or(bind.as_str())
             };
             let is_loopback = matches!(bind_host, "127.0.0.1" | "localhost" | "::1");
             if !is_loopback && api_token.is_none() {
@@ -1532,7 +1550,8 @@ async fn main() -> anyhow::Result<()> {
                             }
                             Err(e) => format!("⚠️ ODON error: {e}"),
                         };
-                        let delivered: std::result::Result<(), String> = match msg.channel.as_str() {
+                        let delivered: std::result::Result<(), String> = match msg.channel.as_str()
+                        {
                             "telegram" => {
                                 let relay = tg_handle.read().await.clone();
                                 match relay {
@@ -1585,9 +1604,8 @@ async fn main() -> anyhow::Result<()> {
             }
             save_automations_to_disk(&loaded_automations);
             let automations = Arc::new(tokio::sync::RwLock::new(loaded_automations));
-            let automation_logs = Arc::new(tokio::sync::RwLock::new(
-                load_automation_logs_from_disk(),
-            ));
+            let automation_logs =
+                Arc::new(tokio::sync::RwLock::new(load_automation_logs_from_disk()));
 
             let workspace_config = load_workspace_config(&workspace);
             let workspace_default = workspace_config.default.clone();
@@ -1667,39 +1685,77 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/status", get(get_status))
                 .route("/api/metrics", get(get_metrics))
                 .route("/api/sessions", get(list_sessions).post(create_session))
-                .route("/api/sessions/{id}", get(get_session).delete(delete_session))
-                .route("/api/sessions/{id}/messages", get(list_messages).post(send_message))
+                .route(
+                    "/api/sessions/{id}",
+                    get(get_session).delete(delete_session),
+                )
+                .route(
+                    "/api/sessions/{id}/messages",
+                    get(list_messages).post(send_message),
+                )
                 .route("/api/sessions/{id}/cancel", post(cancel_turn))
                 .route("/api/sessions/{id}/steer", post(steer_turn))
                 .route("/api/sessions/{id}/workspace", post(set_session_workspace))
                 .route("/api/sessions/{id}/artifacts", get(list_session_artifacts))
-                .route("/api/workspaces", get(list_workspaces).post(add_workspace).delete(remove_workspace))
+                .route(
+                    "/api/workspaces",
+                    get(list_workspaces)
+                        .post(add_workspace)
+                        .delete(remove_workspace),
+                )
                 .route("/api/workspaces/browse", get(browse_workspaces))
                 .route("/api/artifacts/{id}", get(get_artifact))
                 .route("/api/memory", get(list_agent_memories))
-                .route("/api/memory/{*key}", axum::routing::delete(delete_agent_memory))
+                .route(
+                    "/api/memory/{*key}",
+                    axum::routing::delete(delete_agent_memory),
+                )
                 .route("/api/tools", get(list_tools))
                 .route("/api/approvals", get(list_approvals))
                 .route("/api/approvals/{id}", post(resolve_approval))
                 .route("/api/approvals/history", get(get_approval_history))
                 .route("/api/approvals/policies", get(get_approval_policies))
-                .route("/api/approvals/policies/{*key}", axum::routing::delete(delete_approval_policy))
-                .route("/api/mcp/servers", get(get_mcp_servers).post(save_mcp_server))
-                .route("/api/mcp/servers/{id}", axum::routing::delete(delete_mcp_server))
+                .route(
+                    "/api/approvals/policies/{*key}",
+                    axum::routing::delete(delete_approval_policy),
+                )
+                .route(
+                    "/api/mcp/servers",
+                    get(get_mcp_servers).post(save_mcp_server),
+                )
+                .route(
+                    "/api/mcp/servers/{id}",
+                    axum::routing::delete(delete_mcp_server),
+                )
                 .route("/api/mcp/servers/{id}/toggle", post(toggle_mcp_server))
                 .route("/api/github/status", get(get_github_status))
                 .route("/api/github/user-repos", get(get_github_user_repos))
                 .route("/api/github/prs", get(get_github_prs))
-                .route("/api/github/issues", get(get_github_issues).post(create_github_issue))
-                .route("/api/automations", get(get_automations).post(save_automation))
-                .route("/api/automations/{id}", axum::routing::delete(delete_automation))
+                .route(
+                    "/api/github/issues",
+                    get(get_github_issues).post(create_github_issue),
+                )
+                .route(
+                    "/api/automations",
+                    get(get_automations).post(save_automation),
+                )
+                .route(
+                    "/api/automations/{id}",
+                    axum::routing::delete(delete_automation),
+                )
                 .route("/api/automations/{id}/trigger", post(trigger_automation))
                 .route("/api/automations/logs", get(get_automation_logs))
                 .route("/api/settings", get(get_settings).post(update_settings))
                 .route("/api/models", get(get_models))
                 .route("/api/browser/read", get(browser_read_page))
-                .route("/api/providers/config", get(get_provider_configs).post(save_provider_config))
-                .route("/api/providers/config/{provider_id}", axum::routing::delete(delete_provider_config))
+                .route(
+                    "/api/providers/config",
+                    get(get_provider_configs).post(save_provider_config),
+                )
+                .route(
+                    "/api/providers/config/{provider_id}",
+                    axum::routing::delete(delete_provider_config),
+                )
                 .route("/api/providers/test", post(test_provider))
                 .route("/api/oauth/accounts", get(get_oauth_accounts))
                 .route("/api/oauth/login", post(login_oauth))
@@ -1742,13 +1798,22 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/fs/mkdir", post(fs_mkdir))
                 .route("/api/fs/delete", axum::routing::delete(fs_delete_path))
                 // SSH Remote APIs
-                .route("/api/ssh/profiles", get(get_ssh_profiles).post(save_ssh_profile))
-                .route("/api/ssh/profiles/{id}", axum::routing::delete(delete_ssh_profile))
+                .route(
+                    "/api/ssh/profiles",
+                    get(get_ssh_profiles).post(save_ssh_profile),
+                )
+                .route(
+                    "/api/ssh/profiles/{id}",
+                    axum::routing::delete(delete_ssh_profile),
+                )
                 .route("/api/ssh/exec", post(exec_ssh_command))
                 .route("/api/ssh/certificates/import", post(import_ssh_certificate))
                 // Skills APIs
                 .route("/api/skills", get(get_skills_list).post(save_skill_item))
-                .route("/api/skills/{name}", axum::routing::delete(delete_skill_item));
+                .route(
+                    "/api/skills/{name}",
+                    axum::routing::delete(delete_skill_item),
+                );
 
             let dist_path = std::path::Path::new("desktop/dist");
             if dist_path.exists() {
@@ -1760,7 +1825,10 @@ async fn main() -> anyhow::Result<()> {
             let app = app
                 .layer(cors)
                 .with_state(state)
-                .layer(middleware::from_fn_with_state(auth_state, require_api_token));
+                .layer(middleware::from_fn_with_state(
+                    auth_state,
+                    require_api_token,
+                ));
 
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("\n✔ ODON HTTP & SSE Server listening on: http://{}", bind);
@@ -1813,7 +1881,11 @@ async fn require_api_token(
     let query_ok = req
         .uri()
         .query()
-        .map(|query| query.split('&').any(|pair| pair == format!("token={expected}")))
+        .map(|query| {
+            query
+                .split('&')
+                .any(|pair| pair == format!("token={expected}"))
+        })
         .unwrap_or(false);
 
     if bearer_ok || header_ok || query_ok {
@@ -1842,7 +1914,11 @@ async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
-    let sessions = state.storage.list_sessions().map(|items| items.len()).unwrap_or(0);
+    let sessions = state
+        .storage
+        .list_sessions()
+        .map(|items| items.len())
+        .unwrap_or(0);
     let provider_configs = state
         .storage
         .list_provider_configs()
@@ -1922,7 +1998,10 @@ async fn whatsapp_webhook(
     };
     let Some(secret) = app_secret else {
         tracing::error!("Rejected WhatsApp webhook because WHATSAPP_APP_SECRET is not configured");
-        return (StatusCode::SERVICE_UNAVAILABLE, "Webhook signing is not configured")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Webhook signing is not configured",
+        )
             .into_response();
     };
     let signature = headers
@@ -2001,7 +2080,10 @@ fn verify_meta_signature(secret: &str, body: &[u8], header: &str) -> bool {
 async fn list_sessions(State(state): State<AppState>) -> impl IntoResponse {
     match state.storage.list_sessions() {
         Ok(sessions) => (StatusCode::OK, Json(json!(sessions))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2036,7 +2118,9 @@ async fn create_session(
                 if !workspace_allowed(&config, &path) {
                     return (
                         StatusCode::FORBIDDEN,
-                        Json(json!({ "error": "Workspace is not in the allowlist. Add it from the composer first." })),
+                        Json(
+                            json!({ "error": "Workspace is not in the allowlist. Add it from the composer first." }),
+                        ),
                     );
                 }
                 Some(path)
@@ -2052,7 +2136,10 @@ async fn create_session(
     session.workspace_root = workspace_root;
     match state.storage.save_session(&session) {
         Ok(_) => (StatusCode::CREATED, Json(json!(session))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2070,7 +2157,12 @@ async fn set_session_workspace(
 ) -> impl IntoResponse {
     let mut session = match state.storage.get_session(&id) {
         Ok(session) => session,
-        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({ "error": e.to_string() }))),
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": e.to_string() })),
+            )
+        }
     };
 
     session.workspace_root = match req.path.filter(|p| !p.trim().is_empty()) {
@@ -2093,7 +2185,10 @@ async fn set_session_workspace(
 
     match state.storage.save_session(&session) {
         Ok(_) => (StatusCode::OK, Json(json!(session))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2119,7 +2214,11 @@ async fn add_workspace(
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))),
     };
     let mut config = state.workspaces.write().await;
-    if !config.allowed.iter().any(|item| item.eq_ignore_ascii_case(&path)) {
+    if !config
+        .allowed
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(&path))
+    {
         config.allowed.push(path.clone());
     }
     save_workspace_config(&config);
@@ -2260,21 +2359,24 @@ async fn browse_workspaces(
     )
 }
 
-async fn get_session(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn get_session(Path(id): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
     match state.storage.get_session(&id) {
         Ok(session) => {
             let messages = state.storage.list_messages(&id).unwrap_or_default();
             let artifacts = state.storage.list_artifacts(&id).unwrap_or_default();
-            (StatusCode::OK, Json(json!({
-                "session": session,
-                "messages": messages,
-                "artifacts": artifacts
-            })))
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "session": session,
+                    "messages": messages,
+                    "artifacts": artifacts
+                })),
+            )
         }
-        Err(e) => (StatusCode::NOT_FOUND, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2283,8 +2385,14 @@ async fn delete_session(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     match state.storage.delete_session(&id) {
-        Ok(deleted) => (StatusCode::OK, Json(json!({ "deleted": deleted, "id": id }))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Ok(deleted) => (
+            StatusCode::OK,
+            Json(json!({ "deleted": deleted, "id": id })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2294,7 +2402,10 @@ async fn list_messages(
 ) -> impl IntoResponse {
     match state.storage.list_messages(&session_id) {
         Ok(messages) => (StatusCode::OK, Json(json!(messages))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2476,11 +2587,7 @@ async fn steer_turn(
 
 fn mask_secret(secret: &str) -> String {
     if secret.len() > 8 {
-        format!(
-            "{}...{}",
-            &secret[..4],
-            &secret[secret.len() - 4..]
-        )
+        format!("{}...{}", &secret[..4], &secret[secret.len() - 4..])
     } else if secret.is_empty() {
         String::new()
     } else {
@@ -2654,10 +2761,7 @@ async fn start_whatsapp_bridge(
             save_relay_config(&config);
             (StatusCode::OK, Json(status))
         }
-        Err(error) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": error })),
-        ),
+        Err(error) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": error }))),
     }
 }
 
@@ -2709,12 +2813,7 @@ async fn whatsapp_bridge_inbound(
                 Json(json!({ "error": "WhatsApp Web relay is not configured" })),
             );
         };
-        if !web.allow_anyone
-            && !web
-                .allowed_numbers
-                .iter()
-                .any(|number| number == &digits)
-        {
+        if !web.allow_anyone && !web.allowed_numbers.iter().any(|number| number == &digits) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({ "error": "Sender is not in WHATSAPP_ALLOWED_NUMBERS" })),
@@ -2844,17 +2943,20 @@ async fn list_session_artifacts(
 ) -> impl IntoResponse {
     match state.storage.list_artifacts(&session_id) {
         Ok(artifacts) => (StatusCode::OK, Json(json!(artifacts))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
-async fn get_artifact(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn get_artifact(Path(id): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
     match state.storage.get_artifact(&id) {
         Ok(artifact) => (StatusCode::OK, Json(json!(artifact))),
-        Err(e) => (StatusCode::NOT_FOUND, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -2899,7 +3001,9 @@ async fn resolve_approval(
         "approved" | "approve_once" => ApprovalDecision::Approved,
         "approved_always" | "approve_always" => ApprovalDecision::ApprovedAlways,
         _ => ApprovalDecision::Rejected {
-            reason: req.reason.unwrap_or_else(|| "User rejected action".to_string()),
+            reason: req
+                .reason
+                .unwrap_or_else(|| "User rejected action".to_string()),
         },
     };
 
@@ -3066,20 +3170,21 @@ async fn execute_terminal(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    let execution = match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
-        Ok(result) => result,
-        Err(_) => {
-            return (
-                StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({
-                    "exit_code": -1,
-                    "stdout": "",
-                    "stderr": "Process execution timed out after 120 seconds",
-                    "success": false
-                })),
-            );
-        }
-    };
+    let execution =
+        match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+            Ok(result) => result,
+            Err(_) => {
+                return (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({
+                        "exit_code": -1,
+                        "stdout": "",
+                        "stderr": "Process execution timed out after 120 seconds",
+                        "success": false
+                    })),
+                );
+            }
+        };
     let output = match execution {
         Ok(output) => output,
         Err(e) => {
@@ -3112,12 +3217,13 @@ async fn execute_terminal(
         if truncated {
             capped_stderr.push_str("\n[ODON] output capped at 1 MB");
         }
-                let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+        let exit_code = output
+            .status
+            .code()
+            .unwrap_or(if output.status.success() { 0 } else { 1 });
 
         return (
-
             StatusCode::OK,
-
             Json(json!({
 
                 "exit_code": exit_code,
@@ -3129,11 +3235,12 @@ async fn execute_terminal(
                 "success": output.status.success()
 
             })),
-
         );
-
     }
-    let exit_code = output.status.code().unwrap_or(if output.status.success() { 0 } else { 1 });
+    let exit_code = output
+        .status
+        .code()
+        .unwrap_or(if output.status.success() { 0 } else { 1 });
 
     let mut updated_cwd = final_dir;
     let mut cleaned_stdout = full_stdout;
@@ -3208,7 +3315,9 @@ async fn init_providers(
             token.access_token.clone(),
             Some("github-copilot"),
         ));
-        runtime.register_provider("github-copilot", prov.clone(), true).await;
+        runtime
+            .register_provider("github-copilot", prov.clone(), true)
+            .await;
         runtime.register_provider("default", prov, true).await;
         has_default = true;
 
@@ -3233,7 +3342,9 @@ async fn init_providers(
             token.account_id.clone(),
             None,
         ));
-        runtime.register_provider("antigravity", prov.clone(), !has_default).await;
+        runtime
+            .register_provider("antigravity", prov.clone(), !has_default)
+            .await;
         if !has_default {
             runtime.register_provider("default", prov, true).await;
             has_default = true;
@@ -3259,7 +3370,9 @@ async fn init_providers(
         }
         if let Some(prov) = build_oauth_provider(&catalog_id, &token) {
             info!("Restoring persisted OAuth provider: {}", catalog_id);
-            runtime.register_provider(&catalog_id, prov.clone(), !has_default).await;
+            runtime
+                .register_provider(&catalog_id, prov.clone(), !has_default)
+                .await;
             if !has_default {
                 runtime.register_provider("default", prov, true).await;
                 has_default = true;
@@ -3289,7 +3402,11 @@ async fn init_providers(
             let prov: Arc<dyn odon_provider::ModelProvider> = if pid == "anthropic" {
                 Arc::new(AnthropicProvider::with_base_url(&c.api_key, &base_url))
             } else {
-                Arc::new(OpenAiCompatibleProvider::new(&base_url, &c.api_key, Some(&pid)))
+                Arc::new(OpenAiCompatibleProvider::new(
+                    &base_url,
+                    &c.api_key,
+                    Some(&pid),
+                ))
             };
 
             let is_def = c.is_default || !has_default;
@@ -3306,9 +3423,12 @@ async fn init_providers(
     // D. Environment variables fallback
     if let Ok(key) = std::env::var("OPENAI_API_KEY") {
         if !key.trim().is_empty() {
-            let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+            let base_url = std::env::var("OPENAI_BASE_URL")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
             let prov = Arc::new(OpenAiCompatibleProvider::new(base_url, key, Some("openai")));
-            runtime.register_provider("openai", prov.clone(), !has_default).await;
+            runtime
+                .register_provider("openai", prov.clone(), !has_default)
+                .await;
             if !has_default {
                 runtime.register_provider("default", prov, true).await;
                 has_default = true;
@@ -3319,7 +3439,9 @@ async fn init_providers(
     if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
         if !key.trim().is_empty() {
             let prov = Arc::new(AnthropicProvider::new(key));
-            runtime.register_provider("anthropic", prov.clone(), !has_default).await;
+            runtime
+                .register_provider("anthropic", prov.clone(), !has_default)
+                .await;
             if !has_default {
                 runtime.register_provider("default", prov, true).await;
                 has_default = true;
@@ -3330,7 +3452,9 @@ async fn init_providers(
     if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
         if !key.trim().is_empty() {
             let prov = Arc::new(OpenAiCompatibleProvider::new_deepseek(key));
-            runtime.register_provider("deepseek", prov.clone(), !has_default).await;
+            runtime
+                .register_provider("deepseek", prov.clone(), !has_default)
+                .await;
             if !has_default {
                 runtime.register_provider("default", prov, true).await;
                 has_default = true;
@@ -3339,7 +3463,13 @@ async fn init_providers(
     }
 
     // Only register simulated under its explicit key for offline testing, NEVER as default
-    runtime.register_provider("odon-simulated", Arc::new(SimulatedProvider::default()), false).await;
+    runtime
+        .register_provider(
+            "odon-simulated",
+            Arc::new(SimulatedProvider::default()),
+            false,
+        )
+        .await;
 }
 
 #[derive(Deserialize)]
@@ -3359,7 +3489,11 @@ async fn get_provider_configs(State(state): State<AppState>) -> impl IntoRespons
     let mut result = Vec::new();
     for c in configs {
         let masked = if c.api_key.len() > 8 {
-            format!("{}...{}", &c.api_key[..4], &c.api_key[c.api_key.len() - 4..])
+            format!(
+                "{}...{}",
+                &c.api_key[..4],
+                &c.api_key[c.api_key.len() - 4..]
+            )
         } else {
             "********".to_string()
         };
@@ -3383,7 +3517,10 @@ async fn save_provider_config(
 ) -> impl IntoResponse {
     let pid = req.provider_id.to_lowercase();
     let is_def = req.is_default.unwrap_or(false);
-    let base_url = req.base_url.clone().unwrap_or_else(|| default_base_url_for(&pid));
+    let base_url = req
+        .base_url
+        .clone()
+        .unwrap_or_else(|| default_base_url_for(&pid));
 
     let existing = state.storage.get_provider_config(&pid).ok().flatten();
 
@@ -3418,21 +3555,34 @@ async fn save_provider_config(
         name.as_deref(),
         &models_json,
     ) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        );
     }
 
     let prov: Arc<dyn odon_provider::ModelProvider> = if pid == "anthropic" {
         Arc::new(AnthropicProvider::with_base_url(&api_key, &base_url))
     } else {
-        Arc::new(OpenAiCompatibleProvider::new(&base_url, &api_key, Some(&pid)))
+        Arc::new(OpenAiCompatibleProvider::new(
+            &base_url,
+            &api_key,
+            Some(&pid),
+        ))
     };
 
-    state.runtime.register_provider(&pid, prov.clone(), is_def).await;
+    state
+        .runtime
+        .register_provider(&pid, prov.clone(), is_def)
+        .await;
     if is_def {
         state.runtime.register_provider("default", prov, true).await;
     }
 
-    (StatusCode::OK, Json(json!({ "status": "saved", "provider": pid, "is_default": is_def })))
+    (
+        StatusCode::OK,
+        Json(json!({ "status": "saved", "provider": pid, "is_default": is_def })),
+    )
 }
 
 async fn delete_provider_config(
@@ -3472,12 +3622,20 @@ async fn login_oauth(
     let service = match OAuthService::new() {
         Ok(s) => s,
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            );
         }
     };
     let pending = match service.begin_login(provider).await {
         Ok(p) => p,
-        Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": e.to_string() }))),
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        }
     };
     let response = pending.response().clone();
 
@@ -3492,12 +3650,22 @@ async fn login_oauth(
     });
 
     let body = match response {
-        LoginResponse::Browser { authorization_url, redirect_uri, .. } => json!({
+        LoginResponse::Browser {
+            authorization_url,
+            redirect_uri,
+            ..
+        } => json!({
             "status": "pending_browser",
             "auth_url": authorization_url,
             "redirect_uri": redirect_uri,
         }),
-        LoginResponse::Device { user_code, verification_uri, expires_in, interval, .. } => json!({
+        LoginResponse::Device {
+            user_code,
+            verification_uri,
+            expires_in,
+            interval,
+            ..
+        } => json!({
             "status": "pending_device",
             "user_code": user_code,
             "verification_uri": verification_uri,
@@ -3520,7 +3688,11 @@ fn oauth_catalog_id(provider: odon_provider::OAuthProvider) -> &'static str {
     }
 }
 
-async fn register_oauth_provider(state: &AppState, catalog_id: &'static str, token: odon_provider::OAuthToken) {
+async fn register_oauth_provider(
+    state: &AppState,
+    catalog_id: &'static str,
+    token: odon_provider::OAuthToken,
+) {
     // No runtime adapter for Anthropic's messages API yet: the account is
     // recorded but is reported as not usable instead of silently falling back.
     let registered = build_oauth_provider(catalog_id, &token);
@@ -3594,14 +3766,20 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         Ok(p) => p,
         Err(e) => {
             let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx.send(WsMessage::Text(format!("Failed to open native PTY: {}\r\n", e).into())).await;
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    format!("Failed to open native PTY: {}\r\n", e).into(),
+                ))
+                .await;
             return;
         }
     };
 
     let cmd = if let Some(pid) = &query.ssh_profile_id {
         let profiles = load_ssh_profiles();
-        let profile = profiles.into_iter().find(|p| &p.id == pid || &p.alias == pid);
+        let profile = profiles
+            .into_iter()
+            .find(|p| &p.id == pid || &p.alias == pid);
         if let Some(p) = profile {
             let mut c = CommandBuilder::new("ssh");
             c.arg("-tt");
@@ -3613,7 +3791,11 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
             c.arg(p.port.to_string());
             if let Err(e) = validate_ssh_target(&p.host, &p.user) {
                 let (mut ws_tx, _) = socket.split();
-                let _ = ws_tx.send(WsMessage::Text(format!("Invalid SSH target: {e}\r\n").into())).await;
+                let _ = ws_tx
+                    .send(WsMessage::Text(
+                        format!("Invalid SSH target: {e}\r\n").into(),
+                    ))
+                    .await;
                 return;
             }
             if let Some(k) = &p.key_path {
@@ -3624,7 +3806,9 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
                     }
                     Err(e) => {
                         let (mut ws_tx, _) = socket.split();
-                        let _ = ws_tx.send(WsMessage::Text(format!("SSH key error: {e}\r\n").into())).await;
+                        let _ = ws_tx
+                            .send(WsMessage::Text(format!("SSH key error: {e}\r\n").into()))
+                            .await;
                         return;
                     }
                 }
@@ -3633,7 +3817,11 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
             c
         } else {
             let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx.send(WsMessage::Text(format!("SSH Profile not found: {}\r\n", pid).into())).await;
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    format!("SSH Profile not found: {}\r\n", pid).into(),
+                ))
+                .await;
             return;
         }
     } else {
@@ -3643,7 +3831,9 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
             let shell_type = query.shell.as_deref().unwrap_or("powershell");
             let mut cb = if shell_type.eq_ignore_ascii_case("cmd") {
                 CommandBuilder::new("cmd.exe")
-            } else if shell_type.eq_ignore_ascii_case("wsl") || shell_type.eq_ignore_ascii_case("bash") {
+            } else if shell_type.eq_ignore_ascii_case("wsl")
+                || shell_type.eq_ignore_ascii_case("bash")
+            {
                 CommandBuilder::new("wsl.exe")
             } else {
                 let mut p = CommandBuilder::new("powershell.exe");
@@ -3667,7 +3857,11 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         Ok(ch) => ch,
         Err(e) => {
             let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx.send(WsMessage::Text(format!("Failed to spawn process in PTY: {}\r\n", e).into())).await;
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    format!("Failed to spawn process in PTY: {}\r\n", e).into(),
+                ))
+                .await;
             return;
         }
     };
@@ -3676,7 +3870,11 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         Ok(r) => r,
         Err(e) => {
             let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx.send(WsMessage::Text(format!("Failed to clone PTY reader: {}\r\n", e).into())).await;
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    format!("Failed to clone PTY reader: {}\r\n", e).into(),
+                ))
+                .await;
             return;
         }
     };
@@ -3685,7 +3883,11 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         Ok(w) => w,
         Err(e) => {
             let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx.send(WsMessage::Text(format!("Failed to get PTY writer: {}\r\n", e).into())).await;
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    format!("Failed to get PTY writer: {}\r\n", e).into(),
+                ))
+                .await;
             return;
         }
     };
@@ -3743,7 +3945,12 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
                             let c = v.get("cols").and_then(|c| c.as_u64()).unwrap_or(80) as u16;
                             let r = v.get("rows").and_then(|r| r.as_u64()).unwrap_or(24) as u16;
                             if let Ok(m) = master_clone.lock() {
-                                let _ = m.resize(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 });
+                                let _ = m.resize(PtySize {
+                                    rows: r,
+                                    cols: c,
+                                    pixel_width: 0,
+                                    pixel_height: 0,
+                                });
                             }
                             continue;
                         }
@@ -3776,20 +3983,42 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
     let is_connected = |provider: &str| connected.contains_key(provider);
     let byok_configs = state.storage.list_provider_configs().unwrap_or_default();
     let is_byok = |pid: &str| -> bool {
-        byok_configs.iter().any(|c| c.provider_id.eq_ignore_ascii_case(pid)) ||
-        match pid {
-            "openai" => std::env::var("OPENAI_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "anthropic" => std::env::var("ANTHROPIC_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "deepseek" => std::env::var("DEEPSEEK_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "google" => std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY")).map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "mistral" => std::env::var("MISTRAL_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "groq" => std::env::var("GROQ_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "openrouter" => std::env::var("OPENROUTER_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "qwen" => std::env::var("DASHSCOPE_API_KEY").or_else(|_| std::env::var("QWEN_API_KEY")).map(|v| !v.trim().is_empty()).unwrap_or(false),
-            "ollama" => std::env::var("OLLAMA_BASE_URL").is_ok(),
-            "openai-compatible" | "openai_compatible" => std::env::var("OPENAI_BASE_URL").is_ok(),
-            _ => false,
-        }
+        byok_configs
+            .iter()
+            .any(|c| c.provider_id.eq_ignore_ascii_case(pid))
+            || match pid {
+                "openai" => std::env::var("OPENAI_API_KEY")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "anthropic" => std::env::var("ANTHROPIC_API_KEY")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "deepseek" => std::env::var("DEEPSEEK_API_KEY")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "google" => std::env::var("GEMINI_API_KEY")
+                    .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "mistral" => std::env::var("MISTRAL_API_KEY")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "groq" => std::env::var("GROQ_API_KEY")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "openrouter" => std::env::var("OPENROUTER_API_KEY")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "qwen" => std::env::var("DASHSCOPE_API_KEY")
+                    .or_else(|_| std::env::var("QWEN_API_KEY"))
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false),
+                "ollama" => std::env::var("OLLAMA_BASE_URL").is_ok(),
+                "openai-compatible" | "openai_compatible" => {
+                    std::env::var("OPENAI_BASE_URL").is_ok()
+                }
+                _ => false,
+            }
     };
 
     // The Copilot catalogue is account-specific: the live /models endpoint
@@ -4087,14 +4316,32 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
     // Every saved endpoint with a non-catalog id is a first-class provider:
     // its own key, Base URL, model list, and selectable provider id.
     const STATIC_PROVIDER_IDS: &[&str] = &[
-        "github-copilot", "antigravity", "chatgpt", "claude-oauth", "xai-oauth", "muse",
-        "openai", "anthropic", "google", "deepseek", "qwen", "mistral", "groq",
-        "openrouter", "ollama", "openai-compatible", "openai_compatible", "default",
+        "github-copilot",
+        "antigravity",
+        "chatgpt",
+        "claude-oauth",
+        "xai-oauth",
+        "muse",
+        "openai",
+        "anthropic",
+        "google",
+        "deepseek",
+        "qwen",
+        "mistral",
+        "groq",
+        "openrouter",
+        "ollama",
+        "openai-compatible",
+        "openai_compatible",
+        "default",
         "odon-simulated",
     ];
     if let Some(list) = payload.get_mut("providers").and_then(|v| v.as_array_mut()) {
         for c in byok_configs.iter() {
-            if STATIC_PROVIDER_IDS.iter().any(|id| id.eq_ignore_ascii_case(&c.provider_id)) {
+            if STATIC_PROVIDER_IDS
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(&c.provider_id))
+            {
                 continue;
             }
             let model_ids: Vec<String> =
@@ -4258,16 +4505,18 @@ async fn serve_file(
             StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "text/plain")],
             "Invalid path".as_bytes().to_vec(),
-        ).into_response();
+        )
+            .into_response();
     }
     // Serve only from an allowed workspace, and verify the canonical target so
     // a symlink inside the workspace cannot escape it.
     let mut served: Option<PathBuf> = None;
     for root in workspace_roots(&state).await {
         let candidate = root.join(&clean);
-        if let (Ok(canonical_root), Ok(canonical)) =
-            (std::fs::canonicalize(&root), std::fs::canonicalize(&candidate))
-        {
+        if let (Ok(canonical_root), Ok(canonical)) = (
+            std::fs::canonicalize(&root),
+            std::fs::canonicalize(&candidate),
+        ) {
             if canonical.starts_with(&canonical_root) && canonical.is_file() {
                 served = Some(canonical);
                 break;
@@ -4281,7 +4530,8 @@ async fn serve_file(
                 StatusCode::NOT_FOUND,
                 [(header::CONTENT_TYPE, "text/plain")],
                 "File not found".as_bytes().to_vec(),
-            ).into_response();
+            )
+                .into_response();
         }
     };
     match tokio::fs::read(&full).await {
@@ -4308,13 +4558,15 @@ async fn serve_file(
                     (header::CACHE_CONTROL, "public, max-age=3600"),
                 ],
                 bytes,
-            ).into_response()
+            )
+                .into_response()
         }
         Err(_) => (
             StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "text/plain")],
             "File not found".as_bytes().to_vec(),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -4339,7 +4591,6 @@ async fn sse_events(
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-
 
 async fn get_approval_history(State(state): State<AppState>) -> impl IntoResponse {
     let history = state.approval.get_audit_history().await;
@@ -4377,18 +4628,14 @@ async fn save_mcp_server(
     Json(json!({ "success": true, "servers": servers }))
 }
 
-async fn delete_mcp_server(
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn delete_mcp_server(Path(id): Path<String>) -> impl IntoResponse {
     let mut servers = odon_tools::mcp::load_mcp_servers();
     servers.retain(|s| s.id != id);
     let _ = odon_tools::mcp::save_mcp_servers(&servers);
     Json(json!({ "success": true, "deleted": id }))
 }
 
-async fn toggle_mcp_server(
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn toggle_mcp_server(Path(id): Path<String>) -> impl IntoResponse {
     let mut servers = odon_tools::mcp::load_mcp_servers();
     if let Some(s) = servers.iter_mut().find(|s| s.id == id) {
         s.enabled = !s.enabled;
@@ -4461,9 +4708,7 @@ fn detect_workspace_github_repo(workspace_root: &str) -> Option<(String, String)
     parse_github_repo_url(&url)
 }
 
-async fn get_github_status(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn get_github_status(State(state): State<AppState>) -> impl IntoResponse {
     let token_opt = get_github_auth_token().await;
     let ws_repo = detect_workspace_github_repo(&state.workspace_root);
 
@@ -4505,7 +4750,14 @@ async fn get_github_status(
 
 async fn get_github_user_repos() -> impl IntoResponse {
     if let Ok(output) = tokio::process::Command::new("gh")
-        .args(["repo", "list", "--limit", "40", "--json", "name,owner,isPrivate,description"])
+        .args([
+            "repo",
+            "list",
+            "--limit",
+            "40",
+            "--json",
+            "name,owner,isPrivate,description",
+        ])
         .output()
         .await
     {
@@ -4515,9 +4767,19 @@ async fn get_github_user_repos() -> impl IntoResponse {
                     let mut list = Vec::new();
                     for item in arr {
                         let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                        let owner = item.get("owner").and_then(|o| o.get("login")).and_then(|l| l.as_str()).unwrap_or("");
-                        let desc = item.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                        let is_priv = item.get("isPrivate").and_then(|p| p.as_bool()).unwrap_or(false);
+                        let owner = item
+                            .get("owner")
+                            .and_then(|o| o.get("login"))
+                            .and_then(|l| l.as_str())
+                            .unwrap_or("");
+                        let desc = item
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
+                        let is_priv = item
+                            .get("isPrivate")
+                            .and_then(|p| p.as_bool())
+                            .unwrap_or(false);
                         list.push(json!({
                             "name": name,
                             "owner": owner,
@@ -4547,9 +4809,19 @@ async fn get_github_user_repos() -> impl IntoResponse {
                         let mut list = Vec::new();
                         for item in arr {
                             let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            let owner = item.get("owner").and_then(|o| o.get("login")).and_then(|l| l.as_str()).unwrap_or("");
-                            let desc = item.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                            let is_priv = item.get("private").and_then(|p| p.as_bool()).unwrap_or(false);
+                            let owner = item
+                                .get("owner")
+                                .and_then(|o| o.get("login"))
+                                .and_then(|l| l.as_str())
+                                .unwrap_or("");
+                            let desc = item
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("");
+                            let is_priv = item
+                                .get("private")
+                                .and_then(|p| p.as_bool())
+                                .unwrap_or(false);
                             list.push(json!({
                                 "name": name,
                                 "owner": owner,
@@ -4593,7 +4865,10 @@ async fn get_github_prs(
             let data: Value = resp.json().await.unwrap_or(json!([]));
             (StatusCode::OK, Json(data))
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -4623,7 +4898,10 @@ async fn get_github_issues(
             let data: Value = resp.json().await.unwrap_or(json!([]));
             (StatusCode::OK, Json(data))
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -4642,11 +4920,17 @@ async fn create_github_issue(
     let (ws_owner, ws_repo) = detect_workspace_github_repo(&state.workspace_root)
         .unwrap_or_else(|| ("".to_string(), "".to_string()));
 
-    let owner = req.owner.filter(|o| !o.trim().is_empty()).unwrap_or(ws_owner);
+    let owner = req
+        .owner
+        .filter(|o| !o.trim().is_empty())
+        .unwrap_or(ws_owner);
     let repo = req.repo.filter(|r| !r.trim().is_empty()).unwrap_or(ws_repo);
 
     if owner.is_empty() || repo.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "Owner and repo are required" })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Owner and repo are required" })),
+        );
     }
 
     let client = reqwest::Client::new();
@@ -4655,12 +4939,19 @@ async fn create_github_issue(
     if let Some(token) = get_github_auth_token().await {
         r = r.header("Authorization", format!("Bearer {}", token));
     }
-    match r.json(&json!({ "title": req.title, "body": req.body.unwrap_or_default() })).send().await {
+    match r
+        .json(&json!({ "title": req.title, "body": req.body.unwrap_or_default() }))
+        .send()
+        .await
+    {
         Ok(resp) => {
             let data: Value = resp.json().await.unwrap_or(json!({ "status": "created" }));
             (StatusCode::OK, Json(data))
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -4774,13 +5065,24 @@ async fn fs_list_dir(
             for entry in entries.flatten() {
                 let p = entry.path();
                 let is_dir = p.is_dir();
-                let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-                let size = if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) };
+                let name = p
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let size = if is_dir {
+                    0
+                } else {
+                    entry.metadata().map(|m| m.len()).unwrap_or(0)
+                };
                 let ext = p.extension().map(|e| e.to_string_lossy().to_string());
-                let modified = entry.metadata().ok().and_then(|m| m.modified().ok()).map(|t| {
-                    chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
-                });
-                let rel = p.strip_prefix(&state.workspace_root)
+                let modified = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+                let rel = p
+                    .strip_prefix(&state.workspace_root)
                     .unwrap_or(&p)
                     .to_string_lossy()
                     .replace('\\', "/");
@@ -5000,12 +5302,14 @@ async fn fs_delete_path(
     }
     // Refuse to delete a workspace root itself.
     if let Ok(canonical) = std::fs::canonicalize(&abs) {
-        if workspace_roots(&state)
-            .await
-            .iter()
-            .any(|root| std::fs::canonicalize(root).map(|r| r == canonical).unwrap_or(false))
-        {
-            return Json(json!({ "success": false, "error": "Refusing to delete a workspace root" }));
+        if workspace_roots(&state).await.iter().any(|root| {
+            std::fs::canonicalize(root)
+                .map(|r| r == canonical)
+                .unwrap_or(false)
+        }) {
+            return Json(
+                json!({ "success": false, "error": "Refusing to delete a workspace root" }),
+            );
         }
     }
 
@@ -5032,7 +5336,11 @@ fn ssh_key_roots() -> Vec<PathBuf> {
         .unwrap_or_else(user_home);
     roots.push(state_home.join(".odon").join("ssh-keys"));
     if let Ok(extra) = std::env::var("ODON_SSH_KEY_DIRS") {
-        for item in extra.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+        for item in extra
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
             roots.push(PathBuf::from(expand_home(item)));
         }
     }
@@ -5064,26 +5372,27 @@ fn validate_ssh_key_path(raw: &str) -> std::result::Result<String, String> {
 
 fn validate_ssh_target(host: &str, user: &str) -> std::result::Result<(), String> {
     let host = host.trim();
-    let valid_host = if host.is_empty() || host.starts_with('-') || host.chars().any(char::is_whitespace) {
-        false
-    } else if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-        inner.parse::<std::net::Ipv6Addr>().is_ok()
-    } else if host.parse::<std::net::IpAddr>().is_ok() {
-        true
-    } else {
-        host.len() <= 253
-            && !host.starts_with('.')
-            && !host.ends_with('.')
-            && host.split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
-            })
-    };
+    let valid_host =
+        if host.is_empty() || host.starts_with('-') || host.chars().any(char::is_whitespace) {
+            false
+        } else if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+            inner.parse::<std::net::Ipv6Addr>().is_ok()
+        } else if host.parse::<std::net::IpAddr>().is_ok() {
+            true
+        } else {
+            host.len() <= 253
+                && !host.starts_with('.')
+                && !host.ends_with('.')
+                && host.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                })
+        };
     if !valid_host {
         return Err(format!(
             "Invalid SSH host: {host}. Use a DNS name, IPv4, or bracketed IPv6 address; use punycode for IDN."
@@ -5142,9 +5451,7 @@ struct SshCertImportPayload {
     profile_id: Option<String>,
 }
 
-async fn import_ssh_certificate(
-    Json(payload): Json<SshCertImportPayload>,
-) -> impl IntoResponse {
+async fn import_ssh_certificate(Json(payload): Json<SshCertImportPayload>) -> impl IntoResponse {
     let base = std::env::var_os("ODON_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
@@ -5228,9 +5535,7 @@ async fn get_ssh_profiles() -> impl IntoResponse {
     Json(json!({ "profiles": profiles }))
 }
 
-async fn save_ssh_profile(
-    Json(profile): Json<SshProfile>,
-) -> impl IntoResponse {
+async fn save_ssh_profile(Json(profile): Json<SshProfile>) -> impl IntoResponse {
     if let Err(e) = validate_ssh_target(&profile.host, &profile.user) {
         return (
             StatusCode::BAD_REQUEST,
@@ -5297,9 +5602,7 @@ async fn save_ssh_profile(
     )
 }
 
-async fn delete_ssh_profile(
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn delete_ssh_profile(Path(id): Path<String>) -> impl IntoResponse {
     let mut profiles = load_ssh_profiles();
     profiles.retain(|p| p.id != id);
     save_ssh_profiles_to_disk(&profiles);
@@ -5321,12 +5624,26 @@ async fn exec_ssh_command(
     Json(req): Json<SshExecPayload>,
 ) -> impl IntoResponse {
     let profiles = load_ssh_profiles();
-    let profile = req.profile_id.as_ref().and_then(|pid| profiles.iter().find(|p| &p.id == pid || &p.alias == pid));
+    let profile = req
+        .profile_id
+        .as_ref()
+        .and_then(|pid| profiles.iter().find(|p| &p.id == pid || &p.alias == pid));
 
-    let host = req.host.as_deref().or_else(|| profile.map(|p| p.host.as_str())).unwrap_or("localhost");
+    let host = req
+        .host
+        .as_deref()
+        .or_else(|| profile.map(|p| p.host.as_str()))
+        .unwrap_or("localhost");
     let port = req.port.or_else(|| profile.map(|p| p.port)).unwrap_or(22);
-    let user = req.user.as_deref().or_else(|| profile.map(|p| p.user.as_str())).unwrap_or("root");
-    let key = req.key_path.as_deref().or_else(|| profile.and_then(|p| p.key_path.as_deref()));
+    let user = req
+        .user
+        .as_deref()
+        .or_else(|| profile.map(|p| p.user.as_str()))
+        .unwrap_or("root");
+    let key = req
+        .key_path
+        .as_deref()
+        .or_else(|| profile.and_then(|p| p.key_path.as_deref()));
 
     if let Err(e) = validate_ssh_target(host, user) {
         return Json(json!({
@@ -5399,20 +5716,21 @@ async fn exec_ssh_command(
         }
     }
 
-        cmd.arg(format!("{user}@{host}"));
+    cmd.arg(format!("{user}@{host}"));
     cmd.arg(&req.command);
 
-    let execution = match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
-        Ok(result) => result,
-        Err(_) => {
-            return Json(json!( {
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": "SSH command timed out after 120 seconds",
-                "success": false
-            }));
-        }
-    };
+    let execution =
+        match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+            Ok(result) => result,
+            Err(_) => {
+                return Json(json!( {
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": "SSH command timed out after 120 seconds",
+                    "success": false
+                }));
+            }
+        };
     let output = match execution {
         Ok(output) => output,
         Err(e) => {
@@ -5479,10 +5797,24 @@ async fn get_skills_list() -> impl IntoResponse {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.extension().map_or(false, |ext| ext == "md") {
-                let name = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                let name = p
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let content = std::fs::read_to_string(&p).unwrap_or_default();
-                let first_line = content.lines().next().unwrap_or("").trim_start_matches('#').trim().to_string();
-                let title = if first_line.is_empty() { name.clone() } else { first_line };
+                let first_line = content
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('#')
+                    .trim()
+                    .to_string();
+                let title = if first_line.is_empty() {
+                    name.clone()
+                } else {
+                    first_line
+                };
                 let desc = content.lines().nth(1).unwrap_or("").trim().to_string();
 
                 skills.push(SkillItemInfo {
@@ -5525,9 +5857,7 @@ fn safe_skill_slug(raw: &str) -> String {
     }
 }
 
-async fn save_skill_item(
-    Json(payload): Json<SaveSkillPayload>,
-) -> impl IntoResponse {
+async fn save_skill_item(Json(payload): Json<SaveSkillPayload>) -> impl IntoResponse {
     if payload.content.len() > 1024 * 1024 {
         return Json(json!({ "success": false, "error": "Skill content is too large (max 1 MB)" }));
     }
@@ -5542,9 +5872,7 @@ async fn save_skill_item(
     }
 }
 
-async fn delete_skill_item(
-    Path(name): Path<String>,
-) -> impl IntoResponse {
+async fn delete_skill_item(Path(name): Path<String>) -> impl IntoResponse {
     let dir = get_skills_dir();
     let filename = format!("{}.md", safe_skill_slug(&name));
     let path = dir.join(filename);

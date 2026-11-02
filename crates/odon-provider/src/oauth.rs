@@ -42,7 +42,9 @@ const ANTIGRAVITY_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const ANTIGRAVITY_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs";
 
 fn env_value(name: &str) -> String {
-    std::env::var(name).map(|v| v.trim().to_string()).unwrap_or_default()
+    std::env::var(name)
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Antigravity's registered client (same one Termigo uses). Read from the
@@ -50,11 +52,21 @@ fn env_value(name: &str) -> String {
 fn antigravity_credentials() -> (String, String) {
     let pick = |primary: &str, legacy: &str| {
         let v = env_value(primary);
-        if v.is_empty() { env_value(legacy) } else { v }
+        if v.is_empty() {
+            env_value(legacy)
+        } else {
+            v
+        }
     };
     (
-        pick("TERMIGO_ANTIGRAVITY_CLIENT_ID", "TERMIXGO_ANTIGRAVITY_CLIENT_ID"),
-        pick("TERMIGO_ANTIGRAVITY_CLIENT_SECRET", "TERMIXGO_ANTIGRAVITY_CLIENT_SECRET"),
+        pick(
+            "TERMIGO_ANTIGRAVITY_CLIENT_ID",
+            "TERMIXGO_ANTIGRAVITY_CLIENT_ID",
+        ),
+        pick(
+            "TERMIGO_ANTIGRAVITY_CLIENT_SECRET",
+            "TERMIXGO_ANTIGRAVITY_CLIENT_SECRET",
+        ),
     )
 }
 
@@ -227,12 +239,11 @@ impl OAuthService {
         match provider {
             OAuthProvider::OpenAiCodex
             | OAuthProvider::ClaudeOauth
-            | OAuthProvider::Antigravity => {
-                self.begin_browser_login(provider).await.map(PendingLogin::Browser)
-            }
-            OAuthProvider::XaiOauth
-            | OAuthProvider::GithubCopilot
-            | OAuthProvider::Muse => self
+            | OAuthProvider::Antigravity => self
+                .begin_browser_login(provider)
+                .await
+                .map(PendingLogin::Browser),
+            OAuthProvider::XaiOauth | OAuthProvider::GithubCopilot | OAuthProvider::Muse => self
                 .begin_device_login(provider)
                 .await
                 .map(PendingLogin::Device),
@@ -339,7 +350,9 @@ impl OAuthService {
         let device: DeviceCodeResponse = serde_json::from_str(&body)
             .map_err(|e| auth_error(format!("could not parse device code response: {e}")))?;
         if device.device_code.is_empty() || device.user_code.is_empty() {
-            return Err(auth_error("device endpoint returned an incomplete response"));
+            return Err(auth_error(
+                "device endpoint returned an incomplete response",
+            ));
         }
 
         let verification_uri = device
@@ -369,7 +382,11 @@ impl OAuthService {
         })
     }
 
-    pub async fn refresh(&self, provider: OAuthProvider, refresh_token: &str) -> Result<OAuthToken> {
+    pub async fn refresh(
+        &self,
+        provider: OAuthProvider,
+        refresh_token: &str,
+    ) -> Result<OAuthToken> {
         if refresh_token.trim().is_empty() {
             return Err(auth_error("refresh token must not be empty"));
         }
@@ -440,9 +457,7 @@ impl OAuthService {
                 )
                 .await
             }
-            OAuthProvider::GithubCopilot => {
-                mint_copilot_token(&self.client, refresh_token).await
-            }
+            OAuthProvider::GithubCopilot => mint_copilot_token(&self.client, refresh_token).await,
             OAuthProvider::Antigravity => {
                 let (client_id, client_secret) = antigravity_credentials();
                 if client_id.is_empty() {
@@ -529,54 +544,51 @@ impl PendingBrowserLogin {
         let code = parse_callback_target(&target, self.config.callback_path, Some(&self.state))?;
 
         let response = match self.config.provider {
-            OAuthProvider::OpenAiCodex => {
-                self.client
-                    .post(self.config.token_url)
-                    .header("user-agent", "codex_cli_rs/0.159.0")
-                    .header("originator", "codex_cli_rs")
-                    .form(&[
-                        ("grant_type", "authorization_code"),
-                        ("code", code.as_str()),
-                        ("redirect_uri", self.redirect_uri.as_str()),
-                        ("client_id", self.config.client_id),
-                        ("code_verifier", self.verifier.as_str()),
-                    ])
-                    .send()
-                    .await
-                    .map_err(|e| auth_error(format!("OpenAI token exchange failed: {e}")))?
-            }
-            OAuthProvider::ClaudeOauth => {
-                self.client
-                    .post(self.config.token_url)
-                    .header("user-agent", "claude-cli/2.1.280 (external, sdk-cli)")
-                    .json(&serde_json::json!({
-                        "grant_type": "authorization_code",
-                        "code": code,
-                        "redirect_uri": self.redirect_uri,
-                        "client_id": self.config.client_id,
-                        "code_verifier": self.verifier,
-                        "state": self.state,
-                    }))
-                    .send()
-                    .await
-                    .map_err(|e| auth_error(format!("Claude token exchange failed: {e}")))?
-            }
-            OAuthProvider::Antigravity => {
-                self.client
-                    .post(self.config.token_url)
-                    .header("user-agent", antigravity_user_agent())
-                    .form(&[
-                        ("grant_type", "authorization_code"),
-                        ("code", code.as_str()),
-                        ("redirect_uri", self.redirect_uri.as_str()),
-                        ("client_id", self.client_id.as_str()),
-                        ("client_secret", self.client_secret.as_str()),
-                        ("code_verifier", self.verifier.as_str()),
-                    ])
-                    .send()
-                    .await
-                    .map_err(|e| auth_error(format!("Google token exchange failed: {e}")))?
-            }
+            OAuthProvider::OpenAiCodex => self
+                .client
+                .post(self.config.token_url)
+                .header("user-agent", "codex_cli_rs/0.159.0")
+                .header("originator", "codex_cli_rs")
+                .form(&[
+                    ("grant_type", "authorization_code"),
+                    ("code", code.as_str()),
+                    ("redirect_uri", self.redirect_uri.as_str()),
+                    ("client_id", self.config.client_id),
+                    ("code_verifier", self.verifier.as_str()),
+                ])
+                .send()
+                .await
+                .map_err(|e| auth_error(format!("OpenAI token exchange failed: {e}")))?,
+            OAuthProvider::ClaudeOauth => self
+                .client
+                .post(self.config.token_url)
+                .header("user-agent", "claude-cli/2.1.280 (external, sdk-cli)")
+                .json(&serde_json::json!({
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": self.redirect_uri,
+                    "client_id": self.config.client_id,
+                    "code_verifier": self.verifier,
+                    "state": self.state,
+                }))
+                .send()
+                .await
+                .map_err(|e| auth_error(format!("Claude token exchange failed: {e}")))?,
+            OAuthProvider::Antigravity => self
+                .client
+                .post(self.config.token_url)
+                .header("user-agent", antigravity_user_agent())
+                .form(&[
+                    ("grant_type", "authorization_code"),
+                    ("code", code.as_str()),
+                    ("redirect_uri", self.redirect_uri.as_str()),
+                    ("client_id", self.client_id.as_str()),
+                    ("client_secret", self.client_secret.as_str()),
+                    ("code_verifier", self.verifier.as_str()),
+                ])
+                .send()
+                .await
+                .map_err(|e| auth_error(format!("Google token exchange failed: {e}")))?,
             _ => unreachable!("only PKCE providers create browser logins"),
         };
 
@@ -585,13 +597,9 @@ impl PendingBrowserLogin {
         } else {
             Duration::from_secs(3600)
         };
-        let mut token = parse_oauth_token_response(
-            response,
-            self.config.provider,
-            None,
-            default_lifetime,
-        )
-        .await?;
+        let mut token =
+            parse_oauth_token_response(response, self.config.provider, None, default_lifetime)
+                .await?;
         if self.config.provider == OAuthProvider::ClaudeOauth {
             if token.refresh_token.is_none() {
                 return Err(auth_error("Claude OAuth did not return a refresh token"));
@@ -887,7 +895,9 @@ async fn read_request_target(stream: &mut tokio::net::TcpStream) -> Result<Strin
             .map_err(|_| auth_error("callback request timed out"))?
             .map_err(|e| auth_error(format!("callback read failed: {e}")))?;
         if read == 0 {
-            return Err(auth_error("callback connection closed before request completed"));
+            return Err(auth_error(
+                "callback connection closed before request completed",
+            ));
         }
         request.extend_from_slice(&chunk[..read]);
         if request.len() > MAX_CALLBACK_BYTES {
@@ -923,9 +933,8 @@ async fn write_callback_response(stream: &mut tokio::net::TcpStream, status: u16
         404 => "Not Found",
         _ => "Error",
     };
-    let body = format!(
-        "<!doctype html><meta charset=utf-8><title>ODON OAuth</title><p>{message}</p>"
-    );
+    let body =
+        format!("<!doctype html><meta charset=utf-8><title>ODON OAuth</title><p>{message}</p>");
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
@@ -996,7 +1005,10 @@ fn validate_device_verification_uri(provider: OAuthProvider, uri: &str) -> Resul
         OAuthProvider::Muse => matches!(host, "auth.meta.com" | "meta.com"),
         _ => false,
     };
-    if parsed.scheme() != "https" || !allowed || parsed.username() != "" || parsed.password().is_some()
+    if parsed.scheme() != "https"
+        || !allowed
+        || parsed.username() != ""
+        || parsed.password().is_some()
     {
         return Err(auth_error(
             "device verification URL is not an allowed HTTPS endpoint",
@@ -1229,7 +1241,10 @@ mod tests {
             "/auth/callback",
             Some("expected"),
         );
-        assert!(missing.unwrap_err().to_string().contains("state was missing"));
+        assert!(missing
+            .unwrap_err()
+            .to_string()
+            .contains("state was missing"));
 
         let wrong = parse_callback_target(
             "/auth/callback?code=abc&state=wrong",
@@ -1253,7 +1268,10 @@ mod tests {
             "/callback",
             Some("expected"),
         );
-        assert!(wrong_path.unwrap_err().to_string().contains("path did not match"));
+        assert!(wrong_path
+            .unwrap_err()
+            .to_string()
+            .contains("path did not match"));
     }
 
     #[test]
@@ -1277,9 +1295,15 @@ mod tests {
 
     #[test]
     fn antigravity_is_a_known_provider_with_ephemeral_port_config() {
-        assert_eq!("antigravity".parse::<OAuthProvider>().unwrap(), OAuthProvider::Antigravity);
+        assert_eq!(
+            "antigravity".parse::<OAuthProvider>().unwrap(),
+            OAuthProvider::Antigravity
+        );
         let config = browser_config(OAuthProvider::Antigravity).unwrap();
-        assert_eq!(config.port, 0, "Google's loopback flow must use an ephemeral port");
+        assert_eq!(
+            config.port, 0,
+            "Google's loopback flow must use an ephemeral port"
+        );
         assert_eq!(config.callback_path, "/auth/callback");
         assert!(config.scope.contains("cloud-platform"));
     }

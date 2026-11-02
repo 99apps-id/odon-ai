@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use std::net::{IpAddr, SocketAddr};
 use odon_core::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
+use std::net::{IpAddr, SocketAddr};
 use tracing::info;
 
 use crate::net_guard;
@@ -16,8 +16,16 @@ pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
         .ok()?;
 
     // 1. Try Cloudflare DoH (JSON API)
-    let cf_url = format!("https://cloudflare-dns.com/dns-query?name={}&type=A", urlencoding::encode(host));
-    if let Ok(res) = client.get(&cf_url).header("accept", "application/dns-json").send().await {
+    let cf_url = format!(
+        "https://cloudflare-dns.com/dns-query?name={}&type=A",
+        urlencoding::encode(host)
+    );
+    if let Ok(res) = client
+        .get(&cf_url)
+        .header("accept", "application/dns-json")
+        .send()
+        .await
+    {
         if res.status().is_success() {
             if let Ok(val) = res.json::<Value>().await {
                 if let Some(answers) = val.get("Answer").and_then(|a| a.as_array()) {
@@ -34,8 +42,16 @@ pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
     }
 
     // 2. Try Google DoH (JSON API)
-    let google_url = format!("https://dns.google/resolve?name={}&type=A", urlencoding::encode(host));
-    if let Ok(res) = client.get(&google_url).header("accept", "application/json").send().await {
+    let google_url = format!(
+        "https://dns.google/resolve?name={}&type=A",
+        urlencoding::encode(host)
+    );
+    if let Ok(res) = client
+        .get(&google_url)
+        .header("accept", "application/json")
+        .send()
+        .await
+    {
         if res.status().is_success() {
             if let Ok(val) = res.json::<Value>().await {
                 if let Some(answers) = val.get("Answer").and_then(|a| a.as_array()) {
@@ -126,12 +142,13 @@ impl Tool for WebSearchTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let query = args.get("query").and_then(|q| q.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let query = args
+            .get("query")
+            .and_then(|q| q.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'query' parameter".to_string(),
-            }
-        })?;
+            })?;
         let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
 
         info!("Executing web search for: {}", query);
@@ -143,14 +160,23 @@ impl Tool for WebSearchTool {
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36");
 
         if let Some(ip) = ddg_ip {
-            client_builder = client_builder.resolve("html.duckduckgo.com", SocketAddr::new(ip, 443));
+            client_builder =
+                client_builder.resolve("html.duckduckgo.com", SocketAddr::new(ip, 443));
         }
-        let client = client_builder.build().unwrap_or_else(|_| reqwest::Client::new());
+        let client = client_builder
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
 
-        let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding::encode(query));
+        let url = format!(
+            "https://html.duckduckgo.com/html/?q={}",
+            urlencoding::encode(query)
+        );
         let resp = client
             .get(&url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("Accept-Language", "en-US,en;q=0.9,id;q=0.8")
             .send()
             .await;
@@ -159,8 +185,12 @@ impl Tool for WebSearchTool {
 
         if let Ok(response) = resp {
             if let Ok(html) = response.text().await {
-                let snippet_re = regex::Regex::new(r#"<a class="result__snippet[^>]*>([\s\S]*?)</a>"#).ok();
-                let link_re = regex::Regex::new(r#"<a class="result__url[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#).ok();
+                let snippet_re =
+                    regex::Regex::new(r#"<a class="result__snippet[^>]*>([\s\S]*?)</a>"#).ok();
+                let link_re = regex::Regex::new(
+                    r#"<a class="result__url[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#,
+                )
+                .ok();
 
                 if let (Some(s_re), Some(l_re)) = (snippet_re, link_re) {
                     let links: Vec<_> = l_re.captures_iter(&html).take(limit).collect();
@@ -168,8 +198,14 @@ impl Tool for WebSearchTool {
 
                     for (i, l_cap) in links.iter().enumerate() {
                         let raw_link = l_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-                        let title = clean_html_snippet(l_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("Result"));
-                        let snippet = snippets.get(i).and_then(|s| s.get(1)).map(|m| clean_html_snippet(m.as_str().trim())).unwrap_or_default();
+                        let title = clean_html_snippet(
+                            l_cap.get(2).map(|m| m.as_str().trim()).unwrap_or("Result"),
+                        );
+                        let snippet = snippets
+                            .get(i)
+                            .and_then(|s| s.get(1))
+                            .map(|m| clean_html_snippet(m.as_str().trim()))
+                            .unwrap_or_default();
                         let link = decode_ddg_url(raw_link);
 
                         if !link.is_empty() {
@@ -199,7 +235,9 @@ impl Tool for WebSearchTool {
                             let titles = arr[1].as_array();
                             let snippets = arr[2].as_array();
                             let urls = arr[3].as_array();
-                            if let (Some(t_arr), Some(s_arr), Some(u_arr)) = (titles, snippets, urls) {
+                            if let (Some(t_arr), Some(s_arr), Some(u_arr)) =
+                                (titles, snippets, urls)
+                            {
                                 for i in 0..t_arr.len() {
                                     let t = t_arr.get(i).and_then(|x| x.as_str()).unwrap_or("");
                                     let s = s_arr.get(i).and_then(|x| x.as_str()).unwrap_or("");
@@ -280,12 +318,13 @@ impl Tool for WebFetchTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'url' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
@@ -345,7 +384,8 @@ impl Tool for WebFetchTool {
 
         // Extract <title> if present
         let title_re = regex::Regex::new(r#"(?i)<title[^>]*>([^<]+)</title>"#).ok();
-        let page_title = title_re.as_ref()
+        let page_title = title_re
+            .as_ref()
             .and_then(|r| r.captures(&body))
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().trim().to_string())
@@ -390,12 +430,13 @@ impl Tool for ProbeUrlTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'url' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
@@ -408,10 +449,14 @@ impl Tool for ProbeUrlTool {
             .unwrap_or_else(|_| reqwest::Client::new());
 
         let start = std::time::Instant::now();
-        let resp = client.head(url_str).send().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Probe error on {}: {}", url_str, e),
-        })?;
+        let resp = client
+            .head(url_str)
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Probe error on {}: {}", url_str, e),
+            })?;
 
         let elapsed = start.elapsed().as_millis();
         let status = resp.status().as_u16();
@@ -481,12 +526,13 @@ impl Tool for HttpPostTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'url' parameter".to_string(),
-            }
-        })?;
+            })?;
         let body = args.get("body").unwrap_or(&Value::Null);
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
@@ -543,12 +589,13 @@ impl Tool for DnsLookupTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let host = args.get("host").and_then(|h| h.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let host = args
+            .get("host")
+            .and_then(|h| h.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'host' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let addrs = tokio::net::lookup_host(format!("{}:80", host))
             .await
@@ -586,15 +633,19 @@ impl Tool for PortScanTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let host = args.get("host").and_then(|h| h.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let host = args
+            .get("host")
+            .and_then(|h| h.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'host' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let default_ports = vec![json!(22), json!(80), json!(443), json!(3000), json!(8080)];
-        let ports_arr = args.get("ports").and_then(|p| p.as_array()).unwrap_or(&default_ports);
+        let ports_arr = args
+            .get("ports")
+            .and_then(|p| p.as_array())
+            .unwrap_or(&default_ports);
 
         let mut results = Vec::new();
         for p in ports_arr {
@@ -641,12 +692,13 @@ impl Tool for BrowserOpenTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'url' parameter".to_string(),
-            }
-        })?;
+            })?;
 
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
@@ -657,9 +709,7 @@ impl Tool for BrowserOpenTool {
             .spawn();
 
         #[cfg(target_os = "macos")]
-        let res = tokio::process::Command::new("open")
-            .arg(url_str)
-            .spawn();
+        let res = tokio::process::Command::new("open").arg(url_str).spawn();
 
         #[cfg(target_os = "linux")]
         let res = tokio::process::Command::new("xdg-open")
@@ -730,16 +780,20 @@ impl Tool for BrowserScreenshotTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let url_str = args
+            .get("url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'url' parameter".to_string(),
-            }
-        })?;
+            })?;
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
 
-        let out_path = args.get("output_path").and_then(|p| p.as_str()).unwrap_or("screenshot.png");
+        let out_path = args
+            .get("output_path")
+            .and_then(|p| p.as_str())
+            .unwrap_or("screenshot.png");
         let rel = std::path::Path::new(out_path);
         if rel.is_absolute()
             || rel.components().any(|component| {
@@ -848,4 +902,3 @@ pub(crate) mod urlencoding {
         url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
     }
 }
-

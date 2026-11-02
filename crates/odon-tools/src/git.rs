@@ -64,7 +64,10 @@ impl Tool for GitDiffTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let cached = args.get("cached").and_then(|c| c.as_bool()).unwrap_or(false);
+        let cached = args
+            .get("cached")
+            .and_then(|c| c.as_bool())
+            .unwrap_or(false);
         let mut cmd = Command::new("git");
         cmd.arg("diff");
         if cached {
@@ -106,13 +109,17 @@ impl Tool for GitCommitTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let msg = args.get("message").and_then(|m| m.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let msg = args
+            .get("message")
+            .and_then(|m| m.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'message' parameter".to_string(),
-            }
-        })?;
-        let stage_all = args.get("stage_all").and_then(|s| s.as_bool()).unwrap_or(true);
+            })?;
+        let stage_all = args
+            .get("stage_all")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(true);
 
         if stage_all {
             let _ = Command::new("git")
@@ -318,7 +325,10 @@ impl Tool for GitCheckoutTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let target = args.get("target").and_then(|t| t.as_str()).unwrap_or("HEAD");
+        let target = args
+            .get("target")
+            .and_then(|t| t.as_str())
+            .unwrap_or("HEAD");
         let output = Command::new("git")
             .arg("checkout")
             .arg(target)
@@ -357,7 +367,10 @@ impl Tool for GitShowTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let object = args.get("object").and_then(|o| o.as_str()).unwrap_or("HEAD");
+        let object = args
+            .get("object")
+            .and_then(|o| o.as_str())
+            .unwrap_or("HEAD");
         let output = Command::new("git")
             .arg("show")
             .arg("--stat")
@@ -567,7 +580,10 @@ impl Tool for GitResetTool {
         RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("HEAD");
+        let commit = args
+            .get("commit")
+            .and_then(|c| c.as_str())
+            .unwrap_or("HEAD");
         let output = Command::new("git")
             .arg("reset")
             .arg(commit)
@@ -583,4 +599,3 @@ impl Tool for GitResetTool {
         Ok(json!({ "output": text, "success": output.status.success() }))
     }
 }
-

@@ -27,7 +27,7 @@ pub struct ChatRequest {
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
     fn provider_name(&self) -> &str;
-    
+
     async fn stream_chat(
         &self,
         request: ChatRequest,

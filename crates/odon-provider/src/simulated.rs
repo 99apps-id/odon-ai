@@ -58,26 +58,41 @@ impl ModelProvider for SimulatedProvider {
         }
 
         // If the user asked to inspect files, system, or run tools and we haven't executed a tool yet:
-        if !has_tool_results && (last_user_msg.contains("system") || last_user_msg.contains("sistem") || last_user_msg.contains("environment") || last_user_msg.contains("info")) {
+        if !has_tool_results
+            && (last_user_msg.contains("system")
+                || last_user_msg.contains("sistem")
+                || last_user_msg.contains("environment")
+                || last_user_msg.contains("info"))
+        {
             let call_id = format!("call_sys_info_{}", uuid::Uuid::new_v4().simple());
-            let _ = event_sender.send(StreamEvent::ToolCallDelta {
-                index: 0,
-                id: Some(call_id),
-                name: Some("system_info".to_string()),
-                arguments_delta: Some("{}".to_string()),
-            }).await;
+            let _ = event_sender
+                .send(StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some(call_id),
+                    name: Some("system_info".to_string()),
+                    arguments_delta: Some("{}".to_string()),
+                })
+                .await;
             let _ = event_sender.send(StreamEvent::Done).await;
             return Ok(());
         }
 
-        if !has_tool_results && (last_user_msg.contains("list file") || last_user_msg.contains("dir") || last_user_msg.contains("check files") || last_user_msg.contains("berkas") || last_user_msg.contains("daftar file")) {
+        if !has_tool_results
+            && (last_user_msg.contains("list file")
+                || last_user_msg.contains("dir")
+                || last_user_msg.contains("check files")
+                || last_user_msg.contains("berkas")
+                || last_user_msg.contains("daftar file"))
+        {
             let call_id = format!("call_fs_list_{}", uuid::Uuid::new_v4().simple());
-            let _ = event_sender.send(StreamEvent::ToolCallDelta {
-                index: 0,
-                id: Some(call_id),
-                name: Some("fs_list".to_string()),
-                arguments_delta: Some(r#"{"path":"."}"#.to_string()),
-            }).await;
+            let _ = event_sender
+                .send(StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some(call_id),
+                    name: Some("fs_list".to_string()),
+                    arguments_delta: Some(r#"{"path":"."}"#.to_string()),
+                })
+                .await;
             let _ = event_sender.send(StreamEvent::Done).await;
             return Ok(());
         }
@@ -101,7 +116,9 @@ impl ModelProvider for SimulatedProvider {
             if cancellation.is_cancelled() {
                 break;
             }
-            let _ = event_sender.send(StreamEvent::TextDelta(chunk.to_string())).await;
+            let _ = event_sender
+                .send(StreamEvent::TextDelta(chunk.to_string()))
+                .await;
             tokio::time::sleep(std::time::Duration::from_millis(15)).await;
         }
 

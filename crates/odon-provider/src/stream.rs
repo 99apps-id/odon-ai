@@ -19,4 +19,8 @@ pub enum StreamEvent {
     Error(String),
 }
 
-pub type StreamConsumer = Box<dyn Fn(StreamEvent) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+pub type StreamConsumer = Box<
+    dyn Fn(StreamEvent) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;

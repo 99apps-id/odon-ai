@@ -30,19 +30,24 @@ impl Tool for MemoryStoreTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let key = args.get("key").and_then(|k| k.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let key = args
+            .get("key")
+            .and_then(|k| k.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'key' parameter".to_string(),
-            }
-        })?;
-        let value = args.get("value").and_then(|v| v.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+            })?;
+        let value = args
+            .get("value")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'value' parameter".to_string(),
-            }
-        })?;
-        let category = args.get("category").and_then(|c| c.as_str()).unwrap_or("general");
+            })?;
+        let category = args
+            .get("category")
+            .and_then(|c| c.as_str())
+            .unwrap_or("general");
 
         if let Some(storage) = &ctx.storage {
             storage
@@ -103,10 +108,12 @@ impl Tool for MemoryRecallTool {
                     "memory": item
                 }))
             } else {
-                let items = storage.list_memories(cat_opt).map_err(|e| OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: format!("Failed to list memories: {}", e),
-                })?;
+                let items = storage
+                    .list_memories(cat_opt)
+                    .map_err(|e| OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: format!("Failed to list memories: {}", e),
+                    })?;
                 Ok(json!({
                     "category": cat_opt,
                     "count": items.len(),
@@ -146,7 +153,11 @@ impl Tool for MemorySearchTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("").to_lowercase();
+        let q = args
+            .get("query")
+            .and_then(|q| q.as_str())
+            .unwrap_or("")
+            .to_lowercase();
         let cat = args.get("category").and_then(|c| c.as_str());
 
         if let Some(storage) = &ctx.storage {
@@ -233,5 +244,3 @@ impl Tool for MemoryForgetTool {
         Ok(json!({ "key": key, "forgotten": true }))
     }
 }
-
-

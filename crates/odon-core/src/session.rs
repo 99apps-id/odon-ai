@@ -41,7 +41,11 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(title: impl Into<String>, mode: SessionMode, active_model: impl Into<String>) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        mode: SessionMode,
+        active_model: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4().to_string(),

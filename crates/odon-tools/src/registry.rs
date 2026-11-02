@@ -146,8 +146,12 @@ impl ToolRegistry {
 
         let lower = stripped.to_lowercase().replace('-', "_");
         match lower.as_str() {
-            "websearch" | "search_web" | "search" | "google_search" | "duckduckgo_search" => "web_search".to_string(),
-            "websearch_news" | "search_news" | "news_search" | "news" => "web_search_news".to_string(),
+            "websearch" | "search_web" | "search" | "google_search" | "duckduckgo_search" => {
+                "web_search".to_string()
+            }
+            "websearch_news" | "search_news" | "news_search" | "news" => {
+                "web_search_news".to_string()
+            }
             "websearch_code" | "search_code" | "code_search" => "web_search_code".to_string(),
             "fetch" | "http_get" | "curl" | "browse" => "web_fetch".to_string(),
             "readfile" | "read" | "fs_read" => "read_file".to_string(),
@@ -236,12 +240,7 @@ impl ToolRegistry {
         diagnostics
     }
 
-    pub async fn execute_tool(
-        &self,
-        name: &str,
-        ctx: &ToolContext,
-        args: Value,
-    ) -> Result<Value> {
+    pub async fn execute_tool(&self, name: &str, ctx: &ToolContext, args: Value) -> Result<Value> {
         let tool = self.get(name).ok_or_else(|| OdonError::Tool {
             tool: name.to_string(),
             message: format!("Tool '{}' not found in registry", name),

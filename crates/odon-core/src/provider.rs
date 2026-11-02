@@ -49,7 +49,11 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
-    pub fn new_openai_compatible(base_url: impl Into<String>, api_key: impl Into<String>, default_model: impl Into<String>) -> Self {
+    pub fn new_openai_compatible(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        default_model: impl Into<String>,
+    ) -> Self {
         Self {
             kind: ProviderKind::OpenAiCompatible,
             base_url: base_url.into(),

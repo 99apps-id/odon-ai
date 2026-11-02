@@ -177,7 +177,10 @@ mod tests {
         let parts = value.as_array().unwrap();
         assert_eq!(parts[0]["type"], "text");
         assert_eq!(parts[1]["type"], "image_url");
-        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,aGVsbG8=");
+        assert_eq!(
+            parts[1]["image_url"]["url"],
+            "data:image/png;base64,aGVsbG8="
+        );
         assert_eq!(parts[2]["type"], "file");
         assert_eq!(parts[2]["file"]["filename"], "spec.pdf");
     }

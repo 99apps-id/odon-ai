@@ -70,8 +70,8 @@ fn looks_like_text_file(name: &str, mime: &str) -> bool {
     }
     let lower = name.to_lowercase();
     [
-        ".txt", ".md", ".json", ".csv", ".yaml", ".yml", ".toml", ".ini", ".py", ".rs",
-        ".ts", ".tsx", ".js", ".html", ".css", ".sh", ".ps1", ".sql", ".go", ".java",
+        ".txt", ".md", ".json", ".csv", ".yaml", ".yml", ".toml", ".ini", ".py", ".rs", ".ts",
+        ".tsx", ".js", ".html", ".css", ".sh", ".ps1", ".sql", ".go", ".java",
     ]
     .iter()
     .any(|ext| lower.ends_with(ext))
@@ -143,13 +143,18 @@ impl TelegramRelay {
             .text()
             .await
             .map_err(|e| OdonError::Channel(format!("Telegram {method} read failed: {e}")))?;
-        let val: Value = serde_json::from_str(&text)
-            .map_err(|e| OdonError::Channel(format!("Telegram {method} returned invalid JSON: {e}: {text}")))?;
+        let val: Value = serde_json::from_str(&text).map_err(|e| {
+            OdonError::Channel(format!(
+                "Telegram {method} returned invalid JSON: {e}: {text}"
+            ))
+        })?;
         if !status.is_success() {
             return Err(OdonError::Channel(format!(
                 "Telegram {method} HTTP {}: {}",
                 status.as_u16(),
-                val.get("description").and_then(|d| d.as_str()).unwrap_or(&text)
+                val.get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or(&text)
             )));
         }
         Ok(val)
@@ -216,10 +221,11 @@ impl TelegramRelay {
 
     async fn download_file(&self, file_id: &str) -> Option<Vec<u8>> {
         let token = self.token.as_ref()?;
-        let info = self.api_post("getFile", json!({ "file_id": file_id })).await.ok()?;
-        let file_path = info
-            .pointer("/result/file_path")
-            .and_then(|p| p.as_str())?;
+        let info = self
+            .api_post("getFile", json!({ "file_id": file_id }))
+            .await
+            .ok()?;
+        let file_path = info.pointer("/result/file_path").and_then(|p| p.as_str())?;
         let url = format!("https://api.telegram.org/file/bot{}/{}", token, file_path);
         let resp = self.client.get(&url).send().await.ok()?;
         if !resp.status().is_success() {
@@ -246,10 +252,7 @@ impl TelegramRelay {
                 if let Some(file_id) = photo.get("file_id").and_then(|f| f.as_str()) {
                     if let Some(bytes) = self.download_file(file_id).await {
                         attachments.push(MessageAttachment {
-                            name: format!(
-                                "telegram-photo-{}.jpg",
-                                chrono::Utc::now().timestamp()
-                            ),
+                            name: format!("telegram-photo-{}.jpg", chrono::Utc::now().timestamp()),
                             mime_type: "image/jpeg".to_string(),
                             data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
                         });
@@ -304,13 +307,19 @@ impl TelegramRelay {
             );
         }
         if message.get("video").is_some() {
-            extra_text.push_str("\n\n[Video message received. Video input is not supported by the text model.]");
+            extra_text.push_str(
+                "\n\n[Video message received. Video input is not supported by the text model.]",
+            );
         }
 
         attachments
     }
 
-    async fn handle_message(&self, message: &Value, incoming_tx: &mpsc::Sender<IncomingChannelMessage>) {
+    async fn handle_message(
+        &self,
+        message: &Value,
+        incoming_tx: &mpsc::Sender<IncomingChannelMessage>,
+    ) {
         let Some(chat_id) = message
             .get("chat")
             .and_then(|c| c.get("id"))
@@ -382,7 +391,10 @@ impl TelegramRelay {
 
         if text.trim().is_empty() && attachments.is_empty() {
             let _ = self
-                .send_text(&chat_id, "Unsupported message type. Send text, an image, or a document.")
+                .send_text(
+                    &chat_id,
+                    "Unsupported message type. Send text, an image, or a document.",
+                )
                 .await;
             return;
         }
@@ -407,7 +419,9 @@ impl TelegramRelay {
     }
 
     async fn poll_loop(&self, incoming_tx: mpsc::Sender<IncomingChannelMessage>) {
-        let Some(token) = self.token.clone() else { return };
+        let Some(token) = self.token.clone() else {
+            return;
+        };
         let mut offset = 0i64;
         let mut backoff = 1u64;
         info!("Telegram relay polling loop started");
@@ -441,7 +455,9 @@ impl TelegramRelay {
                     backoff = 1;
                     if let Some(results) = val.get("result").and_then(|r| r.as_array()) {
                         for update in results {
-                            if let Some(update_id) = update.get("update_id").and_then(|u| u.as_i64()) {
+                            if let Some(update_id) =
+                                update.get("update_id").and_then(|u| u.as_i64())
+                            {
                                 offset = offset.max(update_id + 1);
                             }
                             if let Some(message) = update.get("message") {

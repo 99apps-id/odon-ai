@@ -114,7 +114,10 @@ impl ApprovalEngine {
     }
 
     /// Check if target parameters point outside the workspace.
-    pub fn is_outside_workspace(parameters: &serde_json::Value, workspace_root: &std::path::Path) -> bool {
+    pub fn is_outside_workspace(
+        parameters: &serde_json::Value,
+        workspace_root: &std::path::Path,
+    ) -> bool {
         for key in ["path", "cwd", "destination", "source", "file"] {
             if let Some(p_str) = parameters.get(key).and_then(|v| v.as_str()) {
                 let p = std::path::Path::new(p_str);
@@ -122,7 +125,10 @@ impl ApprovalEngine {
                     if !p.starts_with(workspace_root) {
                         return true;
                     }
-                } else if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                } else if p
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
                     let normalized = workspace_root.join(p);
                     if let Ok(canonical) = normalized.canonicalize() {
                         if !canonical.starts_with(workspace_root) {
@@ -151,25 +157,143 @@ impl ApprovalEngine {
 
     pub async fn check_risk(&self, tool_name: &str) -> RiskTier {
         match tool_name {
-            "fs_read" | "fs_list" | "fs_search" | "fs_glob" | "fs_stat" | "fs_readlink" | "fs_diff" | "fs_tree" | "fs_du" | "fs_find"
-            | "termigo_copy_selection" | "termigo_paste_buffer_history" | "editor_open" | "editor_reveal" | "editor_reload"
-            | "read_file" | "list_directory" | "grep" | "glob" | "code_search"
-            | "git_status" | "git_diff" | "git_log" | "git_show" | "git_stash_list" | "git_blame" | "git_log_file" | "git_ls_files"
-            | "github_list_issues" | "github_get_repo" | "github_list_prs" | "github_list_comments" | "github_workflow_list" | "github_workflow_runs" | "github_workflow_jobs" | "github_workflow_logs" | "github_pr_files"
-            | "web_search" | "web_fetch" | "web_search_news" | "web_search_code" | "web_scrape" | "probe_url" | "http_get" | "security_audit_headers" | "security_audit_cert" | "network_traceroute" | "url_preview" | "dns_lookup" | "port_scan"
-            | "system_info" | "calc_eval" | "env_get" | "env_list" | "process_list" | "exec_stream_stdout" | "exec_background_list" | "disk_usage" | "file_hash" | "file_checksum" | "clipboard_read" | "clipboard_write" | "notification_send" | "terminal_info"
-            | "memory_recall" | "memory_search" | "todo_write" | "todo_read" | "todo_update" | "think" | "plan_mode" | "remember"
-            | "mcp_list_tools" | "mcp_list_servers" | "approval_list" | "session_list" | "session_export" | "relay_status" | "automation_list" | "settings_get" => {
-                RiskTier::Tier0ReadOnly
-            }
-            "fs_write" | "fs_edit" | "fs_mkdir" | "fs_move" | "fs_copy" | "fs_chmod" | "fs_chown" | "fs_symlink_create" | "fs_patch" | "fs_copy_recursive" | "fs_move_recursive" | "fs_zip" | "fs_unzip" | "termigo_multi_paste" | "editor_save" | "multi_edit" | "write_file" | "edit" | "create_directory" | "move_file" | "copy_file"
-            | "git_commit" | "git_branch" | "git_add" | "git_checkout" | "git_stash" | "git_stash_pop" | "git_merge" | "git_rebase" | "git_cherry_pick" | "git_revert" | "git_tag" | "git_remote_add" | "git_remote_set_url"
-            | "github_create_issue" | "github_create_review"
-            | "http_post" | "http_put" | "http_patch" | "http_download" | "http_upload"
-            | "code_index" | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "artifact_update" | "artifact_delete" | "artifact_export"
-            | "memory_store" | "memory_forget" | "mcp_call" | "mcp_add_server" | "approval_decide" | "cron_add" | "cron_remove" | "automation_trigger" | "settings_set" => {
-                RiskTier::Tier1WorkspaceMutating
-            }
+            "fs_read"
+            | "fs_list"
+            | "fs_search"
+            | "fs_glob"
+            | "fs_stat"
+            | "fs_readlink"
+            | "fs_diff"
+            | "fs_tree"
+            | "fs_du"
+            | "fs_find"
+            | "termigo_copy_selection"
+            | "termigo_paste_buffer_history"
+            | "editor_open"
+            | "editor_reveal"
+            | "editor_reload"
+            | "read_file"
+            | "list_directory"
+            | "grep"
+            | "glob"
+            | "code_search"
+            | "git_status"
+            | "git_diff"
+            | "git_log"
+            | "git_show"
+            | "git_stash_list"
+            | "git_blame"
+            | "git_log_file"
+            | "git_ls_files"
+            | "github_list_issues"
+            | "github_get_repo"
+            | "github_list_prs"
+            | "github_list_comments"
+            | "github_workflow_list"
+            | "github_workflow_runs"
+            | "github_workflow_jobs"
+            | "github_workflow_logs"
+            | "github_pr_files"
+            | "web_search"
+            | "web_fetch"
+            | "web_search_news"
+            | "web_search_code"
+            | "web_scrape"
+            | "probe_url"
+            | "http_get"
+            | "security_audit_headers"
+            | "security_audit_cert"
+            | "network_traceroute"
+            | "url_preview"
+            | "dns_lookup"
+            | "port_scan"
+            | "system_info"
+            | "calc_eval"
+            | "env_get"
+            | "env_list"
+            | "process_list"
+            | "exec_stream_stdout"
+            | "exec_background_list"
+            | "disk_usage"
+            | "file_hash"
+            | "file_checksum"
+            | "clipboard_read"
+            | "clipboard_write"
+            | "notification_send"
+            | "terminal_info"
+            | "memory_recall"
+            | "memory_search"
+            | "todo_write"
+            | "todo_read"
+            | "todo_update"
+            | "think"
+            | "plan_mode"
+            | "remember"
+            | "mcp_list_tools"
+            | "mcp_list_servers"
+            | "approval_list"
+            | "session_list"
+            | "session_export"
+            | "relay_status"
+            | "automation_list"
+            | "settings_get" => RiskTier::Tier0ReadOnly,
+            "fs_write"
+            | "fs_edit"
+            | "fs_mkdir"
+            | "fs_move"
+            | "fs_copy"
+            | "fs_chmod"
+            | "fs_chown"
+            | "fs_symlink_create"
+            | "fs_patch"
+            | "fs_copy_recursive"
+            | "fs_move_recursive"
+            | "fs_zip"
+            | "fs_unzip"
+            | "termigo_multi_paste"
+            | "editor_save"
+            | "multi_edit"
+            | "write_file"
+            | "edit"
+            | "create_directory"
+            | "move_file"
+            | "copy_file"
+            | "git_commit"
+            | "git_branch"
+            | "git_add"
+            | "git_checkout"
+            | "git_stash"
+            | "git_stash_pop"
+            | "git_merge"
+            | "git_rebase"
+            | "git_cherry_pick"
+            | "git_revert"
+            | "git_tag"
+            | "git_remote_add"
+            | "git_remote_set_url"
+            | "github_create_issue"
+            | "github_create_review"
+            | "http_post"
+            | "http_put"
+            | "http_patch"
+            | "http_download"
+            | "http_upload"
+            | "code_index"
+            | "artifact_create_code"
+            | "artifact_create_document"
+            | "artifact_create_image"
+            | "artifact_update"
+            | "artifact_delete"
+            | "artifact_export"
+            | "memory_store"
+            | "memory_forget"
+            | "mcp_call"
+            | "mcp_add_server"
+            | "approval_decide"
+            | "cron_add"
+            | "cron_remove"
+            | "automation_trigger"
+            | "settings_set" => RiskTier::Tier1WorkspaceMutating,
             _ => RiskTier::Tier2SystemMutating, // shell_exec, bash_run, terminal_exec, fs_delete, git_push, git_pull, git_reset, git_reset_hard, git_clean, github_merge_pr, github_workflow_run, process_kill, exec_background, http_delete
         }
     }
@@ -222,7 +346,13 @@ impl ApprovalEngine {
 
         {
             let mut pending = self.pending.write().await;
-            pending.insert(id.clone(), PendingRequest { request: req, sender: tx });
+            pending.insert(
+                id.clone(),
+                PendingRequest {
+                    request: req,
+                    sender: tx,
+                },
+            );
         }
         drop(policy);
         self.emit(AgentEvent::ApprovalRequested {
@@ -399,22 +529,38 @@ mod tests {
         };
 
         let id = match rx.recv().await.unwrap() {
-            AgentEvent::ApprovalRequested { approval_id, tool_name, risk_tier, .. } => {
+            AgentEvent::ApprovalRequested {
+                approval_id,
+                tool_name,
+                risk_tier,
+                ..
+            } => {
                 assert_eq!(tool_name, "shell_exec");
                 assert_eq!(risk_tier, 2);
                 approval_id
             }
             other => panic!("expected ApprovalRequested, got {other:?}"),
         };
-        assert!(engine.submit_decision(&id, ApprovalDecision::Approved).await);
+        assert!(
+            engine
+                .submit_decision(&id, ApprovalDecision::Approved)
+                .await
+        );
 
         match rx.recv().await.unwrap() {
-            AgentEvent::ApprovalResolved { approval_id, decision, .. } => {
+            AgentEvent::ApprovalResolved {
+                approval_id,
+                decision,
+                ..
+            } => {
                 assert_eq!(approval_id, id);
                 assert_eq!(decision, "approved");
             }
             other => panic!("expected ApprovalResolved, got {other:?}"),
         }
-        assert!(matches!(waiter.await.unwrap().unwrap(), ApprovalDecision::Approved));
+        assert!(matches!(
+            waiter.await.unwrap().unwrap(),
+            ApprovalDecision::Approved
+        ));
     }
 }

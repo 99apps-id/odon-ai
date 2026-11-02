@@ -6,7 +6,9 @@ use odon_core::{AgentEvent, ArtifactKind, Result};
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent};
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, RiskTier, SecurityPolicy};
 use odon_storage::StorageEngine;
-use odon_tools::artifact_gen::{ArtifactCreateCodeTool, ArtifactCreateDocumentTool, ArtifactCreateImageTool};
+use odon_tools::artifact_gen::{
+    ArtifactCreateCodeTool, ArtifactCreateDocumentTool, ArtifactCreateImageTool,
+};
 use odon_tools::fs::{FsListTool, FsReadTool, FsWriteTool};
 use odon_tools::git::{GitDiffTool, GitStatusTool};
 use odon_tools::github::GitHubGetRepoTool;
@@ -52,7 +54,10 @@ impl ModelProvider for MockConversationalProvider {
         event_sender: Sender<StreamEvent>,
         _cancellation: CancellationToken,
     ) -> Result<()> {
-        let has_tools = request.messages.iter().any(|m| m.role == odon_core::MessageRole::Tool);
+        let has_tools = request
+            .messages
+            .iter()
+            .any(|m| m.role == odon_core::MessageRole::Tool);
         if has_tools {
             let _ = event_sender
                 .send(StreamEvent::TextDelta(
@@ -66,7 +71,8 @@ impl ModelProvider for MockConversationalProvider {
 
         let _ = event_sender
             .send(StreamEvent::ThoughtDelta(
-                "Analyzing user request for Personal Knowledge Hub and planning components...".to_string(),
+                "Analyzing user request for Personal Knowledge Hub and planning components..."
+                    .to_string(),
             ))
             .await;
 
@@ -139,16 +145,39 @@ async fn test_security_policy_and_risk_tiers() {
     let policy = SecurityPolicy::default();
     let approval = ApprovalEngine::new(policy);
 
-    assert_eq!(approval.check_risk("fs_read").await, RiskTier::Tier0ReadOnly);
-    assert_eq!(approval.check_risk("git_status").await, RiskTier::Tier0ReadOnly);
-    assert_eq!(approval.check_risk("github_get_repo").await, RiskTier::Tier0ReadOnly);
-    assert_eq!(approval.check_risk("fs_write").await, RiskTier::Tier1WorkspaceMutating);
-    assert_eq!(approval.check_risk("artifact_create_code").await, RiskTier::Tier1WorkspaceMutating);
-    assert_eq!(approval.check_risk("shell_exec").await, RiskTier::Tier2SystemMutating);
+    assert_eq!(
+        approval.check_risk("fs_read").await,
+        RiskTier::Tier0ReadOnly
+    );
+    assert_eq!(
+        approval.check_risk("git_status").await,
+        RiskTier::Tier0ReadOnly
+    );
+    assert_eq!(
+        approval.check_risk("github_get_repo").await,
+        RiskTier::Tier0ReadOnly
+    );
+    assert_eq!(
+        approval.check_risk("fs_write").await,
+        RiskTier::Tier1WorkspaceMutating
+    );
+    assert_eq!(
+        approval.check_risk("artifact_create_code").await,
+        RiskTier::Tier1WorkspaceMutating
+    );
+    assert_eq!(
+        approval.check_risk("shell_exec").await,
+        RiskTier::Tier2SystemMutating
+    );
 
     // Auto-approve read only Tier 0
     let decision = approval
-        .evaluate_and_request("test_session", "fs_read", &serde_json::json!({ "path": "test.txt" }), "Read file")
+        .evaluate_and_request(
+            "test_session",
+            "fs_read",
+            &serde_json::json!({ "path": "test.txt" }),
+            "Read file",
+        )
         .await
         .unwrap();
     matches!(decision, ApprovalDecision::Approved);
@@ -178,14 +207,7 @@ async fn test_conversational_agent_turn_with_artifacts() {
     let temp_dir = tempfile::tempdir().unwrap();
     let workspace = temp_dir.path().to_string_lossy().to_string();
 
-    let runtime = AgentRuntime::new(
-        storage.clone(),
-        tools,
-        approval,
-        audit,
-        event_tx,
-        workspace,
-    );
+    let runtime = AgentRuntime::new(storage.clone(), tools, approval, audit, event_tx, workspace);
 
     let provider = Arc::new(MockConversationalProvider);
     runtime.register_provider("default", provider, true).await;
@@ -246,48 +268,108 @@ async fn test_extended_tools_execution() {
     };
 
     // 1. fs_write
-    let write_res = registry.execute_tool("fs_write", &ctx, serde_json::json!({
-        "path": "hello.txt",
-        "content": "Hello world from ODON agent runtime!"
-    })).await.unwrap();
-    assert_eq!(write_res.get("path").and_then(|p| p.as_str()), Some("hello.txt"));
+    let write_res = registry
+        .execute_tool(
+            "fs_write",
+            &ctx,
+            serde_json::json!({
+                "path": "hello.txt",
+                "content": "Hello world from ODON agent runtime!"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        write_res.get("path").and_then(|p| p.as_str()),
+        Some("hello.txt")
+    );
 
     // 2. fs_edit
-    let edit_res = registry.execute_tool("fs_edit", &ctx, serde_json::json!({
-        "path": "hello.txt",
-        "target": "ODON agent runtime",
-        "replacement": "ODON full agentic harness"
-    })).await.unwrap();
-    assert_eq!(edit_res.get("status").and_then(|s| s.as_str()), Some("success"));
+    let edit_res = registry
+        .execute_tool(
+            "fs_edit",
+            &ctx,
+            serde_json::json!({
+                "path": "hello.txt",
+                "target": "ODON agent runtime",
+                "replacement": "ODON full agentic harness"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        edit_res.get("status").and_then(|s| s.as_str()),
+        Some("success")
+    );
 
     // 3. fs_search
-    let search_res = registry.execute_tool("fs_search", &ctx, serde_json::json!({
-        "query": "harness"
-    })).await.unwrap();
-    assert!(search_res.get("results_count").and_then(|c| c.as_u64()).unwrap_or(0) >= 1);
+    let search_res = registry
+        .execute_tool(
+            "fs_search",
+            &ctx,
+            serde_json::json!({
+                "query": "harness"
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(
+        search_res
+            .get("results_count")
+            .and_then(|c| c.as_u64())
+            .unwrap_or(0)
+            >= 1
+    );
 
     // 4. system_info
-    let sys_res = registry.execute_tool("system_info", &ctx, serde_json::json!({})).await.unwrap();
+    let sys_res = registry
+        .execute_tool("system_info", &ctx, serde_json::json!({}))
+        .await
+        .unwrap();
     assert!(sys_res.get("os").is_some());
     assert!(sys_res.get("architecture").is_some());
 
     // 5. calc_eval
-    let calc_res = registry.execute_tool("calc_eval", &ctx, serde_json::json!({
-        "expression": "(100 * 2) + 50"
-    })).await.unwrap();
+    let calc_res = registry
+        .execute_tool(
+            "calc_eval",
+            &ctx,
+            serde_json::json!({
+                "expression": "(100 * 2) + 50"
+            }),
+        )
+        .await
+        .unwrap();
     assert_eq!(calc_res.get("result").and_then(|r| r.as_f64()), Some(250.0));
 
     // 6. memory_store & recall
-    let store_res = registry.execute_tool("memory_store", &ctx, serde_json::json!({
-        "key": "user_ui_preference",
-        "value": "Clean ChatGPT style, no AI slop",
-        "category": "preferences"
-    })).await.unwrap();
-    assert_eq!(store_res.get("status").and_then(|s| s.as_str()), Some("stored"));
+    let store_res = registry
+        .execute_tool(
+            "memory_store",
+            &ctx,
+            serde_json::json!({
+                "key": "user_ui_preference",
+                "value": "Clean ChatGPT style, no AI slop",
+                "category": "preferences"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store_res.get("status").and_then(|s| s.as_str()),
+        Some("stored")
+    );
 
-    let recall_res = registry.execute_tool("memory_recall", &ctx, serde_json::json!({
-        "key": "user_ui_preference"
-    })).await.unwrap();
+    let recall_res = registry
+        .execute_tool(
+            "memory_recall",
+            &ctx,
+            serde_json::json!({
+                "key": "user_ui_preference"
+            }),
+        )
+        .await
+        .unwrap();
     assert!(recall_res.get("memory").is_some());
 }
 
@@ -357,14 +439,21 @@ async fn test_tool_history_orders_assistant_calls_before_tool_results() {
     let session = Session::new("Order", SessionMode::General, "odon-auto");
     storage.save_session(&session).unwrap();
     runtime
-        .execute_turn(&session.id, "please build it", None, CancellationToken::new())
+        .execute_turn(
+            &session.id,
+            "please build it",
+            None,
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
 
     let msgs = storage.list_messages(&session.id).unwrap();
     let first_calls = msgs
         .iter()
-        .position(|m| m.role == odon_core::MessageRole::Assistant && !m.content.tool_calls.is_empty())
+        .position(|m| {
+            m.role == odon_core::MessageRole::Assistant && !m.content.tool_calls.is_empty()
+        })
         .expect("an assistant message declaring tool_calls must be stored");
     let first_tool = msgs
         .iter()
@@ -382,9 +471,15 @@ async fn test_tool_history_orders_assistant_calls_before_tool_results() {
         .iter()
         .map(|c| c.call_id.as_str())
         .collect();
-    for tool_msg in msgs.iter().filter(|m| m.role == odon_core::MessageRole::Tool) {
+    for tool_msg in msgs
+        .iter()
+        .filter(|m| m.role == odon_core::MessageRole::Tool)
+    {
         let id = tool_msg.content.tool_calls[0].call_id.as_str();
-        assert!(declared.contains(&id), "tool result {id} has no declaring call");
+        assert!(
+            declared.contains(&id),
+            "tool result {id} has no declaring call"
+        );
         assert!(!tool_msg.content.tool_calls[0].tool_name.is_empty());
     }
 }
@@ -451,9 +546,7 @@ async fn test_priority_steer_interrupts_running_turn() {
         event_tx,
         std::env::temp_dir().to_string_lossy().to_string(),
     ));
-    runtime
-        .register_provider("default", provider, true)
-        .await;
+    runtime.register_provider("default", provider, true).await;
 
     let session = Session::new("Steer Test", SessionMode::General, "steerable");
     storage.save_session(&session).unwrap();

@@ -111,10 +111,8 @@ impl AuditLogger {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &self.path,
-                    std::fs::Permissions::from_mode(0o600),
-                );
+                let _ =
+                    std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
             }
         }
 
@@ -129,7 +127,11 @@ impl AuditLogger {
     pub async fn get_history(&self, session_id: Option<&str>) -> Vec<AuditEvent> {
         let events = self.events.read().await;
         if let Some(sid) = session_id {
-            events.iter().filter(|e| e.session_id == sid).cloned().collect()
+            events
+                .iter()
+                .filter(|e| e.session_id == sid)
+                .cloned()
+                .collect()
         } else {
             events.clone()
         }
@@ -147,7 +149,15 @@ mod tests {
         let log_path = temp.join("audit.jsonl");
         let logger = AuditLogger::with_path(log_path.clone());
         let event = logger
-            .record("s1", "shell_exec", RiskTier::Tier2SystemMutating, "run", true, true, 12)
+            .record(
+                "s1",
+                "shell_exec",
+                RiskTier::Tier2SystemMutating,
+                "run",
+                true,
+                true,
+                12,
+            )
             .await;
         assert_eq!(event.tool_name, "shell_exec");
         assert_eq!(logger.get_history(Some("s1")).await.len(), 1);

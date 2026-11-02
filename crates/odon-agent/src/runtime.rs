@@ -398,7 +398,9 @@ impl AgentRuntime {
                 } else {
                     stream_rx.recv().await
                 };
-                let Some(evt) = evt else { break; };
+                let Some(evt) = evt else {
+                    break;
+                };
                 match evt {
                     StreamEvent::TextDelta(delta) => {
                         step_text.push_str(&delta);
@@ -416,7 +418,12 @@ impl AgentRuntime {
                             delta,
                         });
                     }
-                    StreamEvent::ToolCallDelta { index, id, name, arguments_delta } => {
+                    StreamEvent::ToolCallDelta {
+                        index,
+                        id,
+                        name,
+                        arguments_delta,
+                    } => {
                         let entry = tool_accumulator.entry(index).or_default();
                         if let Some(call_id) = id {
                             entry.id = call_id;
@@ -530,7 +537,8 @@ impl AgentRuntime {
                     // keeping the history valid with a synthetic tool result.
                     let start = std::time::Instant::now();
                     let tool_future =
-                        self.tools.execute_tool(&tool_call.name, &tool_ctx, args_val.clone());
+                        self.tools
+                            .execute_tool(&tool_call.name, &tool_ctx, args_val.clone());
                     tokio::pin!(tool_future);
                     let tool_res = tokio::select! {
                         _ = cancellation.cancelled() => {
@@ -567,7 +575,9 @@ impl AgentRuntime {
                         Ok(val) => {
                             // Check if an artifact was synthesized
                             if let Some(art_val) = val.get("artifact") {
-                                if let Ok(artifact) = serde_json::from_value::<Artifact>(art_val.clone()) {
+                                if let Ok(artifact) =
+                                    serde_json::from_value::<Artifact>(art_val.clone())
+                                {
                                     let _ = self.storage.save_artifact(&artifact);
                                     let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
                                         session_id: session_id.to_string(),
@@ -604,7 +614,11 @@ impl AgentRuntime {
                     // Tool results are persisted AFTER the assistant message that
                     // declares the calls (below): providers reject a tool message
                     // that does not follow the matching tool_calls message.
-                    tool_result_msgs.push((call_id, tool_call.name.clone(), output_val.to_string()));
+                    tool_result_msgs.push((
+                        call_id,
+                        tool_call.name.clone(),
+                        output_val.to_string(),
+                    ));
                 }
             }
 
@@ -613,7 +627,11 @@ impl AgentRuntime {
             let mut intermediate_assistant = Message::new_assistant(
                 session_id,
                 step_text,
-                if step_thought.is_empty() { None } else { Some(step_thought) },
+                if step_thought.is_empty() {
+                    None
+                } else {
+                    Some(step_thought)
+                },
                 Some(requested_model.to_string()),
             );
             intermediate_assistant.content.tool_calls = executed_tools_info;

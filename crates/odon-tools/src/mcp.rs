@@ -101,12 +101,14 @@ impl StdioMcpClient {
                 ),
             });
         }
-        let command = config.command.as_deref().filter(|value| !value.trim().is_empty()).ok_or_else(|| {
-            OdonError::Tool {
+        let command = config
+            .command
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| OdonError::Tool {
                 tool: "mcp".to_string(),
                 message: format!("MCP server '{}' has no command", config.name),
-            }
-        })?;
+            })?;
         let mut process = Command::new(command);
         process
             .args(config.args.as_deref().unwrap_or_default())
@@ -176,10 +178,13 @@ impl StdioMcpClient {
             message: format!("Failed to encode MCP request: {error}"),
         })?;
         encoded.push(b'\n');
-        self.stdin.write_all(&encoded).await.map_err(|error| OdonError::Tool {
-            tool: "mcp".to_string(),
-            message: format!("Failed to write MCP request: {error}"),
-        })?;
+        self.stdin
+            .write_all(&encoded)
+            .await
+            .map_err(|error| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("Failed to write MCP request: {error}"),
+            })?;
         self.stdin.flush().await.map_err(|error| OdonError::Tool {
             tool: "mcp".to_string(),
             message: format!("Failed to flush MCP request: {error}"),
@@ -187,10 +192,15 @@ impl StdioMcpClient {
     }
 
     async fn read_response(&mut self, id: u64) -> Result<Value> {
-        while let Some(line) = self.stdout.next_line().await.map_err(|error| OdonError::Tool {
-            tool: "mcp".to_string(),
-            message: format!("Failed reading MCP response: {error}"),
-        })? {
+        while let Some(line) = self
+            .stdout
+            .next_line()
+            .await
+            .map_err(|error| OdonError::Tool {
+                tool: "mcp".to_string(),
+                message: format!("Failed reading MCP response: {error}"),
+            })?
+        {
             let Ok(response) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
@@ -203,10 +213,13 @@ impl StdioMcpClient {
                     message: format!("MCP server error: {error}"),
                 });
             }
-            return response.get("result").cloned().ok_or_else(|| OdonError::Tool {
-                tool: "mcp".to_string(),
-                message: "MCP response had no result".to_string(),
-            });
+            return response
+                .get("result")
+                .cloned()
+                .ok_or_else(|| OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: "MCP response had no result".to_string(),
+                });
         }
         Err(OdonError::Tool {
             tool: "mcp".to_string(),
@@ -290,7 +303,10 @@ impl SseMcpClient {
             .await
             .map_err(|error| OdonError::Tool {
                 tool: "mcp".to_string(),
-                message: format!("Failed to connect MCP SSE server '{}': {error}", config.name),
+                message: format!(
+                    "Failed to connect MCP SSE server '{}': {error}",
+                    config.name
+                ),
             })?;
         if !response.status().is_success() {
             return Err(OdonError::Tool {
@@ -313,12 +329,10 @@ impl SseMcpClient {
                     });
                 };
                 if event == "endpoint" && !data.trim().is_empty() {
-                    let resolved = base
-                        .join(data.trim())
-                        .map_err(|error| OdonError::Tool {
-                            tool: "mcp".to_string(),
-                            message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
-                        })?;
+                    let resolved = base.join(data.trim()).map_err(|error| OdonError::Tool {
+                        tool: "mcp".to_string(),
+                        message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
+                    })?;
                     return Ok(resolved.to_string());
                 }
             }
@@ -422,10 +436,13 @@ impl SseMcpClient {
                     message: format!("MCP server error: {error}"),
                 });
             }
-            return response.get("result").cloned().ok_or_else(|| OdonError::Tool {
-                tool: "mcp".to_string(),
-                message: "MCP response had no result".to_string(),
-            });
+            return response
+                .get("result")
+                .cloned()
+                .ok_or_else(|| OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: "MCP response had no result".to_string(),
+                });
         }
         Err(OdonError::Tool {
             tool: "mcp".to_string(),
@@ -453,7 +470,10 @@ async fn call_server(config: &McpServerConfig, method: &str, params: Value) -> R
                 .await
                 .map_err(|_| OdonError::Tool {
                     tool: "mcp".to_string(),
-                    message: format!("MCP server '{}' did not initialize within 30 seconds", config.name),
+                    message: format!(
+                        "MCP server '{}' did not initialize within 30 seconds",
+                        config.name
+                    ),
                 })??;
             let result = client.request(method, params).await;
             client.close().await;
@@ -464,7 +484,10 @@ async fn call_server(config: &McpServerConfig, method: &str, params: Value) -> R
                 .await
                 .map_err(|_| OdonError::Tool {
                     tool: "mcp".to_string(),
-                    message: format!("MCP SSE server '{}' did not initialize within 30 seconds", config.name),
+                    message: format!(
+                        "MCP SSE server '{}' did not initialize within 30 seconds",
+                        config.name
+                    ),
                 })??;
             let result = client.request(method, params).await;
             client.close().await;
@@ -611,7 +634,10 @@ impl Tool for McpCallStreamTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let server = args.get("server").and_then(|s| s.as_str()).unwrap_or("default");
+        let server = args
+            .get("server")
+            .and_then(|s| s.as_str())
+            .unwrap_or("default");
         let tool = args.get("tool").and_then(|t| t.as_str()).unwrap_or("ping");
         let arguments = args.get("arguments").cloned().unwrap_or_else(|| json!({}));
         let config = find_server(server)?;
@@ -650,7 +676,10 @@ impl Tool for McpRemoveServerTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let sid = args.get("server_id").and_then(|s| s.as_str()).unwrap_or("");
         if sid.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "server_id is required".into() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "server_id is required".into(),
+            });
         }
         let mut servers = load_mcp_servers();
         let before = servers.len();

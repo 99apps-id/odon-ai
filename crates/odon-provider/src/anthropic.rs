@@ -98,15 +98,17 @@ impl ModelProvider for AnthropicProvider {
             AuthMode::ApiKey => {
                 headers.insert(
                     "x-api-key",
-                    HeaderValue::from_str(&self.api_key)
-                        .map_err(|e| OdonError::Auth(format!("Invalid Anthropic API key format: {e}")))?,
+                    HeaderValue::from_str(&self.api_key).map_err(|e| {
+                        OdonError::Auth(format!("Invalid Anthropic API key format: {e}"))
+                    })?,
                 );
             }
             AuthMode::Bearer => {
                 headers.insert(
                     AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Bearer {}", self.api_key))
-                        .map_err(|e| OdonError::Auth(format!("Invalid bearer token format: {e}")))?,
+                    HeaderValue::from_str(&format!("Bearer {}", self.api_key)).map_err(|e| {
+                        OdonError::Auth(format!("Invalid bearer token format: {e}"))
+                    })?,
                 );
             }
         }
@@ -114,12 +116,16 @@ impl ModelProvider for AnthropicProvider {
         for (name, value) in self.extra_headers.iter() {
             headers.insert(name.clone(), value.clone());
         }
-        if request
-            .messages
-            .iter()
-            .any(|m| m.content.attachments.iter().any(|a| a.mime_type == "application/pdf"))
-        {
-            headers.insert("anthropic-beta", HeaderValue::from_static("pdfs-2024-09-25"));
+        if request.messages.iter().any(|m| {
+            m.content
+                .attachments
+                .iter()
+                .any(|a| a.mime_type == "application/pdf")
+        }) {
+            headers.insert(
+                "anthropic-beta",
+                HeaderValue::from_static("pdfs-2024-09-25"),
+            );
         }
 
         // Anthropic wants: assistant turns carry `tool_use` blocks, and the matching
@@ -139,7 +145,11 @@ impl ModelProvider for AnthropicProvider {
                         blocks.push(json!({ "type": "text", "text": msg.content.text }));
                     }
                     for tc in &msg.content.tool_calls {
-                        let input = if tc.arguments.is_object() { tc.arguments.clone() } else { json!({}) };
+                        let input = if tc.arguments.is_object() {
+                            tc.arguments.clone()
+                        } else {
+                            json!({})
+                        };
                         blocks.push(json!({
                             "type": "tool_use", "id": tc.call_id, "name": tc.tool_name, "input": input
                         }));
@@ -150,7 +160,12 @@ impl ModelProvider for AnthropicProvider {
                     messages_payload.push(json!({ "role": "assistant", "content": blocks }));
                 }
                 MessageRole::Tool => {
-                    let call_id = msg.content.tool_calls.first().map(|t| t.call_id.clone()).unwrap_or_default();
+                    let call_id = msg
+                        .content
+                        .tool_calls
+                        .first()
+                        .map(|t| t.call_id.clone())
+                        .unwrap_or_default();
                     let block = json!({
                         "type": "tool_result", "tool_use_id": call_id, "content": msg.content.text
                     });
@@ -159,7 +174,10 @@ impl ModelProvider for AnthropicProvider {
                         .map(|m| m["role"] == "user" && m["content"].is_array())
                         .unwrap_or(false);
                     if merge {
-                        if let Some(arr) = messages_payload.last_mut().and_then(|m| m["content"].as_array_mut()) {
+                        if let Some(arr) = messages_payload
+                            .last_mut()
+                            .and_then(|m| m["content"].as_array_mut())
+                        {
                             arr.push(block);
                         }
                     } else {
@@ -309,4 +327,3 @@ impl ModelProvider for AnthropicProvider {
         Ok(())
     }
 }
-
