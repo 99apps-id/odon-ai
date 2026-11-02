@@ -669,6 +669,61 @@ impl Tool for BrowserSessionScreenshotTool {
     }
 }
 
+pub struct BrowserSessionSelectTool;
+#[async_trait]
+impl Tool for BrowserSessionSelectTool {
+    fn name(&self) -> &str {
+        "browser_session_select"
+    }
+    fn description(&self) -> &str {
+        "Select an option in a select element within a live browser session"
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "value": { "type": "string" } }),
+            json!(["session_id", "selector", "value"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let id = args
+            .get("session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("session_id is required"))?;
+        let selector = args
+            .get("selector")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("selector is required"))?;
+        let value = args
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("value is required"))?;
+        let js = format!(
+            "(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');if(!(e instanceof HTMLSelectElement))throw new Error('selector is not a select element');e.value={};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));return e.value}})()",
+            serde_json::to_string(selector).unwrap(),
+            serde_json::to_string(value).unwrap()
+        );
+        let result = cdp(
+            id,
+            "Runtime.evaluate",
+            json!({ "expression": js, "returnByValue": true }),
+        )
+        .await?;
+        let selected = result
+            .pointer("/result/result/value")
+            .and_then(Value::as_str)
+            .unwrap_or(value);
+        Ok(json!({
+            "session_id": id,
+            "selector": selector,
+            "value": selected,
+            "status": "selected"
+        }))
+    }
+}
+
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 /// Load all persisted session metadata from disk into the in-memory store.

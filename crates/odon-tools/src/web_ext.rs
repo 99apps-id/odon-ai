@@ -684,18 +684,20 @@ impl Tool for SecurityAuditCertTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
     }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Unavailable {
+            reason: "TLS certificate inspection is not implemented yet".to_string(),
+        }
+    }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let host = args
             .get("host")
             .and_then(|h| h.as_str())
             .unwrap_or("github.com");
-        Ok(json!({
-            "host": host,
-            "tls_valid": true,
-            "protocol": "TLS 1.3",
-            "issuer": "DigiCert / Let's Encrypt",
-            "days_until_expiration": 90
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("TLS certificate inspection is not implemented yet ({host})"),
+        })
     }
 }
 
@@ -718,20 +720,80 @@ impl Tool for NetworkTracerouteTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
+    }
+    fn availability(&self) -> crate::registry::ToolAvailability {
+        crate::registry::ToolAvailability::Experimental
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let host = args
             .get("host")
             .and_then(|h| h.as_str())
-            .unwrap_or("1.1.1.1");
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'host' parameter".to_string(),
+            })?;
+        let host = host.trim().trim_end_matches('/');
+        if host.is_empty() || host.starts_with('-') || host.len() > 253 {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Invalid traceroute target".to_string(),
+            });
+        }
+        // Reuse the SSRF guard by validating the target as an HTTPS URL.
+        let validated = crate::net_guard::validate_url(&format!("https://{host}")).await?;
+        let target_host = validated
+            .host_str()
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Traceroute target has no host".to_string(),
+            })?
+            .to_string();
+
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut cmd = tokio::process::Command::new("tracert");
+            cmd.args(["-d", "-h", "15", "-w", "1000"]).arg(&target_host);
+            cmd
+        };
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            let mut cmd = tokio::process::Command::new("traceroute");
+            cmd.args(["-m", "15", "-w", "1"]).arg(&target_host);
+            cmd
+        };
+
+        let started = std::time::Instant::now();
+        let output = command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "Could not run traceroute; ensure the system traceroute utility is installed: {e}"
+                ),
+            })?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = stdout.lines().take(32).collect();
+        if !output.status.success() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "Traceroute failed with exit code {}: {}",
+                    output.status.code().unwrap_or(-1),
+                    stderr.trim()
+                ),
+            });
+        }
         Ok(json!({
-            "target": host,
-            "hops": [
-                { "hop": 1, "ip": "192.168.1.1", "rtt_ms": 1.2 },
-                { "hop": 2, "ip": "10.0.0.1", "rtt_ms": 4.5 },
-                { "hop": 3, "ip": host, "rtt_ms": 12.8 }
-            ]
+            "target": target_host,
+            "success": output.status.success(),
+            "hops": lines,
+            "duration_ms": started.elapsed().as_millis(),
+            "truncated": stdout.lines().count() > lines.len()
         }))
     }
 }

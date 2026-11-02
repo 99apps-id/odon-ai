@@ -17,6 +17,7 @@ pub mod net_guard;
 pub mod ops_ext;
 pub mod quality;
 pub mod provider_ops;
+pub mod project_ops;
 pub mod registry;
 pub mod review;
 pub mod runtime;
@@ -183,6 +184,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(mcp::McpCallTool));
     reg.register(Box::new(mcp::McpCallStreamTool));
     reg.register(Box::new(mcp::McpRemoveServerTool));
+    reg.register(Box::new(mcp::McpToggleServerTool));
     reg.register(Box::new(ops_ext::McpAddServerTool));
     reg.register(Box::new(ops_ext::McpListServersTool));
 
@@ -231,6 +233,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(browser_session::BrowserSessionTypeTool));
     reg.register(Box::new(browser_session::BrowserSessionWaitTool));
     reg.register(Box::new(browser_session::BrowserSessionScreenshotTool));
+    reg.register(Box::new(browser_session::BrowserSessionSelectTool));
 
     // Provider operations
     reg.register(Box::new(provider_ops::ProviderListTool));
@@ -242,7 +245,13 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(daemon_ops::DaemonMetricsTool));
     reg.register(Box::new(daemon_ops::ToolDiagnosticsTool));
     reg.register(Box::new(daemon_ops::DoctorTool));
+    reg.register(Box::new(daemon_ops::WorkspaceAddTool));
+    reg.register(Box::new(daemon_ops::WorkspaceRemoveTool));
     reg.register(Box::new(daemon_ops::WorkspaceListTool));
+
+    // Project operations
+    reg.register(Box::new(project_ops::ProjectDetectTool));
+    reg.register(Box::new(project_ops::ProjectScriptsTool));
 
     // Autonomous Skills (.odon/skills)
     reg.register(Box::new(skills::SkillListTool));
@@ -316,7 +325,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            207,
+            213,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
@@ -391,13 +400,14 @@ mod tests {
                 "editor_open",
                 "editor_reveal",
                 "termigo_paste_buffer_history",
+                "security_audit_cert",
             ]),
             "Unavailable capabilities must be reviewed explicitly"
         );
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 208);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 213);
     }
 
     #[test]

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use odon_core::{OdonError, Result};
 use odon_security::{ApprovalDecision, RiskTier};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 
 use crate::mcp::{load_mcp_servers, save_mcp_servers, McpServerConfig};
@@ -15,7 +16,7 @@ fn odon_home() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-fn daemon_base_url() -> String {
+pub(crate) fn daemon_base_url() -> String {
     std::env::var("ODON_DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:4096".to_string())
 }
 
@@ -1023,7 +1024,8 @@ impl Tool for McpAddServerTool {
                 "transport": { "type": "string", "enum": ["stdio", "sse"] },
                 "command": { "type": "string" },
                 "args": { "type": "array", "items": { "type": "string" } },
-                "url": { "type": "string" }
+                "url": { "type": "string" },
+                "env": { "type": "object", "description": "Environment variables passed to a stdio MCP server", "additionalProperties": { "type": "string" } }
             },
             "required": ["id", "name", "transport"]
         })
@@ -1057,6 +1059,14 @@ impl Tool for McpAddServerTool {
                 .filter_map(|item| item.as_str().map(String::from))
                 .collect::<Vec<_>>()
         });
+        let env = args.get("env").and_then(Value::as_object).map(|values| {
+            values
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_string()))
+                })
+                .collect::<HashMap<String, String>>()
+        });
 
         let config = McpServerConfig {
             id: id.to_string(),
@@ -1064,7 +1074,7 @@ impl Tool for McpAddServerTool {
             transport: transport.to_string(),
             command,
             args: server_args,
-            env: None,
+            env,
             url,
             enabled: true,
             tools: Vec::new(),

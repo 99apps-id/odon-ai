@@ -695,6 +695,12 @@ impl Tool for McpRemoveServerTool {
         }
         let mut servers = load_mcp_servers();
         let before = servers.len();
+        if servers.iter().all(|server| server.id != sid && !server.name.eq_ignore_ascii_case(sid)) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("No MCP server matched '{sid}'"),
+            });
+        }
         servers.retain(|server| server.id != sid && !server.name.eq_ignore_ascii_case(sid));
         save_mcp_servers(&servers)?;
         let removed = servers.len() != before;
@@ -706,6 +712,63 @@ impl Tool for McpRemoveServerTool {
             } else {
                 format!("No MCP server matched '{sid}'")
             }
+        }))
+    }
+}
+
+pub struct McpToggleServerTool;
+#[async_trait]
+impl Tool for McpToggleServerTool {
+    fn name(&self) -> &str {
+        "mcp_toggle_server"
+    }
+    fn description(&self) -> &str {
+        "Enable or disable a configured MCP server without deleting it"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "server_id": { "type": "string", "description": "MCP server ID or name" },
+                "enabled": { "type": "boolean", "description": "Omit to toggle the current state" }
+            },
+            "required": ["server_id"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let sid = args
+            .get("server_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'server_id' parameter".to_string(),
+            })?;
+        let mut servers = load_mcp_servers();
+        let server = servers
+            .iter_mut()
+            .find(|server| server.id == sid || server.name.eq_ignore_ascii_case(sid))
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("No MCP server matched '{sid}'"),
+            })?;
+        let previous = server.enabled;
+        server.enabled = args
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(!previous);
+        let enabled = server.enabled;
+        let id = server.id.clone();
+        let name = server.name.clone();
+        save_mcp_servers(&servers)?;
+        Ok(json!({
+            "server_id": id,
+            "name": name,
+            "previous_enabled": previous,
+            "enabled": enabled,
+            "status": "updated"
         }))
     }
 }
