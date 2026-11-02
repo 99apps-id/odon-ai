@@ -4038,6 +4038,34 @@ async fn fs_read_file(
     }
 }
 
+async fn evaluate_http_action(
+    state: &AppState,
+    tool_name: &str,
+    parameters: &Value,
+    description: &str,
+) -> Result<(), Value> {
+    match state
+        .approval
+        .evaluate_and_request("desktop-api", tool_name, parameters, description)
+        .await
+    {
+        Ok(ApprovalDecision::Approved | ApprovalDecision::ApprovedAlways) => Ok(()),
+        Ok(ApprovalDecision::Rejected { reason }) => {
+            Err(json!({ "success": false, "error": reason, "code": "approval_rejected" }))
+        }
+        Ok(ApprovalDecision::Expired) => Err(json!({
+            "success": false,
+            "error": "Approval request expired",
+            "code": "approval_expired"
+        })),
+        Err(error) => Err(json!({
+            "success": false,
+            "error": error.to_string(),
+            "code": "approval_error"
+        })),
+    }
+}
+
 #[derive(Deserialize)]
 struct FsWritePayload {
     path: String,
@@ -4048,6 +4076,17 @@ async fn fs_write_file(
     State(state): State<AppState>,
     Json(payload): Json<FsWritePayload>,
 ) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "fs_write",
+        &json!({ "path": payload.path }),
+        &format!("Write file {}", payload.path),
+    )
+    .await
+    {
+        return Json(error);
+    }
+
     let p = std::path::Path::new(&payload.path);
     let abs = if p.is_absolute() {
         p.to_path_buf()
@@ -4077,6 +4116,17 @@ async fn fs_mkdir(
     State(state): State<AppState>,
     Json(payload): Json<FsMkdirPayload>,
 ) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "fs_mkdir",
+        &json!({ "path": payload.path }),
+        &format!("Create directory {}", payload.path),
+    )
+    .await
+    {
+        return Json(error);
+    }
+
     let p = std::path::Path::new(&payload.path);
     let abs = if p.is_absolute() {
         p.to_path_buf()
@@ -4102,6 +4152,17 @@ async fn fs_delete_path(
     State(state): State<AppState>,
     Query(q): Query<FsDeleteQuery>,
 ) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "fs_delete",
+        &json!({ "path": q.path }),
+        &format!("Delete path {}", q.path),
+    )
+    .await
+    {
+        return Json(error);
+    }
+
     let p = std::path::Path::new(&q.path);
     let abs = if p.is_absolute() {
         p.to_path_buf()

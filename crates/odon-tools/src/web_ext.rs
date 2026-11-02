@@ -13,16 +13,92 @@ use std::path::{Component, PathBuf};
 fn safe_workspace_path(root: &str, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     if path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
     {
         return Err(OdonError::Tool {
             tool: "filesystem".to_string(),
             message: format!("Path must stay inside the workspace: {relative}"),
         });
     }
-    Ok(Path::new(root).join(path))
+
+    let root = PathBuf::from(root);
+    let canonical_root = std::fs::canonicalize(&root).map_err(|error| OdonError::Tool {
+        tool: "filesystem".to_string(),
+        message: format!("Cannot resolve workspace root {}: {error}", root.display()),
+    })?;
+    let joined = root.join(path);
+    let mut existing_ancestor = joined.as_path();
+    while !existing_ancestor.exists() {
+        existing_ancestor = existing_ancestor.parent().ok_or_else(|| OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Cannot resolve parent for {relative}"),
+        })?;
+    }
+    let canonical_ancestor =
+        std::fs::canonicalize(existing_ancestor).map_err(|error| OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Cannot resolve {}: {error}", existing_ancestor.display()),
+        })?;
+    if !canonical_ancestor.starts_with(&canonical_root) {
+        return Err(OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Path escapes the workspace through a link: {relative}"),
+        });
+    }
+    Ok(joined)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::safe_workspace_path;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn test_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "odon-web-ext-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn workspace_path_allows_children_and_rejects_parent_traversal() {
+        let root = test_dir("inside");
+        fs::create_dir_all(root.join("nested")).unwrap();
+        assert!(safe_workspace_path(root.to_str().unwrap(), "nested/file.txt").is_ok());
+        assert!(safe_workspace_path(root.to_str().unwrap(), "../outside.txt").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_path_rejects_link_to_outside() {
+        let root = test_dir("root");
+        let outside = test_dir("outside");
+        let link = root.join("escape");
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside, &link).is_ok();
+
+        if linked {
+            assert!(safe_workspace_path(root.to_str().unwrap(), "escape/secret.txt").is_err());
+            fs::remove_dir_all(&link).ok();
+        }
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(outside).ok();
+    }
 }
 
 pub struct HttpPutTool;
