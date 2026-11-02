@@ -624,7 +624,7 @@ impl Tool for PortScanTool {
             "type": "object",
             "properties": {
                 "host": { "type": "string", "description": "Target IP or hostname" },
-                "ports": { "type": "array", "items": { "type": "integer" }, "description": "Ports to probe (e.g. [80, 443, 22, 8080])" }
+                "ports": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "description": "Ports to probe (e.g. [80, 443, 22, 8080]); maximum 16 unique ports" }
             },
             "required": ["host"]
         })
@@ -643,16 +643,57 @@ impl Tool for PortScanTool {
                 tool: self.name().to_string(),
                 message: "Missing 'host' parameter".to_string(),
             })?;
+        let host = host.trim().trim_end_matches('/');
+        if host.is_empty() || host.starts_with('-') || host.len() > 253 {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Invalid port scan target".to_string(),
+            });
+        }
+        // Reuse the SSRF/network policy so port_scan cannot probe localhost,
+        // metadata endpoints, or private networks unless explicitly allowed.
+        let validated = crate::net_guard::validate_url(&format!("https://{host}")).await?;
+        let host = validated
+            .host_str()
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Port scan target has no host".to_string(),
+            })?
+            .to_string();
 
         let default_ports = vec![json!(22), json!(80), json!(443), json!(3000), json!(8080)];
         let ports_arr = args
             .get("ports")
             .and_then(|p| p.as_array())
             .unwrap_or(&default_ports);
+        let mut ports = Vec::new();
+        for value in ports_arr {
+            let port = value
+                .as_u64()
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Each port must be an integer".to_string(),
+                })?;
+            if !(1..=65535).contains(&port) {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Port must be between 1 and 65535: {port}"),
+                });
+            }
+            let port = port as u16;
+            if !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+        if ports.len() > 16 {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Too many ports requested: {} (maximum 16)", ports.len()),
+            });
+        }
 
         let mut results = Vec::new();
-        for p in ports_arr {
-            let port = p.as_u64().unwrap_or(80) as u16;
+        for port in ports {
             let target = format!("{}:{}", host, port);
             let is_open = tokio::time::timeout(
                 std::time::Duration::from_millis(1500),
@@ -668,7 +709,7 @@ impl Tool for PortScanTool {
             }));
         }
 
-        Ok(json!({ "host": host, "results": results }))
+        Ok(json!({ "host": host, "count": results.len(), "results": results }))
     }
 }
 

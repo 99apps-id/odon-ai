@@ -14,7 +14,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   PanelLeftClose,
-  PanelLeftOpen,
+  Menu,
   ChevronDown,
   Paperclip,
   Globe,
@@ -1629,25 +1629,29 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           </div>
         </aside>
 
+        {!leftSidebarOpen && (
+          <aside
+            className="w-12 shrink-0 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex items-start justify-center pt-2"
+            aria-label="Collapsed navigation sidebar"
+          >
+            <button
+              onClick={() => setLeftSidebarOpen(true)}
+              className="p-2 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2"
+              title="Show Sidebar (Ctrl+B)"
+              aria-label="Show sidebar"
+              aria-expanded="false"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          </aside>
+        )}
+
         {/* ───────────────────────────────────────────────────────────
             CENTER MAIN CHAT / HERO CARD
         ─────────────────────────────────────────────────────────── */}
         <main className="flex-1 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between overflow-hidden relative min-w-0">
-          {!leftSidebarOpen && (
-            <button
-              onClick={() => setLeftSidebarOpen(true)}
-              className="absolute top-3 left-3 p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer z-10"
-              title="Show Sidebar (Ctrl+B)"
-              aria-label="Show sidebar"
-            >
-              <PanelLeftOpen className="w-4 h-4" />
-            </button>
-          )}
-
           {/* Top Bar inside Center Card */}
-          <div
-            className={`h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 ${!leftSidebarOpen ? 'pl-10 pr-4' : 'px-4'}`}
-          >
+          <div className="h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 px-4">
             {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
               <div className="flex items-center gap-2">
                 <button
