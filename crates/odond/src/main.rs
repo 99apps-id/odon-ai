@@ -2422,11 +2422,8 @@ async fn require_api_token(
         return next.run(req).await;
     }
     let Some(expected) = state.api_token.as_deref() else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "API token is not configured. Set ODON_API_TOKEN and restart the daemon.",
-        )
-            .into_response();
+        // Token authentication is optional; if ODON_API_TOKEN is not set, allow local requests.
+        return next.run(req).await;
     };
 
     // Constant-time comparison so token guesses cannot use timing oracles.
