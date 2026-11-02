@@ -13,7 +13,6 @@ import {
   Bell,
   PanelRightClose,
   PanelRightOpen,
-  PanelLeftClose,
   Menu,
   ChevronDown,
   Paperclip,
@@ -1428,14 +1427,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   Open Digital Orchestration Network
                 </div>
               </div>
-              <button
-                onClick={() => setLeftSidebarOpen(false)}
-                className="ml-auto p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
-                title="Hide Sidebar (Ctrl+B)"
-                aria-label="Hide sidebar"
-              >
-                <PanelLeftClose className="w-4 h-4" />
-              </button>
             </div>
 
             {/* + New Chat Button */}
@@ -1646,17 +1637,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 px-4">
             <div className="flex items-center gap-2">
-              {!leftSidebarOpen && (
-                <button
-                  onClick={() => setLeftSidebarOpen(true)}
-                  className="p-1.5 -ml-1 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer flex items-center justify-center border border-neutral-200/80 shadow-2xs mr-1"
-                  title="Show Sidebar (Ctrl+B)"
-                  aria-label="Show sidebar"
-                >
-                  <Menu className="w-4 h-4" />
-                </button>
-              )}
-
               {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
                 <div className="flex items-center gap-2">
                   <button
