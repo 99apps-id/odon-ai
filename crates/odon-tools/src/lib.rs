@@ -247,7 +247,7 @@ mod tests {
         let schemas = reg.schemas();
         assert_eq!(
             schemas.len(),
-            164,
+            169,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
 
@@ -297,6 +297,6 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 162);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 167);
     }
 }
