@@ -1,4 +1,6 @@
 pub mod artifact_gen;
+pub mod coding;
+pub mod quality;
 pub mod fs;
 pub mod fs_ext;
 pub mod git;
@@ -119,6 +121,13 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(git_ext::GitHubWorkflowJobsTool::new()));
     reg.register(Box::new(git_ext::GitHubWorkflowLogsTool::new()));
     reg.register(Box::new(git_ext::GitHubPrFilesTool::new()));
+
+    // 4b. Code Intelligence & Quality
+    reg.register(Box::new(coding::CodeIndexTool));
+    reg.register(Box::new(coding::CodeSearchTool));
+    reg.register(Box::new(quality::FormatCodeTool));
+    reg.register(Box::new(quality::RunChecksTool));
+    reg.register(Box::new(quality::TestFileTool));
 
     // 5. Shell & Execution
     reg.register(Box::new(shell::ShellExecTool));

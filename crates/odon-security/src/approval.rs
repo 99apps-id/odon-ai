@@ -153,7 +153,7 @@ impl ApprovalEngine {
         match tool_name {
             "fs_read" | "fs_list" | "fs_search" | "fs_glob" | "fs_stat" | "fs_readlink" | "fs_diff" | "fs_tree" | "fs_du" | "fs_find"
             | "termigo_copy_selection" | "termigo_paste_buffer_history" | "editor_open" | "editor_reveal" | "editor_reload"
-            | "read_file" | "list_directory" | "grep" | "glob"
+            | "read_file" | "list_directory" | "grep" | "glob" | "code_search"
             | "git_status" | "git_diff" | "git_log" | "git_show" | "git_stash_list" | "git_blame" | "git_log_file" | "git_ls_files"
             | "github_list_issues" | "github_get_repo" | "github_list_prs" | "github_list_comments" | "github_workflow_list" | "github_workflow_runs" | "github_workflow_jobs" | "github_workflow_logs" | "github_pr_files"
             | "web_search" | "web_fetch" | "web_search_news" | "web_search_code" | "web_scrape" | "probe_url" | "http_get" | "security_audit_headers" | "security_audit_cert" | "network_traceroute" | "url_preview" | "dns_lookup" | "port_scan"
@@ -166,7 +166,7 @@ impl ApprovalEngine {
             | "git_commit" | "git_branch" | "git_add" | "git_checkout" | "git_stash" | "git_stash_pop" | "git_merge" | "git_rebase" | "git_cherry_pick" | "git_revert" | "git_tag" | "git_remote_add" | "git_remote_set_url"
             | "github_create_issue" | "github_create_review"
             | "http_post" | "http_put" | "http_patch" | "http_download" | "http_upload"
-            | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "artifact_update" | "artifact_delete" | "artifact_export"
+            | "code_index" | "artifact_create_code" | "artifact_create_document" | "artifact_create_image" | "artifact_update" | "artifact_delete" | "artifact_export"
             | "memory_store" | "memory_forget" | "mcp_call" | "mcp_add_server" | "approval_decide" | "cron_add" | "cron_remove" | "automation_trigger" | "settings_set" => {
                 RiskTier::Tier1WorkspaceMutating
             }
