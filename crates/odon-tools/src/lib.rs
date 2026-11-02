@@ -13,6 +13,7 @@ pub mod ops_ext;
 pub mod quality;
 pub mod registry;
 pub mod review;
+pub mod runtime;
 pub mod sftp;
 pub mod shell;
 pub mod shell_ext;
@@ -161,6 +162,9 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(shell_ext::ClipboardWriteTool));
     reg.register(Box::new(shell_ext::NotificationSendTool));
     reg.register(Box::new(shell_ext::TerminalInfoTool));
+    reg.register(Box::new(shell_ext::ProcessWaitTool));
+    reg.register(Box::new(runtime::DevServerStatusTool));
+    reg.register(Box::new(runtime::BrowserStatusTool));
 
     // 6. MCP Integration
     reg.register(Box::new(mcp::McpListToolsTool));
@@ -253,7 +257,7 @@ mod tests {
         let schemas = reg.schemas();
         assert_eq!(
             schemas.len(),
-            174,
+            177,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
 
@@ -303,7 +307,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 172);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 175);
     }
 
     #[test]

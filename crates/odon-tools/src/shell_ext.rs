@@ -1212,3 +1212,62 @@ impl Tool for TerminalInfoTool {
         }))
     }
 }
+
+pub struct ProcessWaitTool;
+
+#[async_trait]
+impl Tool for ProcessWaitTool {
+    fn name(&self) -> &str { "process_wait" }
+    fn description(&self) -> &str {
+        "Wait for a background task to finish and return its final output, exit code, and duration"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["task_id"],
+            "properties": {
+                "task_id": { "type": "string", "minLength": 1 },
+                "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 300 }
+            }
+        })
+    }
+    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+        let task_id = args.get("task_id").and_then(Value::as_str).unwrap_or("");
+        if task_id.is_empty() {
+            return Err(OdonError::Tool { tool: self.name().to_string(), message: "task_id is required".to_string() });
+        }
+        let timeout = args.get("timeout_seconds").and_then(Value::as_u64).unwrap_or(300);
+        let tasks = background_tasks().lock().await;
+        let task = tasks.get(task_id).cloned().ok_or_else(|| {
+            OdonError::Tool { tool: self.name().to_string(), message: format!("Background task '{task_id}' not found") }
+        })?;
+        drop(tasks);
+
+        let start = std::time::Instant::now();
+        let mut exit_code = task.exit_code.load(std::sync::atomic::Ordering::SeqCst);
+        let mut waited = false;
+        while exit_code == i32::MIN && start.elapsed().as_secs() < timeout {
+            waited = true;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            exit_code = task.exit_code.load(std::sync::atomic::Ordering::SeqCst);
+        }
+
+        let stdout = task.stdout.lock().unwrap().clone();
+        let stderr = task.stderr.lock().unwrap().clone();
+        let finished = exit_code != i32::MIN;
+
+        Ok(json!({
+            "task_id": task_id,
+            "pid": task.pid,
+            "command": task.command,
+            "finished": finished,
+            "waited": waited,
+            "exit_code": if finished { Some(exit_code) } else { None },
+            "stdout": stdout,
+            "stderr": stderr,
+            "elapsed_seconds": start.elapsed().as_secs()
+        }))
+    }
+}
