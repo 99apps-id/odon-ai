@@ -495,7 +495,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
 
       {/* New Issue Modal */}
       {isCreateOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-neutral-200/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl w-full max-w-lg p-6 shadow-xl space-y-4">
             <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
               Create Issue on {owner}/{repo}

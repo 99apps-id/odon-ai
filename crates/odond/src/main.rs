@@ -833,6 +833,41 @@ impl WhatsAppBridge {
         .await
         .map(|_| ())
     }
+
+    async fn send_media(
+        &self,
+        to: &str,
+        file_name: &str,
+        mime_type: &str,
+        data_base64: &str,
+        caption: Option<&str>,
+    ) -> Result<(), String> {
+        let response = self
+            .client
+            .post(format!("{}/send-media", self.base_url()))
+            .header("x-bridge-token", &self.token)
+            .timeout(std::time::Duration::from_secs(120))
+            .json(&json!({
+                "to": to,
+                "file_name": file_name,
+                "mime": mime_type,
+                "data": data_base64,
+                "caption": caption
+            }))
+            .send()
+            .await
+            .map_err(|error| format!("WhatsApp bridge media send failed: {error}"))?;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+        if !status.is_success() {
+            return Err(body
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("WhatsApp bridge media send failed")
+                .to_string());
+        }
+        Ok(())
+    }
 }
 
 fn get_oauth_tokens_path() -> PathBuf {
@@ -1302,9 +1337,15 @@ async fn send_relay_attachments(
                             .send_relay_file(sender, file_name, mime_type, bytes.clone(), Some(caption))
                             .await
                     }
-                    None => Err(OdonError::Channel(
-                        "WhatsApp Web bridge does not support outbound media yet".to_string(),
-                    )),
+                    None => {
+                        let data =
+                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+                        state
+                            .whatsapp_bridge
+                            .send_media(sender, file_name, mime_type, &data, Some(caption))
+                            .await
+                            .map_err(OdonError::Channel)
+                    }
                 }
             }
             _ => Ok(()),

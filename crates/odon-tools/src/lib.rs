@@ -9,6 +9,8 @@ pub mod git_ext;
 pub mod github;
 pub mod harness;
 pub mod mcp;
+pub mod local_app;
+pub mod media;
 pub mod memory;
 pub mod net_guard;
 pub mod ops_ext;
@@ -206,6 +208,14 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(web::BrowserScreenshotTool));
     reg.register(Box::new(web::BrowserClickTool));
     reg.register(Box::new(web::BrowserDownloadTool));
+    reg.register(Box::new(local_app::LocalAppListTool));
+    reg.register(Box::new(local_app::LocalAppLaunchTool));
+    reg.register(Box::new(local_app::LocalAppFocusTool));
+    reg.register(Box::new(local_app::LocalAppCloseTool));
+    reg.register(Box::new(local_app::LocalAppInputTool));
+    reg.register(Box::new(media::SendDocumentTool));
+    reg.register(Box::new(media::SendImageTool));
+    reg.register(Box::new(media::SendMediaTool));
     reg.register(Box::new(browser_session::BrowserSessionCreateTool));
     reg.register(Box::new(browser_session::BrowserSessionListTool));
     reg.register(Box::new(browser_session::BrowserSessionResumeTool));
@@ -269,7 +279,7 @@ mod tests {
         let schemas = reg.schemas();
         assert_eq!(
             schemas.len(),
-            187,
+            195,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
 
@@ -319,7 +329,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 186);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 191);
     }
 
     #[test]

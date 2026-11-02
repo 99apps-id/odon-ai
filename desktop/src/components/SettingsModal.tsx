@@ -604,7 +604,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const currentOAuth = oauthAccounts[selectedProviderId.toLowerCase()];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-200/70 backdrop-blur-xs animate-in fade-in duration-150">
       <div
         className="w-full max-w-5xl h-[700px] bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-neutral-200 dark:border-neutral-800 flex flex-col overflow-hidden text-neutral-900 dark:text-neutral-100"
         onClick={(e) => e.stopPropagation()}

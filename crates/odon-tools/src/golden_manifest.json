@@ -1,5 +1,45 @@
 [
   {
+    "name": "app_close",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "app_focus",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "app_input",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "app_launch",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "app_list",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "approval_decide",
     "availability": {
       "status": "stable"
@@ -1254,6 +1294,36 @@
     },
     "ready": true,
     "issues": []
+  },
+  {
+    "name": "send_document",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": false,
+    "issues": [
+      "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
+    ]
+  },
+  {
+    "name": "send_image",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": false,
+    "issues": [
+      "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
+    ]
+  },
+  {
+    "name": "send_media",
+    "availability": {
+      "status": "stable"
+    },
+    "ready": false,
+    "issues": [
+      "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
+    ]
   },
   {
     "name": "session_export",

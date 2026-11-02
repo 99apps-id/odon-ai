@@ -377,7 +377,7 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
           NEW FILE / NEW FOLDER MODAL
       ─────────────────────────────────────────────────────────── */}
       {createModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-2xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-200/70 backdrop-blur-2xs">
           <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-neutral-200 p-4 space-y-3">
             <div className="flex items-center justify-between font-bold text-sm text-neutral-900">
               <span>{createModal === 'file' ? 'Create New File' : 'Create New Folder'}</span>

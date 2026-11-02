@@ -271,6 +271,36 @@ async function sendText(to, text) {
   }
 }
 
+function mediaKind(mime) {
+  const value = String(mime || '').toLowerCase();
+  if (value.startsWith('image/')) return 'image';
+  if (value.startsWith('video/')) return 'video';
+  if (value.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
+async function sendMedia(to, fileName, mime, base64Data, caption) {
+  if (!connected || !sock) {
+    const error = new Error('WhatsApp Web is not connected. Scan the QR or enter a pairing code first.');
+    error.statusCode = 409;
+    throw error;
+  }
+  const buffer = Buffer.from(String(base64Data || ''), 'base64');
+  if (!buffer.length) {
+    const error = new Error('media data is empty');
+    error.statusCode = 400;
+    throw error;
+  }
+  const kind = mediaKind(mime);
+  const content = {
+    [kind]: buffer,
+    fileName: String(fileName || 'odon-file'),
+    mimetype: String(mime || 'application/octet-stream'),
+  };
+  if (caption) content.caption = String(caption).slice(0, 900);
+  await sock.sendMessage(normalizeJid(to), content);
+}
+
 function authorized(req) {
   if (!BRIDGE_TOKEN) return true;
   return req.headers['x-bridge-token'] === BRIDGE_TOKEN;
@@ -281,7 +311,7 @@ function readJson(req) {
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > 2_000_000) {
+      if (body.length > 26_000_000) {
         reject(new Error('payload too large'));
         req.destroy();
       }
@@ -329,6 +359,12 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       if (!body.to || !body.text) return json(res, 400, { error: 'to and text are required' });
       await sendText(body.to, body.text);
+      return json(res, 200, { sent: true });
+    }
+    if (req.method === 'POST' && url.pathname === '/send-media') {
+      const body = await readJson(req);
+      if (!body.to || !body.data) return json(res, 400, { error: 'to and data are required' });
+      await sendMedia(body.to, body.file_name, body.mime, body.data, body.caption);
       return json(res, 200, { sent: true });
     }
     return json(res, 404, { error: 'not found' });

@@ -373,7 +373,7 @@ export const SshTerminalView: React.FC = () => {
           ADD SSH PROFILE MODAL WITH CERTIFICATE / KEY IMPORT
       ─────────────────────────────────────────────────────────── */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-2xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-200/70 backdrop-blur-2xs">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-neutral-200 p-5 space-y-4">
             <div className="flex items-center justify-between font-bold text-sm text-neutral-900">
               <div className="flex items-center gap-2">

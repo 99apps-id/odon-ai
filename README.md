@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-19-blue?style=flat-square&logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-5.8-blue?style=flat-square&logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat-square&logo=tailwind-css" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Tools_Registry-187_Registered-emerald?style=flat-square" alt="185 registered tools" />
+  <img src="https://img.shields.io/badge/Tools_Registry-195_Registered-emerald?style=flat-square" alt="195 registered tools" />
   <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=flat-square" alt="License" />
 </p>
 
@@ -62,11 +62,13 @@ Unlike traditional rigid terminal loops, ODON delivers seamless multi-turn thoug
   - **Deny**: Rejects execution and passes feedback back to the agent.
 
 ### 4. 🧠 Explicit, Self-Diagnosing Tool Registry
-ODON exposes 185 registered tools with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`.
+ODON exposes 195 registered tools with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`.
 - **Filesystem (17 tools)**: `read_file`, `write_file`, `edit`, `multi_edit`, `list_directory`, `create_directory`, `delete_file`, `move_file`, `copy_file`, `grep`, `glob`, etc.
 - **Git (14 tools)**: `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_add`, `git_checkout`, `git_show`, `git_stash`, `git_pull`, `git_push`, `git_reset`, etc.
 - **Browser Control (4 tools)**: `browser_open`, `browser_navigate`, `browser_screenshot`, and `browser_click`. `browser_click` launches a temporary headless Chrome/Edge instance and clicks via CDP.
 - **Persistent Browser Sessions (4 tools)**: `browser_session_create`, `browser_session_list`, `browser_session_resume`, and `browser_session_close`. Sessions keep Chromium cookies and localStorage under `.odon/browser-sessions/<session_id>`; credentials are never copied into the manifest. Use a session profile for sites that require repeated login.
+- **Local Application Control (5 tools)**: `app_list`, `app_launch`, `app_focus`, `app_close`, and `app_input`. Windows support uses structured PowerShell/native process calls with approval-gated mutations; unsupported operating systems return an explicit unavailable error.
+- **Outbound Media (3 tools)**: `send_document`, `send_image`, and `send_media`. These upload real files through the Telegram Bot API using explicit `chat_id` and `TELEGRAM_BOT_TOKEN`; files must be inside the workspace.
 - **Code Intelligence**: `code_index`, `code_search`, `format_code`, `run_checks`, `test_file`. The persistent code index uses workspace-scoped chunking with BM25 lexical ranking, enabling fast semantic-style discovery without requiring an external language server.
 - **Review & Change Analysis (5 tools)**: `review_diff`, `review_file`, `review_security`, `review_session_changes`, `change_summary`. These tools surface structured findings by severity and category, making pre-commit and post-change review actionable for both correctness and security.
 - **Runtime & Process (3 tools)**: `process_wait`, `dev_server_status`, `browser_status`. These tools inspect and monitor running processes, dev server ports, and browser automation availability without requiring shell-level introspection.

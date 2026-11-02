@@ -286,6 +286,9 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isBellOpen, setIsBellOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [toolsFilter, setToolsFilter] = useState('');
   const [showAllRecent, setShowAllRecent] = useState(false);
   const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1171,6 +1174,34 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
     handleNewChat();
   };
 
+  // Global shortcuts: Ctrl/Cmd+K search, Ctrl/Cmd+P command palette,
+  // Ctrl/Cmd+N new chat, Escape closes lightweight overlays.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setIsCommandPaletteOpen(false);
+        setIsSearchOpen(true);
+      } else if (mod && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        setIsSearchOpen(false);
+        setCommandQuery('');
+        setIsCommandPaletteOpen(true);
+      } else if (mod && !event.shiftKey && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        handleNewChat();
+      } else if (event.key === 'Escape') {
+        setIsCommandPaletteOpen(false);
+        setIsSearchOpen(false);
+        setIsToolsMenuOpen(false);
+        setIsBellOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleNewChat]);
+
   // The Tools menu is driven by the live registry; the static list is only an
   // offline fallback so the UI still renders before the daemon responds.
   const toolCatalog = dynamicTools.length > 0
@@ -1181,6 +1212,31 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
         desc: String(tool.description || ''),
       }))
     : REGISTERED_TOOLS;
+
+  const filteredTools = toolCatalog.filter((tool) => {
+    const query = toolsFilter.trim().toLowerCase();
+    return !query
+      || tool.name.toLowerCase().includes(query)
+      || tool.desc.toLowerCase().includes(query)
+      || tool.category.toLowerCase().includes(query);
+  });
+
+  const commandActions = [
+    { id: 'new-chat', label: 'New Chat', hint: 'Ctrl+N', run: () => handleNewChat() },
+    { id: 'search', label: 'Search sessions', hint: 'Ctrl+K', run: () => setIsSearchOpen(true) },
+    { id: 'tools', label: 'Browse registered tools', hint: `${toolCatalog.length} available`, run: () => setIsToolsMenuOpen(true) },
+    { id: 'status', label: 'Open system status', hint: 'daemon & relays', run: () => setIsBellOpen(true) },
+    { id: 'settings', label: 'Open settings', hint: 'providers, relays, MCP', run: () => setSettingsOpen(true) },
+    { id: 'artifacts', label: 'Show artifacts panel', hint: 'right panel', run: () => { setRightPanelView('artifacts'); setIsRightPanelOpen(true); } },
+    { id: 'terminal', label: 'Show terminal panel', hint: 'right panel', run: () => { setRightPanelView('terminal'); setIsRightPanelOpen(true); } },
+    { id: 'browser', label: 'Show browser panel', hint: 'right panel', run: () => { setRightPanelView('browser'); setIsRightPanelOpen(true); } },
+    { id: 'editor', label: 'Show code editor', hint: 'right panel', run: () => { setRightPanelView('editor'); setIsRightPanelOpen(true); } },
+    ...(isGenerating ? [{ id: 'stop', label: 'Stop active generation', hint: 'current session', run: () => handleStop() }] : []),
+  ];
+  const filteredCommands = commandActions.filter((action) => {
+    const query = commandQuery.trim().toLowerCase();
+    return !query || action.label.toLowerCase().includes(query) || action.hint.toLowerCase().includes(query);
+  });
 
   // Extract generated code files for CodeEditorView
   const latestCodeArtifact = artifacts.find((a) => a.kind === 'code');
@@ -2672,7 +2728,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       ───────────────────────────────────────────────────────────── */}
       {isModelMenuOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-2xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-200/70 backdrop-blur-2xs"
           onClick={() => setIsModelMenuOpen(false)}
         >
           <div
@@ -2834,7 +2890,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       ───────────────────────────────────────────────────────────── */}
       {isToolsMenuOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-2xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-200/70 backdrop-blur-2xs"
           onClick={() => setIsToolsMenuOpen(false)}
         >
           <div
@@ -2858,8 +2914,19 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             <p className="text-[11px] text-neutral-500 my-2 shrink-0">
               Autonomous execution harness capabilities available to the agent runtime.
             </p>
+            <input
+              type="text"
+              value={toolsFilter}
+              onChange={(event) => setToolsFilter(event.target.value)}
+              placeholder="Filter by name, category, or capability..."
+              className="w-full px-3 py-2 mb-2 text-xs rounded-xl border border-neutral-200 bg-neutral-50/70 outline-none focus:border-blue-500 focus:bg-white"
+            />
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-              {toolCatalog.map((t) => (
+              {filteredTools.length === 0 ? (
+                <div className="p-6 text-center text-xs text-neutral-400">
+                  No tools match “{toolsFilter}”.
+                </div>
+              ) : filteredTools.map((t) => (
                 <div
                   key={t.name}
                   className="p-2 rounded-xl border border-neutral-100 bg-neutral-50/60 flex items-center justify-between text-xs"
@@ -2891,11 +2958,68 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       )}
 
       {/* ─────────────────────────────────────────────────────────────
+          COMMAND PALETTE (Ctrl/Cmd+P)
+      ───────────────────────────────────────────────────────────── */}
+      {isCommandPaletteOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-start justify-center pt-20 bg-neutral-200/70 backdrop-blur-2xs"
+          onClick={() => setIsCommandPaletteOpen(false)}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            className="w-[520px] max-w-[92vw] bg-white rounded-2xl border border-neutral-200 shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center gap-2 pb-3 border-b border-neutral-100">
+              <Search className="w-4 h-4 text-blue-600" />
+              <input
+                type="text"
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && filteredCommands.length > 0) {
+                    filteredCommands[0].run();
+                    setCommandQuery('');
+                    setIsCommandPaletteOpen(false);
+                  }
+                }}
+                placeholder="Run a command... (new chat, tools, status, panels)"
+                className="flex-1 text-xs outline-none bg-transparent text-neutral-900 placeholder-neutral-400"
+                autoFocus
+              />
+              <span className="text-[10px] font-mono text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">
+                Ctrl P
+              </span>
+            </div>
+            <div className="mt-3 max-h-72 overflow-y-auto space-y-1">
+              {filteredCommands.length === 0 ? (
+                <div className="py-6 text-center text-xs text-neutral-400">No matching commands.</div>
+              ) : (
+                filteredCommands.map((action) => (
+                  <button
+                    key={action.id}
+                    onClick={() => {
+                      action.run();
+                      setCommandQuery('');
+                      setIsCommandPaletteOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-neutral-50 transition-colors text-left cursor-pointer"
+                  >
+                    <span className="text-xs font-medium text-neutral-800">{action.label}</span>
+                    <span className="text-[10px] font-mono text-neutral-400">{action.hint}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
           SEARCH SESSIONS & ARTIFACTS MODAL
       ───────────────────────────────────────────────────────────── */}
       {isSearchOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/25 backdrop-blur-2xs"
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-neutral-200/70 backdrop-blur-2xs"
           onClick={() => setIsSearchOpen(false)}
         >
           <div
@@ -2953,7 +3077,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       ───────────────────────────────────────────────────────────── */}
       {isBellOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-2xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-200/70 backdrop-blur-2xs"
           onClick={() => setIsBellOpen(false)}
         >
           <div
@@ -3011,7 +3135,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       ───────────────────────────────────────────────────────────── */}
       {relayModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-2xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-200/70 backdrop-blur-2xs"
           onClick={() => setRelayModalOpen(null)}
         >
           <div
@@ -3108,7 +3232,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       ───────────────────────────────────────────────────────────── */}
       {workspaceModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-2xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-200/70 backdrop-blur-2xs"
           onClick={() => setWorkspaceModalOpen(false)}
         >
           <div
