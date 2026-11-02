@@ -15,6 +15,25 @@ fn get_skills_dir() -> PathBuf {
     base.join(".odon").join("skills")
 }
 
+fn normalize_skill_name(name: &str) -> Option<String> {
+    let mut slug = String::new();
+    let mut pending_separator = false;
+
+    for ch in name.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            if pending_separator && !slug.is_empty() {
+                slug.push('-');
+            }
+            slug.push(ch);
+            pending_separator = false;
+        } else if matches!(ch, '-' | '_' | ' ' | '/' | '\\') && !slug.is_empty() {
+            pending_separator = true;
+        }
+    }
+
+    (!slug.is_empty()).then_some(slug)
+}
+
 pub struct SkillListTool;
 
 #[async_trait]
@@ -43,9 +62,19 @@ impl Tool for SkillListTool {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
+                    let name = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
                     let content = std::fs::read_to_string(&path).unwrap_or_default();
-                    let first_line = content.lines().next().unwrap_or("").trim_start_matches('#').trim().to_string();
+                    let first_line = content
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim_start_matches('#')
+                        .trim()
+                        .to_string();
                     skills.push(json!({
                         "name": name,
                         "description": if first_line.is_empty() { "Autonomous skill procedure".to_string() } else { first_line },
@@ -62,10 +91,20 @@ impl Tool for SkillListTool {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
+                        let name = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
                         if !skills.iter().any(|s| s["name"] == name) {
                             let content = std::fs::read_to_string(&path).unwrap_or_default();
-                            let first_line = content.lines().next().unwrap_or("").trim_start_matches('#').trim().to_string();
+                            let first_line = content
+                                .lines()
+                                .next()
+                                .unwrap_or("")
+                                .trim_start_matches('#')
+                                .trim()
+                                .to_string();
                             skills.push(json!({
                                 "name": name,
                                 "description": if first_line.is_empty() { "Autonomous skill procedure".to_string() } else { first_line },
@@ -105,20 +144,25 @@ impl Tool for SkillCreateTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|n| n.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let name = args
+            .get("name")
+            .and_then(|n| n.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'name' parameter".to_string(),
-            }
-        })?;
-        let content = args.get("content").and_then(|c| c.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+            })?;
+        let content = args
+            .get("content")
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'content' parameter".to_string(),
-            }
-        })?;
+            })?;
 
-        let clean_name = name.to_lowercase().replace(' ', "-").replace(['/', '\\'], "_");
+        let clean_name = normalize_skill_name(name).ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "Skill name must contain at least one ASCII letter or number".to_string(),
+        })?;
         let dir = get_skills_dir();
         let _ = std::fs::create_dir_all(&dir);
         let file_path = dir.join(format!("{}.md", clean_name));
@@ -159,17 +203,23 @@ impl Tool for SkillRunTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let name = args.get("name").and_then(|n| n.as_str()).ok_or_else(|| {
-            OdonError::Tool {
+        let name = args
+            .get("name")
+            .and_then(|n| n.as_str())
+            .ok_or_else(|| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'name' parameter".to_string(),
-            }
-        })?;
+            })?;
 
-        let clean_name = name.to_lowercase().replace(' ', "-");
+        let clean_name = normalize_skill_name(name).ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "Skill name must contain at least one ASCII letter or number".to_string(),
+        })?;
         let candidates = vec![
             get_skills_dir().join(format!("{}.md", clean_name)),
-            PathBuf::from(".odon").join("skills").join(format!("{}.md", clean_name)),
+            PathBuf::from(".odon")
+                .join("skills")
+                .join(format!("{}.md", clean_name)),
         ];
 
         for path in candidates {
@@ -188,5 +238,27 @@ impl Tool for SkillRunTool {
             tool: self.name().to_string(),
             message: format!("Skill '{}' not found in .odon/skills", name),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_skill_name;
+
+    #[test]
+    fn skill_names_are_safe_and_consistent() {
+        assert_eq!(
+            normalize_skill_name("Deploy VPS"),
+            Some("deploy-vps".to_string())
+        );
+        assert_eq!(
+            normalize_skill_name("../../etc/passwd"),
+            Some("etc-passwd".to_string())
+        );
+        assert_eq!(
+            normalize_skill_name("audit\\windows"),
+            Some("audit-windows".to_string())
+        );
+        assert_eq!(normalize_skill_name("..."), None);
     }
 }

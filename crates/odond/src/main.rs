@@ -1318,15 +1318,18 @@ async fn whatsapp_webhook(
             .and_then(|channel| channel.app_secret())
             .map(|secret| secret.to_string())
     };
-    if let Some(secret) = app_secret {
-        let signature = headers
-            .get("x-hub-signature-256")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("");
-        if !verify_meta_signature(&secret, body.as_bytes(), signature) {
-            tracing::warn!("Rejected WhatsApp webhook with invalid signature");
-            return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
-        }
+    let Some(secret) = app_secret else {
+        tracing::error!("Rejected WhatsApp webhook because WHATSAPP_APP_SECRET is not configured");
+        return (StatusCode::SERVICE_UNAVAILABLE, "Webhook signing is not configured")
+            .into_response();
+    };
+    let signature = headers
+        .get("x-hub-signature-256")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if !verify_meta_signature(&secret, body.as_bytes(), signature) {
+        tracing::warn!("Rejected WhatsApp webhook with invalid signature");
+        return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
     }
 
     let payload: Value = match serde_json::from_str(&body) {

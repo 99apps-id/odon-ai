@@ -22,7 +22,10 @@ impl GitHubClient {
 
     fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("odon-github-connector/1.0"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("odon-github-connector/1.0"),
+        );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         if let Some(t) = &self.token {
             if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", t)) {
@@ -30,6 +33,34 @@ impl GitHubClient {
             }
         }
         headers
+    }
+
+    async fn response_json(tool: &str, response: reqwest::Response) -> Result<Value> {
+        let status = response.status();
+        let text = response.text().await.map_err(|e| OdonError::Tool {
+            tool: tool.to_string(),
+            message: format!("Failed to read GitHub response: {}", e),
+        })?;
+
+        if !status.is_success() {
+            let detail = serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|body| {
+                    body.get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| text.chars().take(300).collect());
+            return Err(OdonError::Tool {
+                tool: tool.to_string(),
+                message: format!("GitHub API returned {}: {}", status, detail),
+            });
+        }
+
+        serde_json::from_str(&text).map_err(|e| OdonError::Tool {
+            tool: tool.to_string(),
+            message: format!("Failed to parse GitHub response: {}", e),
+        })
     }
 }
 
@@ -39,7 +70,9 @@ pub struct GitHubGetRepoTool {
 
 impl GitHubGetRepoTool {
     pub fn new() -> Self {
-        Self { gh: GitHubClient::new() }
+        Self {
+            gh: GitHubClient::new(),
+        }
     }
 }
 
@@ -65,8 +98,14 @@ impl Tool for GitHubGetRepoTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
 
         let url = format!("https://api.github.com/repos/{}/{}", owner, repo);
         let resp = self
@@ -81,10 +120,7 @@ impl Tool for GitHubGetRepoTool {
                 message: format!("GitHub request failed: {}", e),
             })?;
 
-        let body = resp.json::<Value>().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to parse GitHub response: {}", e),
-        })?;
+        let body = GitHubClient::response_json(self.name(), resp).await?;
 
         Ok(json!({
             "full_name": body.get("full_name"),
@@ -102,7 +138,9 @@ pub struct GitHubListIssuesTool {
 
 impl GitHubListIssuesTool {
     pub fn new() -> Self {
-        Self { gh: GitHubClient::new() }
+        Self {
+            gh: GitHubClient::new(),
+        }
     }
 }
 
@@ -129,11 +167,20 @@ impl Tool for GitHubListIssuesTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
         let state = args.get("state").and_then(|s| s.as_str()).unwrap_or("open");
 
-        let url = format!("https://api.github.com/repos/{}/{}/issues?state={}&per_page=10", owner, repo, state);
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/issues?state={}&per_page=10",
+            owner, repo, state
+        );
         let resp = self
             .gh
             .client
@@ -146,10 +193,7 @@ impl Tool for GitHubListIssuesTool {
                 message: format!("GitHub request failed: {}", e),
             })?;
 
-        let body = resp.json::<Value>().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to parse GitHub response: {}", e),
-        })?;
+        let body = GitHubClient::response_json(self.name(), resp).await?;
 
         Ok(json!({ "issues": body }))
     }
@@ -161,7 +205,9 @@ pub struct GitHubCreateIssueTool {
 
 impl GitHubCreateIssueTool {
     pub fn new() -> Self {
-        Self { gh: GitHubClient::new() }
+        Self {
+            gh: GitHubClient::new(),
+        }
     }
 }
 
@@ -189,8 +235,14 @@ impl Tool for GitHubCreateIssueTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
         let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let body_text = args.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
@@ -208,10 +260,7 @@ impl Tool for GitHubCreateIssueTool {
                 message: format!("GitHub create issue failed: {}", e),
             })?;
 
-        let body = resp.json::<Value>().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to parse GitHub response: {}", e),
-        })?;
+        let body = GitHubClient::response_json(self.name(), resp).await?;
 
         Ok(json!({ "status": "created", "issue": body }))
     }
@@ -223,7 +272,9 @@ pub struct GitHubListPullRequestsTool {
 
 impl GitHubListPullRequestsTool {
     pub fn new() -> Self {
-        Self { gh: GitHubClient::new() }
+        Self {
+            gh: GitHubClient::new(),
+        }
     }
 }
 
@@ -249,10 +300,19 @@ impl Tool for GitHubListPullRequestsTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let owner = args.get("owner").and_then(|o| o.as_str()).unwrap_or("99apps-id");
-        let repo = args.get("repo").and_then(|r| r.as_str()).unwrap_or("odon-ai");
+        let owner = args
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .unwrap_or("99apps-id");
+        let repo = args
+            .get("repo")
+            .and_then(|r| r.as_str())
+            .unwrap_or("odon-ai");
 
-        let url = format!("https://api.github.com/repos/{}/{}/pulls?per_page=10", owner, repo);
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/pulls?per_page=10",
+            owner, repo
+        );
         let resp = self
             .gh
             .client
@@ -265,12 +325,8 @@ impl Tool for GitHubListPullRequestsTool {
                 message: format!("GitHub request failed: {}", e),
             })?;
 
-        let body = resp.json::<Value>().await.map_err(|e| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: format!("Failed to parse GitHub response: {}", e),
-        })?;
+        let body = GitHubClient::response_json(self.name(), resp).await?;
 
         Ok(json!({ "pull_requests": body }))
     }
 }
-

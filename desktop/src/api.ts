@@ -149,17 +149,30 @@ export const api = {
     else localStorage.removeItem('odon_api_token');
   },
 
-  /** fetch wrapper that attaches the optional ODON_API_TOKEN. */
+  isTrustedApiUrl(input: string | URL): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+      const pageOrigin = window.location.origin;
+      const baseUrl = this.getBaseUrl();
+      const trustedOrigin = new URL(baseUrl || pageOrigin, pageOrigin).origin;
+      return new URL(input.toString(), pageOrigin).origin === trustedOrigin;
+    } catch {
+      return false;
+    }
+  },
+
+  /** fetch wrapper that only attaches ODON_API_TOKEN to the configured daemon origin. */
   async fetchApi(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const token = this.getApiToken();
-    if (!token) return window.fetch(input, init);
+    const url = input instanceof Request ? input.url : input;
+    if (!token || !this.isTrustedApiUrl(url)) return window.fetch(input, init);
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
     headers.set('Authorization', `Bearer ${token}`);
     return window.fetch(input, { ...init, headers });
   },
 
   authorizeUrl(url: string): string {
-    if (!url.includes('/api/')) return url;
+    if (!url.includes('/api/') || !this.isTrustedApiUrl(url)) return url;
     const token = this.getApiToken();
     if (!token) return url;
     return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;

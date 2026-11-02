@@ -1080,11 +1080,11 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
     return () => clearTimeout(timer);
   }, [isGenerating]);
 
-  // Trigger prompt from hero action cards
-  const handleActionCard = (title: string, promptText: string, mode: string) => {
+  // Seed the composer from hero action cards so users can review the prompt before sending.
+  const handleActionCard = (_title: string, promptText: string, mode: string) => {
     setExecutionMode(mode as any);
     setActiveNav('chat');
-    handleSendMessage(promptText);
+    setInputMessage(promptText);
   };
 
   // File attachment handler (supports images and documents)
@@ -1675,8 +1675,8 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                   Your universal AI assistant for coding, creating, documents, and more.
                 </p>
 
-                {/* 6 Feature Action Cards (3x2 Grid) */}
-                <div className="grid grid-cols-3 gap-3.5 w-full">
+                {/* Prompt starters */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 w-full">
                   {/* Card 1: Build an app */}
                   <button
                     onClick={() => handleActionCard('Build an app', 'Build a personal notes web application with clean modular React 19 and SQLite storage.', 'code')}
@@ -1691,17 +1691,17 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     </div>
                   </button>
 
-                  {/* Card 2: Create an image */}
+                  {/* Card 2: Review an interface */}
                   <button
-                    onClick={() => handleActionCard('Create an image', 'Generate a modern minimalist product illustration for ODON desktop UI.', 'create')}
+                    onClick={() => handleActionCard('Review an interface', 'Review the attached interface screenshot for usability, accessibility, and visual hierarchy. Prioritize actionable fixes.', 'create')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
                       <ImageIcon className="w-5 h-5 text-neutral-800 group-hover:scale-110 transition-transform" />
                     </div>
-                    <div className="font-semibold text-xs text-neutral-900">Create an image</div>
+                    <div className="font-semibold text-xs text-neutral-900">Review an interface</div>
                     <div className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
-                      Generate or edit images
+                      Analyze a screenshot or mockup
                     </div>
                   </button>
 
@@ -1747,17 +1747,17 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     </div>
                   </button>
 
-                  {/* Card 6: Create a video */}
+                  {/* Card 6: Plan a walkthrough */}
                   <button
-                    onClick={() => handleActionCard('Create a video', 'Generate a product showcase walkthrough storyboard and video script.', 'create')}
+                    onClick={() => handleActionCard('Plan a walkthrough', 'Create a concise product walkthrough storyboard and narration script, with one scene per key user outcome.', 'create')}
                     className="p-3.5 bg-white rounded-2xl border border-neutral-200/90 hover:border-neutral-300 hover:shadow-xs transition-all text-left group cursor-pointer"
                   >
                     <div className="text-neutral-800 mb-2">
                       <Video className="w-5 h-5 text-neutral-800 group-hover:scale-110 transition-transform" />
                     </div>
-                    <div className="font-semibold text-xs text-neutral-900">Create a video</div>
+                    <div className="font-semibold text-xs text-neutral-900">Plan a walkthrough</div>
                     <div className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
-                      Generate video from ideas
+                      Draft a storyboard and script
                     </div>
                   </button>
                 </div>
