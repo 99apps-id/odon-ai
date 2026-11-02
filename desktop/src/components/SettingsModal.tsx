@@ -201,9 +201,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [endpointBaseUrl, setEndpointBaseUrl] = useState('https://api.openai.com/v1');
   const [endpointKey, setEndpointKey] = useState('');
   const [endpointModels, setEndpointModels] = useState('');
+  const [endpointModelDraft, setEndpointModelDraft] = useState('');
   const [endpointBusy, setEndpointBusy] = useState(false);
   const [endpointError, setEndpointError] = useState<string | null>(null);
   const customEndpoints = providerConfigs.filter((c) => c.provider_id.startsWith('compat-'));
+  const endpointModelList = endpointModels
+    .split(/[\n,]/)
+    .map((model) => model.trim())
+    .filter(Boolean);
+
+  const addEndpointModel = () => {
+    const modelId = endpointModelDraft.trim();
+    if (!modelId) return;
+    const next = Array.from(new Set([...endpointModelList, modelId]));
+    setEndpointModels(next.join('\n'));
+    setEndpointModelDraft('');
+  };
+
+  const removeEndpointModel = (modelId: string) => {
+    setEndpointModels(endpointModelList.filter((model) => model !== modelId).join('\n'));
+  };
 
   const refreshProviders = async () => {
     const [data, configs] = await Promise.all([
@@ -238,6 +255,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setEndpointBaseUrl('https://api.openai.com/v1');
     setEndpointKey('');
     setEndpointModels('');
+    setEndpointModelDraft('');
     setEndpointError(null);
   };
 
@@ -277,6 +295,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setEndpointBaseUrl(c.base_url || '');
     setEndpointKey('');
     setEndpointModels((c.models || []).join('\n'));
+    setEndpointModelDraft('');
     setEndpointError(null);
   };
 
@@ -748,7 +767,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="space-y-1">
                   <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
-                    Nama Provider
+                    Provider Name
                   </span>
                   <input
                     value={endpointName}
@@ -778,24 +797,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onChange={(e) => setEndpointKey(e.target.value)}
                     placeholder={
                       editingEndpointId
-                        ? 'Kosongkan untuk mempertahankan key tersimpan'
+                        ? 'Leave blank to keep the saved key'
                         : 'sk-...'
                     }
                     className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
                   />
                 </label>
-                <label className="space-y-1">
+                <div className="space-y-1 md:col-span-2">
                   <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
-                    Model IDs (pisahkan dengan koma atau baris baru)
+                    Models
                   </span>
-                  <textarea
-                    value={endpointModels}
-                    onChange={(e) => setEndpointModels(e.target.value)}
-                    rows={2}
-                    placeholder={'gpt-4o-mini\ngemini-2.5-flash'}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500 resize-y"
-                  />
-                </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={endpointModelDraft}
+                      onChange={(e) => setEndpointModelDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addEndpointModel();
+                        }
+                      }}
+                      placeholder="Model ID (e.g. gpt-4o-mini)"
+                      className="flex-1 px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={addEndpointModel}
+                      className="px-3 py-2 rounded-xl bg-neutral-900 dark:bg-neutral-100 hover:bg-neutral-800 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 text-xs font-semibold shrink-0"
+                    >
+                      Add Model
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {endpointModelList.length === 0 ? (
+                      <span className="text-[11px] text-neutral-400">
+                        No models added yet.
+                      </span>
+                    ) : (
+                      endpointModelList.map((model) => (
+                        <span
+                          key={model}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-[11px] font-mono text-neutral-700 dark:text-neutral-300"
+                        >
+                          {model}
+                          <button
+                            type="button"
+                            onClick={() => removeEndpointModel(model)}
+                            className="text-neutral-400 hover:text-rose-500"
+                            title="Remove model"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
 
               {endpointError && (
