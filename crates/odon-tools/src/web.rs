@@ -72,11 +72,25 @@ fn decode_ddg_url(raw: &str) -> String {
 }
 
 pub fn clean_html_snippet(raw: &str) -> String {
+    // Strip non-visible blocks before removing tags; otherwise CSS and JS text
+    // leaks into the "readable" page sent to the agent.
+    let mut visible = raw.to_string();
+    for pattern in [
+        r"(?is)<script[^>]*>.*?</script>",
+        r"(?is)<style[^>]*>.*?</style>",
+        r"(?is)<noscript[^>]*>.*?</noscript>",
+        r"(?is)<svg[^>]*>.*?</svg>",
+        r"(?is)<!--.*?-->",
+    ] {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            visible = re.replace_all(&visible, " ").to_string();
+        }
+    }
     let re = regex::Regex::new(r"<[^>]+>").ok();
     let text = if let Some(r) = re {
-        r.replace_all(raw, " ").to_string()
+        r.replace_all(&visible, " ").to_string()
     } else {
-        raw.to_string()
+        visible
     };
     text.replace("&amp;", "&")
         .replace("&quot;", "\"")

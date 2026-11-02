@@ -197,6 +197,7 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     // 10. Artifact Synthesis
     reg.register(Box::new(artifact_gen::ArtifactCreateCodeTool));
     reg.register(Box::new(artifact_gen::ArtifactCreateDocumentTool));
+    reg.register(Box::new(artifact_gen::ArtifactCreateChartTool));
     reg.register(Box::new(artifact_gen::ArtifactCreateImageTool));
     reg.register(Box::new(artifact_gen::ArtifactUpdateTool));
     reg.register(Box::new(artifact_gen::ArtifactImportTool));

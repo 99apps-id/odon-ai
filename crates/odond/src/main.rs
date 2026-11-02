@@ -1129,6 +1129,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/automations/logs", get(get_automation_logs))
                 .route("/api/settings", get(get_settings).post(update_settings))
                 .route("/api/models", get(get_models))
+                .route("/api/browser/read", get(browser_read_page))
                 .route("/api/providers/config", get(get_provider_configs).post(save_provider_config))
                 .route("/api/providers/config/{provider_id}", axum::routing::delete(delete_provider_config))
                 .route("/api/providers/test", post(test_provider))
@@ -3523,6 +3524,127 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
     }
 
     Json(payload)
+}
+
+#[derive(Deserialize)]
+struct BrowserReadQuery {
+    url: String,
+}
+
+/// Read a page for the in-app browser reader. The request goes through the
+/// same SSRF guard as agent web tools, so a preview URL cannot probe localhost
+/// or private networks.
+async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoResponse {
+    let parsed = match reqwest::Url::parse(query.url.trim()) {
+        Ok(url) => url,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("Invalid URL: {e}") })),
+            )
+                .into_response();
+        }
+    };
+    // The preview panel is a local developer tool, so loopback dev servers are
+    // allowed. Private LAN ranges still go through the SSRF guard.
+    let is_loopback = parsed
+        .host_str()
+        .map(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host == "::1"
+                || host == "[::1]"
+                || host.starts_with("127.")
+        })
+        .unwrap_or(false);
+    let validated = if is_loopback {
+        parsed
+    } else {
+        match odon_tools::net_guard::validate_url(&query.url).await {
+            Ok(url) => url,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    let host = validated.host_str().unwrap_or_default().to_string();
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .redirect(odon_tools::net_guard::redirect_policy(host))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("HTTP client error: {e}") })),
+            )
+                .into_response();
+        }
+    };
+
+    let resp = match client.get(validated.clone()).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("Failed to fetch page: {e}") })),
+            )
+                .into_response();
+        }
+    };
+    let status = resp.status().as_u16();
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let capped = &bytes[..bytes.len().min(2_000_000)];
+    let body = String::from_utf8_lossy(capped);
+
+    let title = regex::Regex::new(r#"(?i)<title[^>]*>([^<]+)</title>"#)
+        .ok()
+        .and_then(|re| re.captures(&body))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().trim().to_string())
+        .unwrap_or_default();
+
+    let mut text = odon_tools::web::clean_html_snippet(&body);
+    if text.chars().count() > 120_000 {
+        text = text.chars().take(120_000).collect();
+        text.push_str("\n... [truncated]");
+    }
+
+    let links: Vec<String> = regex::Regex::new(r#"(?i)href=["']([^"']+)["']"#)
+        .ok()
+        .map(|re| {
+            let mut links = Vec::new();
+            for caps in re.captures_iter(&body).take(100) {
+                if let Some(href) = caps.get(1) {
+                    if let Ok(url) = validated.join(href.as_str().trim()) {
+                        let link = url.to_string();
+                        if !links.contains(&link) {
+                            links.push(link);
+                        }
+                    }
+                }
+            }
+            links
+        })
+        .unwrap_or_default();
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "url": validated.to_string(),
+            "status": status,
+            "title": title,
+            "text": text,
+            "links": links,
+        })),
+    )
+        .into_response()
 }
 
 async fn serve_file(

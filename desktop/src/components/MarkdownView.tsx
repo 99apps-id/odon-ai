@@ -26,6 +26,145 @@ interface MarkdownViewProps {
   onOpenBrowser?: (url: string) => void;
 }
 
+type ChartSeries = { name?: string; values: number[] };
+type ChartSpec = {
+  type?: 'bar' | 'line';
+  title?: string;
+  labels?: string[];
+  values?: number[];
+  series?: ChartSeries[];
+};
+
+const CHART_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+
+const ChartBlock: React.FC<{ spec: ChartSpec; dense?: boolean }> = ({ spec, dense = false }) => {
+  const series =
+    spec.series && spec.series.length > 0
+      ? spec.series
+      : [{ name: spec.title || 'Value', values: spec.values || [] }];
+  const labels = spec.labels || [];
+  const allValues = series.flatMap((s) => s.values);
+  const maxValue = Math.max(1, ...allValues);
+  const width = 640;
+  const height = dense ? 190 : 260;
+  const padLeft = 42;
+  const padRight = 16;
+  const padTop = 20;
+  const padBottom = 32;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+  const count = Math.max(1, labels.length || Math.max(...series.map((s) => s.values.length)));
+  const groupW = plotW / count;
+  const barW = Math.max(2, (groupW * 0.7) / Math.max(1, series.length));
+  const y = (value: number) => padTop + plotH - (value / maxValue) * plotH;
+
+  return (
+    <div className="my-3 p-3 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+      {spec.title && (
+        <div className="text-[12px] font-semibold text-neutral-800 dark:text-neutral-200 mb-2">
+          {spec.title}
+        </div>
+      )}
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" role="img">
+        {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
+          const tickY = padTop + plotH - tick * plotH;
+          return (
+            <g key={tick}>
+              <line
+                x1={padLeft}
+                y1={tickY}
+                x2={width - padRight}
+                y2={tickY}
+                stroke="#e5e7eb"
+                strokeWidth="1"
+              />
+              <text x={padLeft - 6} y={tickY + 3} textAnchor="end" fontSize="9" fill="#9ca3af">
+                {Math.round(maxValue * tick)}
+              </text>
+            </g>
+          );
+        })}
+        {labels.map((label, index) => (
+          <text
+            key={`${label}-${index}`}
+            x={padLeft + groupW * index + groupW / 2}
+            y={height - 10}
+            textAnchor="middle"
+            fontSize="9"
+            fill="#9ca3af"
+          >
+            {label.length > 12 ? `${label.slice(0, 11)}…` : label}
+          </text>
+        ))}
+        {spec.type === 'line'
+          ? series.map((s, seriesIndex) => {
+              const points = s.values
+                .map((value, index) => {
+                  const x = padLeft + groupW * index + groupW / 2;
+                  return `${x},${y(value)}`;
+                })
+                .join(' ');
+              return (
+                <g key={s.name || seriesIndex}>
+                  <polyline
+                    points={points}
+                    fill="none"
+                    stroke={CHART_COLORS[seriesIndex % CHART_COLORS.length]}
+                    strokeWidth="2.5"
+                    strokeLinejoin="round"
+                  />
+                  {s.values.map((value, index) => (
+                    <circle
+                      key={index}
+                      cx={padLeft + groupW * index + groupW / 2}
+                      cy={y(value)}
+                      r="3"
+                      fill={CHART_COLORS[seriesIndex % CHART_COLORS.length]}
+                    />
+                  ))}
+                </g>
+              );
+            })
+          : series.map((s, seriesIndex) =>
+              s.values.map((value, index) => {
+                const x =
+                  padLeft +
+                  groupW * index +
+                  groupW / 2 -
+                  (series.length * barW) / 2 +
+                  seriesIndex * barW;
+                const barH = Math.max(0, padTop + plotH - y(value));
+                return (
+                  <rect
+                    key={`${seriesIndex}-${index}`}
+                    x={x}
+                    y={y(value)}
+                    width={Math.max(1, barW - 2)}
+                    height={barH}
+                    rx="2"
+                    fill={CHART_COLORS[seriesIndex % CHART_COLORS.length]}
+                  />
+                );
+              }),
+            )}
+      </svg>
+      {series.length > 1 && (
+        <div className="flex flex-wrap items-center gap-3 mt-1">
+          {series.map((s, index) => (
+            <span key={s.name || index} className="flex items-center gap-1 text-[10px] text-neutral-500">
+              <span
+                className="inline-block w-2 h-2 rounded-full"
+                style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+              />
+              {s.name || `Series ${index + 1}`}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const MarkdownView: React.FC<MarkdownViewProps> = ({
   content,
   className = '',
@@ -72,6 +211,15 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
         }
         i++; // skip closing ```
         const codeString = codeLines.join('\n');
+        if (lang.toLowerCase() === 'chart') {
+          try {
+            const spec = JSON.parse(codeString) as ChartSpec;
+            elements.push(<ChartBlock key={`chart-${i}`} spec={spec} dense={dense} />);
+            continue;
+          } catch {
+            // Invalid chart JSON falls through to a normal code block below.
+          }
+        }
         elements.push(
           <CodeBlock
             key={`code-${i}`}

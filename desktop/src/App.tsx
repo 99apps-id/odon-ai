@@ -51,7 +51,7 @@ import {
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
-import { BrowserPreviewView } from './components/BrowserPreviewView';
+import { BrowserPreviewView, type BrowserSeed } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
 import { FileExplorerView } from './components/FileExplorerView';
 import { SshTerminalView } from './components/SshTerminalView';
@@ -62,6 +62,7 @@ import { ApprovalCenterModal } from './components/ApprovalCenterModal';
 import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
+import { PromptStartersGrid } from './components/PromptStartersGrid';
 import { api, WorkspaceInfo, WorkspaceBrowseResult } from './api';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
@@ -418,6 +419,8 @@ export default function App() {
     }
   }, [providers, activeProviderId, customOpenAiModels]);
 
+  const [browserSeed, setBrowserSeed] = useState<BrowserSeed | null>(null);
+
   // Resizable Right Panel State
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -616,6 +619,7 @@ export default function App() {
   // Cross-panel integration event listeners (Terminal, Browser, Agent interaction)
   useEffect(() => {
     const handleOpenBrowser = (e: any) => {
+      setBrowserSeed(e.detail || null);
       setRightPanelView('browser');
       setIsRightPanelOpen(true);
     };
@@ -2350,7 +2354,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <BrowserPreviewView />
+                    <BrowserPreviewView seed={browserSeed} />
                   </div>
                 </div>
               )}

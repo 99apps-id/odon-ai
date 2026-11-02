@@ -128,6 +128,121 @@ impl Tool for ArtifactCreateDocumentTool {
 /// and returns an image artifact whose preview URL is served by the daemon.
 /// If no image-capable key is configured it fails loudly instead of faking output.
 
+pub struct ArtifactCreateChartTool;
+
+#[async_trait]
+impl Tool for ArtifactCreateChartTool {
+    fn name(&self) -> &str {
+        "artifact_create_chart"
+    }
+    fn description(&self) -> &str {
+        "Create a bar or line chart artifact rendered as SVG in the chat and browser preview"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "description": "Chart title" },
+                "chart_type": { "type": "string", "enum": ["bar", "line"], "description": "Chart type" },
+                "labels": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "X-axis labels"
+                },
+                "values": {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "description": "Values for a single series"
+                },
+                "series": {
+                    "type": "array",
+                    "description": "Optional multiple series. Use instead of values.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "values": { "type": "array", "items": { "type": "number" } }
+                        },
+                        "required": ["values"]
+                    }
+                }
+            },
+            "required": ["title", "chart_type", "labels"]
+        })
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+        let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("Chart");
+        let chart_type = args
+            .get("chart_type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("bar");
+        if chart_type != "bar" && chart_type != "line" {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "chart_type must be 'bar' or 'line'".to_string(),
+            });
+        }
+        let labels: Vec<String> = args
+            .get("labels")
+            .and_then(|l| l.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if labels.is_empty() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "labels must contain at least one entry".to_string(),
+            });
+        }
+
+        let mut spec = json!({
+            "type": chart_type,
+            "title": title,
+            "labels": labels,
+        });
+        if let Some(series) = args.get("series").and_then(|s| s.as_array()) {
+            if !series.is_empty() {
+                spec["series"] = Value::Array(series.clone());
+            }
+        }
+        if spec.get("series").is_none() {
+            let values = args
+                .get("values")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if values.len() != labels.len() {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!(
+                        "values ({}) must match labels ({})",
+                        values.len(),
+                        labels.len()
+                    ),
+                });
+            }
+            spec["values"] = Value::Array(values);
+        }
+
+        let markdown = format!("## {}\n\n```chart\n{}\n```\n", title, spec);
+        let artifact = Artifact::new_document(&ctx.session_id, title, "Chart", &markdown);
+
+        Ok(json!({
+            "artifact_id": artifact.id,
+            "title": artifact.title,
+            "kind": "document",
+            "summary": artifact.summary,
+            "artifact": artifact,
+        }))
+    }
+}
+
 pub struct ArtifactCreateImageTool;
 
 struct ImageBackend {

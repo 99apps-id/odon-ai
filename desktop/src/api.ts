@@ -201,6 +201,21 @@ export const api = {
     return res.json();
   },
 
+  async browserRead(url: string): Promise<{
+    url: string;
+    status: number;
+    title: string;
+    text: string;
+    links: string[];
+  }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/browser/read?url=${encodeURIComponent(url)}`,
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
+    return data;
+  },
+
   async getTools(): Promise<any[]> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/tools`);
     if (!res.ok) return [];

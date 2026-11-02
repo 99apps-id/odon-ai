@@ -15,7 +15,10 @@ import {
   Database,
   Trash2,
 } from 'lucide-react';
-import { Artifact } from '../types';
+import { Artifact, ArtifactPayload } from '../types';
+
+const isDocumentPayload = (payload: ArtifactPayload): payload is Extract<ArtifactPayload, { type: 'document' }> =>
+  payload.type === 'document';
 import { api } from '../api';
 import { MarkdownView } from './MarkdownView';
 
@@ -235,11 +238,29 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                 })()}
 
                 {/* Document Artifact Payload */}
-                {selectedArtifact.payload.type === 'document' && (
-                  <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 max-h-[420px] overflow-y-auto">
-                    <MarkdownView content={selectedArtifact.payload.data.markdown} />
-                  </div>
-                )}
+                {selectedArtifact.payload.type === 'document' && (() => {
+                  const markdown = selectedArtifact.payload.data.markdown;
+                  return (
+                    <div className="space-y-2">
+                      <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 max-h-[420px] overflow-y-auto">
+                        <MarkdownView content={markdown} />
+                      </div>
+                      <button
+                        onClick={() =>
+                          window.dispatchEvent(
+                            new CustomEvent('odon:open-browser', {
+                              detail: { markdown },
+                            }),
+                          )
+                        }
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                      >
+                        <FileText className="w-3 h-3" />
+                        Preview in Browser
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* Image Artifact Payload */}
                 {selectedArtifact.payload.type === 'image' && (() => {

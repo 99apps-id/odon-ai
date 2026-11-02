@@ -18,49 +18,77 @@ import {
   Sparkles,
   Info,
   Maximize2,
+  FileText,
+  Loader2,
 } from 'lucide-react';
+import { api } from '../api';
+import { MarkdownView } from './MarkdownView';
+
+export interface BrowserSeed {
+  url?: string;
+  html?: string;
+  markdown?: string;
+}
 
 interface BrowserPreviewViewProps {
   initialUrl?: string;
   initialHtml?: string;
+  seed?: BrowserSeed | null;
   onSendToAgent?: (text: string) => void;
 }
 
 export function BrowserPreviewView({
   initialUrl = 'http://127.0.0.1:4096/api/status',
   initialHtml,
+  seed,
   onSendToAgent,
 }: BrowserPreviewViewProps) {
   const [url, setUrl] = useState<string>(initialUrl);
   const [inputUrl, setInputUrl] = useState<string>(initialUrl);
   const [htmlContent, setHtmlContent] = useState<string | null>(initialHtml || null);
-  const [mode, setMode] = useState<'iframe' | 'reader' | 'html'>('iframe');
+  const [markdownContent, setMarkdownContent] = useState<string>('');
+  const [mode, setMode] = useState<'iframe' | 'reader' | 'html' | 'markdown'>('iframe');
   const [viewportMode, setViewportMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [history, setHistory] = useState<string[]>([initialUrl]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [extractedText, setExtractedText] = useState<string>('');
+  const [readerLoading, setReaderLoading] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [agentSent, setAgentSent] = useState<boolean>(false);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Listen for global custom events to open URL or HTML in browser panel
+  const applySeed = (detail: BrowserSeed) => {
+    if (detail.markdown) {
+      setMarkdownContent(detail.markdown);
+      setMode('markdown');
+    }
+    if (detail.html) {
+      setHtmlContent(detail.html);
+      setMode('html');
+    }
+    if (detail.url) {
+      navigateTo(detail.url);
+    }
+  };
+
+  // Listen for global custom events to open URL, HTML, or Markdown in the panel.
   useEffect(() => {
     const handleOpenBrowser = (e: Event) => {
-      const customEvent = e as CustomEvent<{ url?: string; html?: string; mode?: 'iframe' | 'reader' | 'html' }>;
-      if (customEvent.detail?.url) {
-        navigateTo(customEvent.detail.url);
-      }
-      if (customEvent.detail?.html) {
-        setHtmlContent(customEvent.detail.html);
-        setMode('html');
-      }
+      const customEvent = e as CustomEvent<BrowserSeed>;
+      if (customEvent.detail) applySeed(customEvent.detail);
     };
 
     window.addEventListener('odon:open-browser', handleOpenBrowser);
     return () => window.removeEventListener('odon:open-browser', handleOpenBrowser);
   }, [historyIndex, history]);
+
+  // When the panel mounts because App switched to the browser view, the event
+  // that triggered the switch has already fired. Seeded props bridge that gap.
+  useEffect(() => {
+    if (seed) applySeed(seed);
+  }, [seed]);
 
   const navigateTo = (newUrl: string) => {
     let formatted = newUrl.trim();
@@ -89,12 +117,27 @@ export function BrowserPreviewView({
   };
 
   const fetchPageText = async (targetUrl: string) => {
-    // Reading arbitrary paths through /api/fs/read from a previewed URL was an
-    // arbitrary-file-read vector. The iframe already displays the page; use a
-    // neutral reader placeholder instead.
-    setExtractedText(
-      `URL: ${targetUrl}\nNavigated at: ${new Date().toLocaleTimeString()}\nMode: Embedded Web Preview`,
-    );
+    setReaderLoading(true);
+    try {
+      const data = await api.browserRead(targetUrl);
+      const sections = [
+        data.title ? `Title: ${data.title}` : '',
+        `URL: ${data.url}`,
+        `HTTP Status: ${data.status}`,
+        '',
+        data.text || '(No readable text found)',
+      ];
+      if (data.links?.length) {
+        sections.push('', 'Links:', ...data.links.slice(0, 40));
+      }
+      setExtractedText(sections.filter(Boolean).join('\n'));
+    } catch (e: any) {
+      setExtractedText(
+        `Could not read ${targetUrl}\n\n${e.message || 'Unknown error'}\n\nThe embedded preview may still render this page.`,
+      );
+    } finally {
+      setReaderLoading(false);
+    }
   };
 
   const handleRefresh = () => {
@@ -217,10 +260,26 @@ export function BrowserPreviewView({
               title="Agent Text Reader & Inspector"
             >
               <span className="flex items-center gap-1">
-                <Eye className="w-3 h-3" />
+                {readerLoading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Eye className="w-3 h-3" />
+                )}
                 <span className="hidden sm:inline">Reader</span>
               </span>
             </button>
+            {markdownContent && (
+              <button
+                onClick={() => setMode('markdown')}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${mode === 'markdown' ? 'bg-white text-blue-600 font-semibold shadow-2xs' : 'hover:text-neutral-900'}`}
+                title="Render Markdown / chart artifact"
+              >
+                <span className="flex items-center gap-1">
+                  <FileText className="w-3 h-3" />
+                  <span className="hidden sm:inline">Doc</span>
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Viewport Width */}
@@ -308,6 +367,27 @@ export function BrowserPreviewView({
           </div>
         )}
 
+        {mode === 'markdown' && (
+          <div className="w-full max-w-3xl bg-white rounded-xl border border-neutral-200 p-6 shadow-xs overflow-y-auto flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-4">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <h3 className="font-bold text-xs text-neutral-900">Markdown & Chart Preview</h3>
+              </div>
+              <button
+                onClick={handleSendToAgent}
+                className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
+              >
+                <Send className="w-3 h-3" />
+                <span>{agentSent ? 'Sent to Agent!' : 'Send to Agent'}</span>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto min-w-0 select-text">
+              <MarkdownView content={markdownContent} />
+            </div>
+          </div>
+        )}
+
         {mode === 'reader' && (
           <div className="w-full max-w-3xl bg-white rounded-xl border border-neutral-200 p-5 shadow-xs overflow-y-auto flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
@@ -340,7 +420,14 @@ export function BrowserPreviewView({
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 bg-neutral-900 text-neutral-100 rounded-xl font-mono text-xs leading-relaxed">
-              <pre className="whitespace-pre-wrap">{extractedText || `Inspecting web content at ${url}...\n\nUse 'Send Page to Agent' so ODON can read, extract data, and reason about this page.`}</pre>
+              {readerLoading ? (
+                <div className="flex items-center gap-2 text-neutral-300">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                  <span>Reading page content…</span>
+                </div>
+              ) : (
+                <pre className="whitespace-pre-wrap">{extractedText || `Inspecting web content at ${url}...\n\nUse 'Send Page to Agent' so ODON can read, extract data, and reason about this page.`}</pre>
+              )}
             </div>
           </div>
         )}
