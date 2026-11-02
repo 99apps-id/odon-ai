@@ -5,6 +5,7 @@ use odon_security::RiskTier;
 use serde_json::{json, Value};
 use tracing::info;
 
+use crate::net_guard;
 use crate::registry::{Tool, ToolContext};
 
 /// DoH (DNS-over-HTTPS) resolver to bypass ISP blocking/DNS poisoning (e.g. DDG blocking in ID).
@@ -272,8 +273,12 @@ impl Tool for WebFetchTool {
             }
         })?;
 
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
+        let host = validated.host_str().unwrap_or("").to_string();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(12))
+            .redirect(net_guard::redirect_policy(host.clone()))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
@@ -289,8 +294,15 @@ impl Tool for WebFetchTool {
                     if let Some(host) = u.host_str() {
                         let port = u.port().unwrap_or(if u.scheme() == "https" { 443 } else { 80 });
                         if let Some(ip) = doh_resolve_host(host).await {
+                            if !net_guard::allow_private_network() && net_guard::is_blocked_ip(ip) {
+                                return Err(OdonError::Tool {
+                                    tool: self.name().to_string(),
+                                    message: format!("DoH resolved {host} to a private address ({ip}); request blocked"),
+                                });
+                            }
                             if let Ok(doh_client) = reqwest::Client::builder()
                                 .timeout(std::time::Duration::from_secs(12))
+                                .redirect(net_guard::redirect_policy(host.to_string()))
                                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
                                 .resolve(host, SocketAddr::new(ip, port))
                                 .build()
@@ -371,8 +383,13 @@ impl Tool for ProbeUrlTool {
             }
         })?;
 
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(6))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -457,9 +474,14 @@ impl Tool for HttpPostTool {
             }
         })?;
         let body = args.get("body").unwrap_or(&Value::Null);
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .redirect(net_guard::redirect_policy(
+                validated.host_str().unwrap_or("").to_string(),
+            ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -612,9 +634,12 @@ impl Tool for BrowserOpenTool {
             }
         })?;
 
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
+
         #[cfg(target_os = "windows")]
-        let res = tokio::process::Command::new("cmd")
-            .args(["/c", "start", "", url_str])
+        let res = tokio::process::Command::new("explorer.exe")
+            .arg(url_str)
             .spawn();
 
         #[cfg(target_os = "macos")]
@@ -690,14 +715,38 @@ impl Tool for BrowserScreenshotTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
     }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let url_str = args.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
             OdonError::Tool {
                 tool: self.name().to_string(),
                 message: "Missing 'url' parameter".to_string(),
             }
         })?;
+        let validated = net_guard::validate_url(url_str).await?;
+        let url_str = validated.as_str();
+
         let out_path = args.get("output_path").and_then(|p| p.as_str()).unwrap_or("screenshot.png");
+        let rel = std::path::Path::new(out_path);
+        if rel.is_absolute()
+            || rel.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "output_path must stay inside the workspace".to_string(),
+            });
+        }
+        let full_out = std::path::Path::new(&ctx.workspace_root).join(rel);
+        if let Some(parent) = full_out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let out_path = full_out.to_string_lossy().to_string();
 
         // Attempt screenshot via headless chrome / edge on Windows if available
         #[cfg(target_os = "windows")]

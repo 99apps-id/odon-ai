@@ -137,6 +137,31 @@ impl ToolRegistry {
             }
         }
 
+        // Hard command-policy check before approval: catastrophic commands are
+        // refused regardless of the execution mode or a stored "always allow".
+        for key in ["command", "script"] {
+            if let Some(command) = args.get(key).and_then(|value| value.as_str()) {
+                let policy = ctx.approval_engine.get_policy().await;
+                if let Some(reason) = policy.command_forbidden_reason(command) {
+                    let _ = ctx
+                        .audit_logger
+                        .record(
+                            &ctx.session_id,
+                            name,
+                            tool.risk_tier(),
+                            &format!("Blocked by command policy: {reason}"),
+                            false,
+                            false,
+                            0,
+                        )
+                        .await;
+                    return Err(OdonError::Security(format!(
+                        "Command blocked by security policy: {reason}"
+                    )));
+                }
+            }
+        }
+
         // Security approval check
         let decision = ctx
             .approval_engine

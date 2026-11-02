@@ -60,6 +60,11 @@ pub enum AgentEvent {
         /// "approved" | "rejected" | "expired"
         decision: String,
     },
+    SteerApplied {
+        session_id: String,
+        steer_id: String,
+        text: String,
+    },
     RelayLog {
         channel: String, // "telegram", "whatsapp", "desktop"
         message: String,

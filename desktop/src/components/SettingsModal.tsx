@@ -29,10 +29,13 @@ import {
   ShieldAlert,
   Wifi,
   FileText,
+  Loader2,
+  Zap,
 } from 'lucide-react';
 import { api, OAuthAccountInfo, OAuthLoginResponse, SshProfile, SkillItemInfo } from '../api';
 import { ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from '../types';
 import { ProviderLogo } from './ProviderLogo';
+import { RelaysPanel } from './RelaysPanel';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -52,12 +55,12 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   stepfun: 'https://api.stepfun.com/v1',
   openai: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta',
+  google: 'https://generativelanguage.googleapis.com/v1beta/openai',
   groq: 'https://api.groq.com/openai/v1',
   mistral: 'https://api.mistral.ai/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   ollama: 'http://localhost:11434/v1',
-  openai_compatible: 'https://api.openai.com/v1',
+  'openai-compatible': 'http://localhost:11434/v1',
 };
 
 const KEY_PREFIXES: Record<string, string> = {
@@ -81,7 +84,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentModel,
   onSelectModel,
 }) => {
-  type SettingsTab = 'providers' | 'agents' | 'skills' | 'mcp' | 'harness' | 'ssh' | 'system';
+  type SettingsTab =
+    | 'providers'
+    | 'agents'
+    | 'skills'
+    | 'mcp'
+    | 'harness'
+    | 'relays'
+    | 'ssh'
+    | 'system';
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers');
 
   // Agents & Personas State
@@ -132,6 +143,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [activeProviderId]);
   const [daemonUrl, setDaemonUrl] = useState(api.getBaseUrl() || 'http://127.0.0.1:4096');
+  const [apiToken, setApiToken] = useState<string>(() => api.getApiToken());
   const [daemonConnected, setDaemonConnected] = useState<boolean | null>(null);
 
   // OAuth Accounts State
@@ -146,14 +158,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
 
   // BYOK keys & base urls state
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>(() => {
-    if (typeof window === 'undefined') return {};
-    const keys: Record<string, string> = {};
-    for (const id of Object.keys(DEFAULT_BASE_URLS)) {
-      keys[id] = localStorage.getItem(`odon_key_${id}`) || '';
-    }
-    return keys;
-  });
+  // API keys are never stored in the browser. They are sent once to the daemon
+  // and persisted server-side; the UI only ever shows the masked value.
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
 
   const [baseUrls, setBaseUrls] = useState<Record<string, string>>(() => {
     if (typeof window === 'undefined') return DEFAULT_BASE_URLS;
@@ -167,6 +174,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
+  const [configuredKeys, setConfiguredKeys] = useState<Record<string, string>>({});
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<Record<string, { ok: boolean; text: string }>>({});
 
   // Custom models state for OpenAI-Compatible provider
   const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
@@ -200,6 +210,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
+    if (typeof window !== 'undefined') {
+      const requested = localStorage.getItem('odon_settings_tab');
+      if (requested) {
+        localStorage.removeItem('odon_settings_tab');
+        const valid = ['providers', 'agents', 'skills', 'mcp', 'harness', 'relays', 'ssh', 'system'];
+        if (valid.includes(requested)) setActiveTab(requested as SettingsTab);
+      }
+    }
+
     api.getStatus()
       .then(() => setDaemonConnected(true))
       .catch(() => setDaemonConnected(false));
@@ -226,13 +245,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     // Load persisted BYOK configs from daemon
     api.getProviderConfigs().then((configs) => {
       if (configs?.length) {
-        setApiKeys((prev) => {
-          const next = { ...prev };
-          for (const c of configs) {
-            if (!next[c.provider_id]) {
-              next[c.provider_id] = c.masked_key;
-            }
-          }
+        // Never put a masked key into the editable field: saving it would
+        // overwrite the real credential with "sk-a…z9".
+        setConfiguredKeys(() => {
+          const next: Record<string, string> = {};
+          for (const c of configs) next[c.provider_id] = c.masked_key;
           return next;
         });
         setBaseUrls((prev) => {
@@ -341,8 +358,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   // BYOK Actions
+  const handleTestConnection = async (providerId: string) => {
+    setTesting(providerId);
+    setKeyError(null);
+    setTestResult((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
+    try {
+      const rawKey = (apiKeys[providerId] || '').trim();
+      if (rawKey) {
+        await api.saveProviderConfig(
+          providerId,
+          rawKey,
+          baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || undefined,
+          true,
+        ).catch(() => undefined);
+      }
+      const bareModel = currentModel?.includes('::') ? currentModel.split('::')[1] : currentModel;
+      const prov = providers.find((p) => p.id === providerId);
+      const provModels = providerId === 'openai-compatible' ? customOpenAiModels : (prov?.models || []);
+      const preferred =
+        provModels.find((m) => m.id === bareModel) ||
+        provModels.find((m) => m.recommended) ||
+        provModels[0];
+      const res = await api.testProvider(providerId, preferred?.id || bareModel || undefined);
+      setTestResult((prev) => ({
+        ...prev,
+        [providerId]: {
+          ok: res.ok,
+          text: res.ok
+            ? `Connected in ${res.latency_ms ?? '?'}ms · ${(res.sample || 'OK').slice(0, 120)}`
+            : res.error || 'Connection failed',
+        },
+      }));
+    } catch (err: any) {
+      setTestResult((prev) => ({
+        ...prev,
+        [providerId]: { ok: false, text: err?.message || 'Connection test failed' },
+      }));
+    } finally {
+      setTesting(null);
+    }
+  };
+
   const handleSaveKey = async (providerId: string) => {
-    const rawKey = (apiKeys[providerId] || '').trim();
+    let rawKey = (apiKeys[providerId] || '').trim();
+    // Defensive: an old build could have prefilled the masked value.
+    if (rawKey.includes('•')) rawKey = '';
     const prefix = KEY_PREFIXES[providerId];
 
     if (rawKey && prefix && !rawKey.startsWith(prefix)) {
@@ -351,7 +415,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setKeyError(null);
     }
 
-    localStorage.setItem(`odon_key_${providerId}`, rawKey);
     localStorage.setItem(`odon_base_${providerId}`, baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || '');
 
     // Persist to backend daemon storage & register live provider
@@ -371,7 +434,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleClearKey = async (providerId: string) => {
     setApiKeys((prev) => ({ ...prev, [providerId]: '' }));
-    localStorage.removeItem(`odon_key_${providerId}`);
+    setConfiguredKeys((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
     try {
       await api.deleteProviderConfig(providerId);
       const data = await api.getModels();
@@ -407,7 +474,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-sm text-neutral-900 dark:text-white">ODON Settings Center</h3>
-              <p className="text-xs text-neutral-500">Configure models, personas, skills, MCP, safety harness & remote SSH</p>
+              <p className="text-xs text-neutral-500">Configure models, personas, skills, MCP, relays, safety harness & remote SSH</p>
             </div>
           </div>
 
@@ -467,6 +534,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 <Shield className="w-3.5 h-3.5" />
                 <span>Harness</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('relays')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'relays'
+                    ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>Relays</span>
               </button>
               <button
                 onClick={() => setActiveTab('ssh')}
@@ -642,6 +720,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 )}
 
+                {/* Connection Test Result */}
+                {testResult[currentProvider.id] && (
+                  <div
+                    className={`p-3 rounded-xl border flex items-start gap-2 text-xs ${
+                      testResult[currentProvider.id].ok
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300'
+                    }`}
+                  >
+                    {testResult[currentProvider.id].ok ? (
+                      <Check className="w-4 h-4 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    )}
+                    <span className="break-words">{testResult[currentProvider.id].text}</span>
+                  </div>
+                )}
+
                 {/* OAuth Flow Card (Termigo Style) */}
                 {currentProvider.auth_type === 'oauth' ? (
                   <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-850/50 space-y-4">
@@ -773,7 +869,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             onChange={(e) =>
                               setApiKeys({ ...apiKeys, [currentProvider.id]: e.target.value })
                             }
-                            placeholder={`Paste your ${currentProvider.name.split(' (')[0]} API key...`}
+                            placeholder={
+                              configuredKeys[currentProvider.id] && !apiKeys[currentProvider.id]
+                                ? `Saved key: ${configuredKeys[currentProvider.id]} — paste a new key to replace`
+                                : `Paste your ${currentProvider.name.split(' (')[0]} API key...`
+                            }
                             className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500 pr-10"
                           />
                           <button
@@ -789,6 +889,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             {showKey[currentProvider.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                         </div>
+
+                        <button
+                          onClick={() => handleTestConnection(currentProvider.id)}
+                          disabled={testing === currentProvider.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 text-xs font-semibold transition-colors shrink-0 disabled:opacity-50"
+                          title="Send a tiny request to verify the key, Base URL, and model"
+                        >
+                          {testing === currentProvider.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Zap className="w-3.5 h-3.5" />
+                          )}
+                          Test
+                        </button>
 
                         <button
                           onClick={() => handleSaveKey(currentProvider.id)}
@@ -1568,6 +1682,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ))}
             </div>
           </div>
+        ) : activeTab === 'relays' ? (
+          <RelaysPanel />
         ) : (
           /* System & Daemon Tab */
           <div className="flex-1 overflow-y-auto p-6 space-y-6 text-[13px]">
@@ -1626,6 +1742,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </p>
             </div>
 
+            {/* API access token */}
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 font-semibold text-neutral-800 dark:text-neutral-200">
+                <Lock className="w-4 h-4 text-neutral-500" />
+                API Access Token
+              </label>
+              <input
+                type="password"
+                value={apiToken}
+                onChange={(e) => setApiToken(e.target.value)}
+                placeholder="Required when the daemon is started with ODON_API_TOKEN"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/80 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500"
+              />
+              <p className="text-[11.5px] text-neutral-500">
+                Must match the daemon's <code>ODON_API_TOKEN</code>. Required for non-loopback binds.
+              </p>
+            </div>
+
             {/* Theme Toggle */}
             <div className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
               <div>
@@ -1677,6 +1811,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <button
               onClick={() => {
                 api.setBaseUrl(daemonUrl);
+                api.setApiToken(apiToken);
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}

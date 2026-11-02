@@ -1,7 +1,9 @@
 pub mod anthropic;
 pub mod antigravity;
 pub mod codex;
+pub mod copilot;
 pub mod host_creds;
+pub mod multimodal;
 pub mod muse;
 pub mod oauth;
 pub mod openai;

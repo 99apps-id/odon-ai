@@ -70,6 +70,7 @@ pub struct ApprovalEngine {
     always_allowed: Arc<RwLock<HashSet<String>>>,
     audit_history: Arc<RwLock<Vec<AuditRecord>>>,
     policy_path: PathBuf,
+    audit_path: PathBuf,
     events: Option<EventSender>,
 }
 
@@ -86,14 +87,54 @@ impl ApprovalEngine {
             .and_then(|data| serde_json::from_str::<HashSet<String>>(&data).ok())
             .unwrap_or_default();
 
+        let audit_path = base.join(".odon").join("approval-audit.jsonl");
+        let mut loaded_audit = Vec::new();
+        if let Ok(file) = std::fs::File::open(&audit_path) {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(file).lines().flatten() {
+                if let Ok(rec) = serde_json::from_str::<AuditRecord>(&line) {
+                    loaded_audit.push(rec);
+                }
+            }
+            if loaded_audit.len() > 100 {
+                loaded_audit = loaded_audit.split_off(loaded_audit.len() - 100);
+            }
+            loaded_audit.reverse();
+        }
+
         Self {
             policy: Arc::new(RwLock::new(policy)),
             pending: Arc::new(RwLock::new(HashMap::new())),
             always_allowed: Arc::new(RwLock::new(always_allowed)),
-            audit_history: Arc::new(RwLock::new(Vec::new())),
+            audit_history: Arc::new(RwLock::new(loaded_audit)),
             policy_path,
+            audit_path,
             events: None,
         }
+    }
+
+    /// Check if target parameters point outside the workspace.
+    pub fn is_outside_workspace(parameters: &serde_json::Value, workspace_root: &std::path::Path) -> bool {
+        for key in ["path", "cwd", "destination", "source", "file"] {
+            if let Some(p_str) = parameters.get(key).and_then(|v| v.as_str()) {
+                let p = std::path::Path::new(p_str);
+                if p.is_absolute() {
+                    if !p.starts_with(workspace_root) {
+                        return true;
+                    }
+                } else if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                    let normalized = workspace_root.join(p);
+                    if let Ok(canonical) = normalized.canonicalize() {
+                        if !canonical.starts_with(workspace_root) {
+                            return true;
+                        }
+                    } else {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Publish approval lifecycle events (requested / resolved) on the event bus.

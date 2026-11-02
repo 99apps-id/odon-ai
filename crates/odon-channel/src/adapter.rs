@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use odon_core::{AgentEvent, Result};
+use odon_core::{AgentEvent, MessageAttachment, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -9,6 +9,8 @@ pub struct IncomingChannelMessage {
     pub sender_id: String,
     pub session_id: Option<String>,
     pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachment>,
 }
 
 #[async_trait]

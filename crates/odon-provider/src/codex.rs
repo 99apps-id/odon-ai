@@ -7,6 +7,7 @@ use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+use crate::multimodal;
 use crate::stream::StreamEvent;
 use crate::trait_def::{ChatRequest, ModelProvider};
 
@@ -70,18 +71,53 @@ impl ModelProvider for OpenAiCodexProvider {
             }
         }
 
+        // Responses API input items. Tool calls/results must use the dedicated
+        // function_call / function_call_output item types, not chat roles.
         let mut input_items = Vec::new();
-        for msg in request.messages {
-            let role_str = match msg.role {
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::System => "system",
-                MessageRole::Tool => "tool",
-            };
-            input_items.push(json!({
-                "role": role_str,
-                "content": msg.content.text,
-            }));
+        for msg in &request.messages {
+            match msg.role {
+                MessageRole::Tool => {
+                    let call_id = msg
+                        .content
+                        .tool_calls
+                        .first()
+                        .map(|t| t.call_id.clone())
+                        .unwrap_or_else(|| msg.id.clone());
+                    input_items.push(json!({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": msg.content.text,
+                    }));
+                }
+                MessageRole::Assistant => {
+                    if !msg.content.text.is_empty() {
+                        input_items.push(json!({
+                            "role": "assistant",
+                            "content": msg.content.text,
+                        }));
+                    }
+                    for tc in &msg.content.tool_calls {
+                        input_items.push(json!({
+                            "type": "function_call",
+                            "call_id": tc.call_id,
+                            "name": tc.tool_name,
+                            "arguments": tc.arguments.to_string(),
+                        }));
+                    }
+                }
+                MessageRole::User => {
+                    input_items.push(json!({
+                        "role": "user",
+                        "content": multimodal::responses_content(&msg.content),
+                    }));
+                }
+                MessageRole::System => {
+                    input_items.push(json!({
+                        "role": "system",
+                        "content": msg.content.text,
+                    }));
+                }
+            }
         }
 
         let mut body = json!({
@@ -95,6 +131,23 @@ impl ModelProvider for OpenAiCodexProvider {
             },
             "include": ["reasoning.encrypted_content"]
         });
+
+        if !request.tools.is_empty() {
+            let tools: Vec<_> = request
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    })
+                })
+                .collect();
+            body["tools"] = json!(tools);
+            body["tool_choice"] = json!("auto");
+        }
 
         if let Some(sys) = request.system_prompt {
             body["instructions"] = json!(sys);
@@ -121,6 +174,7 @@ impl ModelProvider for OpenAiCodexProvider {
         }
 
         let mut stream = resp.bytes_stream().eventsource();
+        let mut tool_index = 0usize;
 
         loop {
             tokio::select! {
@@ -135,25 +189,54 @@ impl ModelProvider for OpenAiCodexProvider {
                                 let _ = event_sender.send(StreamEvent::Done).await;
                                 break;
                             }
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                                let evt_type = val.get("type").and_then(|t| t.as_str()).unwrap_or_default();
-                                match evt_type {
-                                    "response.output_item.delta" | "response.text.delta" => {
-                                        if let Some(delta) = val.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-                                            let _ = event_sender.send(StreamEvent::TextDelta(delta.to_string())).await;
-                                        }
+                            let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) else { continue };
+                            let evt_type = val.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+                            match evt_type {
+                                "response.output_text.delta" => {
+                                    if let Some(delta) = val.get("delta").and_then(|d| d.as_str()) {
+                                        let _ = event_sender.send(StreamEvent::TextDelta(delta.to_string())).await;
                                     }
-                                    "response.reasoning.delta" => {
-                                        if let Some(delta) = val.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
-                                            let _ = event_sender.send(StreamEvent::ThoughtDelta(delta.to_string())).await;
-                                        }
-                                    }
-                                    "response.completed" => {
-                                        let _ = event_sender.send(StreamEvent::Done).await;
-                                        break;
-                                    }
-                                    _ => {}
                                 }
+                                "response.reasoning_summary_text.delta"
+                                | "response.reasoning_text.delta" => {
+                                    if let Some(delta) = val.get("delta").and_then(|d| d.as_str()) {
+                                        let _ = event_sender.send(StreamEvent::ThoughtDelta(delta.to_string())).await;
+                                    }
+                                }
+                                "response.output_item.done" => {
+                                    if let Some(item) = val.get("item") {
+                                        if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
+                                            let call_id = item
+                                                .get("call_id")
+                                                .or_else(|| item.get("id"))
+                                                .and_then(|i| i.as_str())
+                                                .map(String::from);
+                                            let name = item.get("name").and_then(|n| n.as_str()).map(String::from);
+                                            let arguments = item.get("arguments").and_then(|a| a.as_str()).map(String::from);
+                                            let _ = event_sender.send(StreamEvent::ToolCallDelta {
+                                                index: tool_index,
+                                                id: call_id,
+                                                name,
+                                                arguments_delta: arguments,
+                                            }).await;
+                                            tool_index += 1;
+                                        }
+                                    }
+                                }
+                                "response.failed" | "error" => {
+                                    let msg = val
+                                        .pointer("/response/error/message")
+                                        .or_else(|| val.pointer("/error/message"))
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Codex response error");
+                                    let _ = event_sender.send(StreamEvent::Error(msg.to_string())).await;
+                                    break;
+                                }
+                                "response.completed" => {
+                                    let _ = event_sender.send(StreamEvent::Done).await;
+                                    break;
+                                }
+                                _ => {}
                             }
                         }
                         Some(Err(e)) => {

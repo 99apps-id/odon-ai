@@ -58,7 +58,7 @@ export const AutomationsView: React.FC = () => {
   const [triggerType, setTriggerType] = useState<string>('cron');
   const [triggerValue, setTriggerValue] = useState<string>('0 8 * * *');
   const [prompt, setPrompt] = useState<string>('');
-  const [model, setModel] = useState<string>('claude-sonnet-5-5');
+  const [model, setModel] = useState<string>('gpt-4o');
 
   const loadData = async () => {
     setIsLoading(true);
@@ -153,7 +153,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('cron');
         setTriggerValue('0 8 * * * (Daily @ 08:00 AM)');
         setPrompt('Summarize git commits made over the last 24 hours and highlight open PRs.');
-        setModel('claude-sonnet-5-5');
+        setModel('claude-sonnet-4-20250514');
         break;
       case 'tests':
         setName('Repository Health & Cargo Tests');
@@ -161,7 +161,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('interval');
         setTriggerValue('Every 4 hours');
         setPrompt('Run workspace test suites and report any failing tests or lint warnings.');
-        setModel('gpt-6.1-sol');
+        setModel('gpt-4.1');
         break;
       case 'security':
         setName('Automated Secret & Security Audit');
@@ -169,7 +169,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('cron');
         setTriggerValue('0 0 * * * (Midnight)');
         setPrompt('Audit workspace for exposed API keys, unpinned dependencies, and security headers.');
-        setModel('gemini-4-argon');
+        setModel('gemini-2.5-flash');
         break;
       case 'hygiene':
         setName('Stale Branch & PR Hygiene');
@@ -177,7 +177,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('interval');
         setTriggerValue('Weekly');
         setPrompt('Check git branches that have not been modified for over 14 days and flag them.');
-        setModel('claude-sonnet-5-5');
+        setModel('claude-sonnet-4-20250514');
         break;
     }
   };

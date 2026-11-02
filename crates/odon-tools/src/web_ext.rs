@@ -5,8 +5,25 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
+use crate::net_guard;
 use crate::registry::{Tool, ToolContext};
 use crate::web::urlencoding;
+use std::path::{Component, PathBuf};
+
+fn safe_workspace_path(root: &str, relative: &str) -> Result<PathBuf> {
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+    {
+        return Err(OdonError::Tool {
+            tool: "filesystem".to_string(),
+            message: format!("Path must stay inside the workspace: {relative}"),
+        });
+    }
+    Ok(Path::new(root).join(path))
+}
 
 pub struct HttpPutTool;
 #[async_trait]
@@ -27,8 +44,12 @@ impl Tool for HttpPutTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let body = args.get("body").cloned().unwrap_or(json!({}));
-        let client = reqwest::Client::new();
-        let resp = client.put(url).json(&body).send().await
+        let validated = net_guard::validate_url(url).await?;
+        let client = reqwest::Client::builder()
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let resp = client.put(validated.as_str()).json(&body).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
@@ -55,8 +76,12 @@ impl Tool for HttpPatchTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let body = args.get("body").cloned().unwrap_or(json!({}));
-        let client = reqwest::Client::new();
-        let resp = client.patch(url).json(&body).send().await
+        let validated = net_guard::validate_url(url).await?;
+        let client = reqwest::Client::builder()
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let resp = client.patch(validated.as_str()).json(&body).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
@@ -81,8 +106,12 @@ impl Tool for HttpDeleteTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let client = reqwest::Client::new();
-        let resp = client.delete(url).send().await
+        let validated = net_guard::validate_url(url).await?;
+        let client = reqwest::Client::builder()
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let resp = client.delete(validated.as_str()).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
@@ -109,14 +138,18 @@ impl Tool for HttpDownloadTool {
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let dst = args.get("destination").and_then(|d| d.as_str()).unwrap_or("");
+        let validated = net_guard::validate_url(url).await?;
+        let full = safe_workspace_path(&ctx.workspace_root, dst)?;
 
-        let client = reqwest::Client::new();
-        let resp = client.get(url).send().await
+        let client = reqwest::Client::builder()
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let resp = client.get(validated.as_str()).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let bytes = resp.bytes().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
 
-        let full = Path::new(&ctx.workspace_root).join(dst);
         if let Some(parent) = full.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -145,11 +178,15 @@ impl Tool for HttpUploadTool {
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("file_path").and_then(|f| f.as_str()).unwrap_or("");
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let full = Path::new(&ctx.workspace_root).join(rel);
+        let full = safe_workspace_path(&ctx.workspace_root, rel)?;
         let bytes = fs::read(&full).map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
+        let validated = net_guard::validate_url(url).await?;
 
-        let client = reqwest::Client::new();
-        let resp = client.post(url).body(bytes).send().await
+        let client = reqwest::Client::builder()
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let resp = client.post(validated.as_str()).body(bytes).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
 
         Ok(json!({ "file_path": rel, "url": url, "status_code": resp.status().as_u16() }))
@@ -346,10 +383,14 @@ impl Tool for SecurityAuditHeadersTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()
+        let validated = net_guard::validate_url(url).await?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
 
-        let resp = client.get(url).send().await
+        let resp = client.get(validated.as_str()).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let hdrs = resp.headers();
 
@@ -453,9 +494,13 @@ impl Tool for WebScrapeTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()
+        let validated = net_guard::validate_url(url).await?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(net_guard::redirect_policy(validated.host_str().unwrap_or("").to_string()))
+            .build()
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
-        let resp = client.get(url).send().await
+        let resp = client.get(validated.as_str()).send().await
             .map_err(|e| OdonError::Tool { tool: self.name().to_string(), message: e.to_string() })?;
         let html = resp.text().await.unwrap_or_default();
 
@@ -483,13 +528,25 @@ impl Tool for UrlPreviewTool {
         })
     }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        let validated = net_guard::validate_url(url).await?;
+        let fetched = crate::web::WebFetchTool
+            .execute(ctx, json!({ "url": validated.as_str() }))
+            .await?;
+        let content = fetched
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .chars()
+            .take(600)
+            .collect::<String>();
         Ok(json!({
-            "url": url,
-            "title": format!("Preview for {url}"),
-            "description": "Web page inspected by ODON web engine",
-            "status": "ready"
+            "url": validated.as_str(),
+            "title": fetched.get("title").cloned().unwrap_or(json!("")),
+            "description": content,
+            "status": fetched.get("status").cloned().unwrap_or(json!(null)),
+            "content": fetched.get("content").cloned().unwrap_or(json!(""))
         }))
     }
 }

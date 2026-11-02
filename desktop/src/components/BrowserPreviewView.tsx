@@ -64,7 +64,13 @@ export function BrowserPreviewView({
 
   const navigateTo = (newUrl: string) => {
     let formatted = newUrl.trim();
-    if (!formatted.startsWith('http://') && !formatted.startsWith('https://') && !formatted.startsWith('data:')) {
+    // Only http(s) pages may be embedded. data:, javascript: and file: URLs
+    // would turn the preview into a script/local-file execution surface.
+    if (!/^https?:\/\//i.test(formatted)) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(formatted)) {
+        setExtractedText(`Blocked URL scheme: ${formatted}`);
+        return;
+      }
       formatted = `https://${formatted}`;
     }
     setInputUrl(formatted);
@@ -83,17 +89,12 @@ export function BrowserPreviewView({
   };
 
   const fetchPageText = async (targetUrl: string) => {
-    try {
-      const res = await fetch(`http://127.0.0.1:4096/api/fs/read?path=${encodeURIComponent(targetUrl)}`).catch(() => null);
-      if (res && res.ok) {
-        const text = await res.text();
-        setExtractedText(text.slice(0, 5000));
-        return;
-      }
-    } catch {
-      // Fallback text
-    }
-    setExtractedText(`URL: ${targetUrl}\nNavigated at: ${new Date().toLocaleTimeString()}\nMode: Embedded Web Preview`);
+    // Reading arbitrary paths through /api/fs/read from a previewed URL was an
+    // arbitrary-file-read vector. The iframe already displays the page; use a
+    // neutral reader placeholder instead.
+    setExtractedText(
+      `URL: ${targetUrl}\nNavigated at: ${new Date().toLocaleTimeString()}\nMode: Embedded Web Preview`,
+    );
   };
 
   const handleRefresh = () => {
@@ -300,7 +301,8 @@ export function BrowserPreviewView({
               srcDoc={htmlContent || undefined}
               onLoad={() => setIsLoading(false)}
               className="w-full h-full border-0 bg-white"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              sandbox="allow-scripts allow-forms"
+              referrerPolicy="no-referrer"
               title="Browser Preview Viewport"
             />
           </div>

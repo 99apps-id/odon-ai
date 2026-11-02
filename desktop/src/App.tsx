@@ -42,6 +42,12 @@ import {
   ShieldAlert,
   FolderTree,
   Server,
+  FolderPlus,
+  FolderOpen,
+  HardDrive,
+  Home,
+  ChevronUp,
+  CornerDownRight,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { CodeEditorView } from './components/CodeEditorView';
@@ -56,7 +62,7 @@ import { ApprovalCenterModal } from './components/ApprovalCenterModal';
 import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
-import { api } from './api';
+import { api, WorkspaceInfo, WorkspaceBrowseResult } from './api';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
 interface ChatMessage {
@@ -68,6 +74,13 @@ interface ChatMessage {
   thought?: string;
   toolCalls?: string[];
   attachments?: MessageAttachment[];
+}
+
+interface SteerCard {
+  id: string;
+  text: string;
+  priority: boolean;
+  status: 'queued' | 'sending';
 }
 
 // Model lists are now dynamically populated from the active provider chosen in Settings.
@@ -184,6 +197,8 @@ function guessMimeType(name: string): string {
 
 function isTextFile(file: File): boolean {
   const name = file.name.toLowerCase();
+  // SVG is an image MIME but providers expect it as text, not a raster image.
+  if (file.type === 'image/svg+xml' || name.endsWith('.svg')) return true;
   if (name === 'dockerfile' || name === '.gitignore' || name === '.env') return true;
   return (
     file.type.startsWith('text/') ||
@@ -245,6 +260,15 @@ export default function App() {
   const [showAllRecent, setShowAllRecent] = useState(false);
   const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Workspace / folder selection (explicit user action, allowlisted server-side)
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo>({ default: '', allowed: [] });
+  const [activeWorkspace, setActiveWorkspace] = useState<string>('');
+  const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
+  const [workspaceBrowse, setWorkspaceBrowse] = useState<WorkspaceBrowseResult | null>(null);
+  const [workspaceInput, setWorkspaceInput] = useState('');
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   interface AttachedFile {
     name: string;
@@ -335,6 +359,17 @@ export default function App() {
     setIsModelMenuOpen(false);
   };
 
+  // Load the daemon's workspace allowlist once.
+  useEffect(() => {
+    api
+      .getWorkspaces()
+      .then((info) => {
+        setWorkspaces(info);
+        setActiveWorkspace((prev) => prev || info.default);
+      })
+      .catch(() => {});
+  }, []);
+
   // Keep the selected model valid when the catalog changes (e.g. a stored
   // legacy/placeholder model id that no provider serves any more).
   useEffect(() => {
@@ -413,6 +448,10 @@ export default function App() {
   const [streamingThought, setStreamingThought] = useState('');
   const [streamingTool, setStreamingTool] = useState<string | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [steerCards, setSteerCards] = useState<SteerCard[]>([]);
+  const steerCardsRef = useRef<SteerCard[]>([]);
+  const stoppedRef = useRef(false);
+  const sendMessageRef = useRef<(text?: string) => void>(() => {});
 
   const handleCopyMessage = (id: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -432,6 +471,10 @@ export default function App() {
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
+
+  useEffect(() => {
+    steerCardsRef.current = steerCards;
+  }, [steerCards]);
 
   // Check daemon status and load sessions
   const checkDaemonStatus = async () => {
@@ -521,6 +564,8 @@ export default function App() {
         setStreamingTool(null);
       } else if (event.type === 'artifact_created') {
         setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
+      } else if (event.type === 'steer_applied') {
+        setSteerCards((prev) => prev.filter((card) => card.id !== event.payload.steer_id));
       } else if (event.type === 'state_changed') {
         if (event.payload.state === 'completed') {
           setIsGenerating(false);
@@ -591,23 +636,31 @@ export default function App() {
   // Start a new chat (return to hero)
   const handleNewChat = () => {
     setInChatMode(false);
+    currentSessionIdRef.current = null;
     setCurrentSessionId(null);
     setMessages([]);
     setInputMessage('');
     setStreamingText('');
     setStreamingThought('');
     setStreamingTool(null);
+    setSteerCards([]);
+    stoppedRef.current = false;
+    setActiveWorkspace(workspaces.default);
   };
 
   // Select an existing session from recent history
   const loadSessionChat = async (id: string, title: string) => {
     setCurrentSessionId(id);
+    currentSessionIdRef.current = id;
     activeSessionRef.current = id;
     setInChatMode(true);
     setStreamingText('');
     setStreamingThought('');
+    setSteerCards([]);
+    stoppedRef.current = false;
     try {
       const data = await api.getSession(id);
+      setActiveWorkspace(data.session?.workspace_root || workspaces.default || '');
       if (data.messages && data.messages.length > 0) {
         setMessages(
           data.messages.map((m) => ({
@@ -639,11 +692,198 @@ export default function App() {
     }
   };
 
+  // ── Workspace picker handlers ────────────────────────────────────────────
+  const workspaceLabel = (path: string) => {
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : path;
+  };
+
+  const loadWorkspaceBrowse = async (path?: string) => {
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    try {
+      const result = await api.browseWorkspaces(path);
+      setWorkspaceBrowse(result);
+      if (result.current) setWorkspaceInput(result.current);
+      if (result.error) setWorkspaceError(result.error);
+    } catch (err: any) {
+      setWorkspaceError(err?.message || 'Gagal membuka folder');
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  };
+
+  const openWorkspacePicker = async () => {
+    setWorkspaceModalOpen(true);
+    await loadWorkspaceBrowse(activeWorkspace || workspaces.default || undefined);
+  };
+
+  const applyWorkspace = async (path: string) => {
+    if (!path.trim()) return;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    try {
+      const alreadyAllowed =
+        path.toLowerCase() === workspaces.default.toLowerCase() ||
+        workspaces.allowed.some((item) => item.toLowerCase() === path.toLowerCase());
+      if (!alreadyAllowed) {
+        // Selecting a browsed folder is an explicit user action, so add it to
+        // the allowlist first; the daemon still canonicalizes and validates it.
+        const info = await api.addWorkspace(path);
+        setWorkspaces({ default: info.default, allowed: info.allowed });
+      }
+      const target = path === workspaces.default ? null : path;
+      if (currentSessionId) {
+        await api.setSessionWorkspace(currentSessionId, target);
+      }
+      setActiveWorkspace(path || workspaces.default);
+      setWorkspaceModalOpen(false);
+      loadSessions();
+    } catch (err: any) {
+      setWorkspaceError(err?.message || 'Gagal memilih workspace');
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  };
+
+  const addAndUseWorkspace = async (raw: string) => {
+    const path = raw.trim();
+    if (!path) return;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    try {
+      const info = await api.addWorkspace(path);
+      setWorkspaces({ default: info.default, allowed: info.allowed });
+      const target = info.added || path;
+      if (currentSessionId) {
+        await api.setSessionWorkspace(currentSessionId, target);
+      }
+      setActiveWorkspace(target);
+      setWorkspaceModalOpen(false);
+      loadSessions();
+    } catch (err: any) {
+      setWorkspaceError(err?.message || 'Gagal menambahkan folder');
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  };
+
+  const removeAllowedWorkspace = async (path: string) => {
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    try {
+      const info = await api.removeWorkspace(path);
+      setWorkspaces({ default: info.default, allowed: info.allowed });
+      if (activeWorkspace === path) {
+        setActiveWorkspace(info.default);
+        if (currentSessionId) await api.setSessionWorkspace(currentSessionId, null);
+      }
+    } catch (err: any) {
+      setWorkspaceError(err?.message || 'Gagal menghapus workspace');
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  };
+
+  const removeSteerCard = (id: string) => {
+    setSteerCards((prev) => prev.filter((card) => card.id !== id));
+  };
+
+  const queueSteerMessage = async (text: string) => {
+    const sid = currentSessionIdRef.current;
+    if (!sid) return;
+    const id = `steer_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const card: SteerCard = { id, text, priority: false, status: 'queued' };
+    setSteerCards((prev) => [...prev, card]);
+    setInputMessage('');
+    try {
+      const res = await api.steerMessage(sid, text, [], false, id);
+      if (!res.queued) {
+        // The turn already finished before the steer was queued: continue it
+        // as a normal message instead of losing it.
+        setSteerCards((prev) => prev.filter((item) => item.id !== id));
+        setIsGenerating(false);
+        stoppedRef.current = false;
+        setTimeout(() => sendMessageRef.current(text), 80);
+      }
+    } catch (err: any) {
+      setSteerCards((prev) => prev.map((item) => (item.id === id ? { ...item, status: 'queued' } : item)));
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `steer_err_${Date.now()}`,
+          role: 'assistant',
+          content: `⚠️ **Steer gagal dikirim**: ${err?.message || 'Daemon tidak merespons.'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    }
+  };
+
+  const prioritizeSteer = async (card: SteerCard) => {
+    const sid = currentSessionIdRef.current;
+    if (!sid) return;
+    if (!isGenerating) {
+      setSteerCards((prev) => prev.filter((item) => item.id !== card.id));
+      stoppedRef.current = false;
+      sendMessageRef.current(card.text);
+      return;
+    }
+    setSteerCards((prev) =>
+      prev.map((item) =>
+        item.id === card.id ? { ...item, priority: true, status: 'sending' } : item,
+      ),
+    );
+    try {
+      const res = await api.steerMessage(sid, card.text, [], true, card.id);
+      if (!res.queued) {
+        setSteerCards((prev) => prev.filter((item) => item.id !== card.id));
+        setIsGenerating(false);
+        stoppedRef.current = false;
+        setTimeout(() => sendMessageRef.current(card.text), 80);
+      }
+    } catch (err: any) {
+      setSteerCards((prev) =>
+        prev.map((item) => (item.id === card.id ? { ...item, status: 'queued' } : item)),
+      );
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `steer_err_${Date.now()}`,
+          role: 'assistant',
+          content: `⚠️ **Gagal memprioritaskan steer**: ${err?.message || 'Daemon tidak merespons.'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    }
+  };
+
+  const handleStop = async () => {
+    stoppedRef.current = true;
+    const sid = currentSessionIdRef.current;
+    if (sid) {
+      try {
+        await api.cancelTurn(sid);
+      } catch {
+        /* the turn may already have finished */
+      }
+    }
+    setIsGenerating(false);
+    setStreamingText('');
+    setStreamingThought('');
+    setStreamingTool(null);
+  };
+
   // Submit prompt from unified composer
   const handleSendMessage = async (customText?: string) => {
+    if (isGenerating) {
+      const steerText = (customText || inputMessage).trim();
+      if (steerText) void queueSteerMessage(steerText);
+      return;
+    }
+    stoppedRef.current = false;
     let textToSend = (customText || inputMessage).trim();
     if (!textToSend && attachedFiles.length === 0) return;
-    if (isGenerating) return;
 
     if (isOpenAiCompatible && !selectedModel.trim()) {
       setMessages((prev) => [
@@ -708,16 +948,23 @@ export default function App() {
       try {
         if (!sid) {
           const title = textToSend.slice(0, 32) + (textToSend.length > 32 ? '...' : '');
-          const newSession = await api.createSession(title, executionMode, selectedModel);
+          const newSession = await api.createSession(
+            title,
+            executionMode,
+            selectedModel,
+            activeWorkspace || workspaces.default || undefined,
+          );
           sid = newSession.id;
           activeSessionRef.current = sid;
+          currentSessionIdRef.current = sid;
           setCurrentSessionId(sid);
           setSessions((prev) => [newSession, ...prev]);
         } else {
           activeSessionRef.current = sid;
         }
 
-        const modelPayload = selectedModel.includes('::') ? selectedModel : `${activeProviderId}::${selectedModel}`;
+        const wireProviderId = activeProvider?.id || activeProviderId;
+        const modelPayload = selectedModel.includes('::') ? selectedModel : `${wireProviderId}::${selectedModel}`;
         const effort = (typeof window !== 'undefined' && localStorage.getItem('odon_effort_level')) || 'high';
         const resMsg = await api.sendMessage(sid, textToSend, modelPayload, effort, outgoingAttachments);
 
@@ -770,6 +1017,23 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
       setIsGenerating(false);
     }
   };
+
+  // Keep the latest send handler reachable from the steer cards and the
+  // post-completion fallback without stale closures.
+  useEffect(() => {
+    sendMessageRef.current = handleSendMessage;
+  });
+
+  // If a steer was queued but the turn ended before it could be applied,
+  // continue it as a normal message (unless the user pressed Stop).
+  useEffect(() => {
+    if (isGenerating || stoppedRef.current) return;
+    const pending = steerCardsRef.current.find((card) => card.status === 'queued');
+    if (!pending) return;
+    setSteerCards((prev) => prev.filter((card) => card.id !== pending.id));
+    const timer = setTimeout(() => sendMessageRef.current(pending.text), 120);
+    return () => clearTimeout(timer);
+  }, [isGenerating]);
 
   // Trigger prompt from hero action cards
   const handleActionCard = (title: string, promptText: string, mode: string) => {
@@ -1205,8 +1469,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                   title={`Active Provider: ${activeProvider?.name} (Click to change)`}
                 >
                   <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="text-[11px] font-semibold text-neutral-500">{activeProvider?.name.split(' (')[0]}:</span>
-                  <span className="font-semibold text-neutral-900 truncate max-w-[150px]">{displayModelName}</span>
+                  <span className="font-semibold text-neutral-900 truncate max-w-[180px]">{displayModelName}</span>
                   <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
                 </div>
 
@@ -1579,7 +1842,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                           artifacts.map((art) => {
                             if (art.kind === 'image' && art.payload.type === 'image') {
                               const rawUrl = art.payload.data.preview_url || '';
-                              const fullSrc = rawUrl.startsWith('/api/') ? `http://127.0.0.1:4096${rawUrl}` : rawUrl;
+                              const fullSrc = rawUrl.startsWith('/api/') ? api.authorizeUrl(rawUrl) : rawUrl;
                               const fileName = art.title.endsWith('.png') ? art.title : `${art.title}.png`;
 
                               return (
@@ -1615,7 +1878,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                                       onClick={async () => {
                                         if (!fullSrc) return;
                                         try {
-                                          const resp = await fetch(fullSrc);
+                                          const resp = await api.fetchApi(fullSrc);
                                           const blob = await resp.blob();
                                           const url = window.URL.createObjectURL(blob);
                                           const a = document.createElement('a');
@@ -1785,6 +2048,45 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
           {/* Bottom Prompt Input Box */}
           <div className="p-4 pt-0 shrink-0">
             <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} mx-auto rounded-3xl border border-neutral-200/90 bg-white shadow-2xs p-3 focus-within:border-neutral-300 focus-within:shadow-xs transition-all min-w-0`}>
+              {/* Steer cards: queued guidance for the running agent */}
+              {steerCards.length > 0 && (
+                <div className="flex flex-col gap-1.5 mb-2 pb-2 border-b border-amber-100">
+                  {steerCards.map((card) => (
+                    <div
+                      key={card.id}
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 min-w-0"
+                    >
+                      <CornerDownRight className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span className="flex-1 truncate min-w-0">{card.text}</span>
+                      <span
+                        className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full shrink-0 ${
+                          card.priority
+                            ? 'bg-amber-200 text-amber-900'
+                            : 'bg-white/70 text-amber-700 border border-amber-200'
+                        }`}
+                      >
+                        {card.priority ? 'priority' : 'queued'}
+                      </span>
+                      <button
+                        onClick={() => prioritizeSteer(card)}
+                        disabled={card.status === 'sending'}
+                        className="px-2 py-0.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-semibold disabled:opacity-50 cursor-pointer shrink-0"
+                        title="Send this steer now and preempt the current stream"
+                      >
+                        Send
+                      </button>
+                      <button
+                        onClick={() => removeSteerCard(card.id)}
+                        className="p-0.5 text-amber-500 hover:text-rose-600 cursor-pointer shrink-0"
+                        title="Remove steer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Attached Files Preview Chips */}
               {attachedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2 pb-2 border-b border-neutral-100">
@@ -1819,8 +2121,11 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder={getPlaceholder()}
-                disabled={isGenerating}
+                placeholder={
+                  isGenerating
+                    ? 'Steer the agent (Enter to queue; press Send on the card to prioritize)...'
+                    : getPlaceholder()
+                }
                 className="w-full text-xs text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent"
               />
 
@@ -1834,6 +2139,23 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                     title="Attach document or image"
                   >
                     <Paperclip className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={openWorkspacePicker}
+                    className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer min-w-0"
+                    title={
+                      activeWorkspace || workspaces.default
+                        ? `Folder: ${activeWorkspace || workspaces.default}`
+                        : 'Choose folder'
+                    }
+                  >
+                    <FolderPlus className="w-4 h-4 shrink-0" />
+                    {workspaceLabel(activeWorkspace || workspaces.default) && (
+                      <span className="text-[10px] font-medium max-w-[110px] truncate">
+                        {workspaceLabel(activeWorkspace || workspaces.default)}
+                      </span>
+                    )}
                   </button>
 
                   {/* Tools Dropdown */}
@@ -1886,17 +2208,28 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                       title={`Active Provider: ${activeProvider?.name}`}
                     >
                       <Sparkles className="w-3 h-3 text-blue-500" />
-                      <span className="text-[10px] text-neutral-400 font-normal">{activeProvider?.name.split(' (')[0]}:</span>
-                      <span className="truncate max-w-[130px] font-medium">{displayModelName}</span>
+                      <span className="truncate max-w-[150px] font-medium">{displayModelName}</span>
                       <ChevronDown className="w-3 h-3 text-neutral-400" />
                     </button>
                   </div>
 
-                  {/* Send Button */}
+                  {/* Stop Process */}
+                  {isGenerating && (
+                    <button
+                      onClick={handleStop}
+                      className="w-7 h-7 rounded-full bg-neutral-900 hover:bg-neutral-800 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
+                      title="Stop process"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                    </button>
+                  )}
+
+                  {/* Send / Steer Button */}
                   <button
                     onClick={() => handleSendMessage()}
-                    disabled={isGenerating || !inputMessage.trim()}
+                    disabled={!inputMessage.trim()}
                     className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
+                    title={isGenerating ? 'Send steer message' : 'Send message'}
                   >
                     <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
                   </button>
@@ -2674,12 +3007,20 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
                 <span className="text-neutral-600">Registered Tools</span>
-                <span className="font-semibold text-neutral-900">18 active tools (All Ready)</span>
+                <span className="font-semibold text-neutral-900">
+                  {dynamicTools.length || systemStatus?.tools_count || 0} active tools
+                </span>
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
                 <span className="text-neutral-600">Telegram Bot Relay</span>
-                <span className="font-semibold text-neutral-700">
-                  {systemStatus?.relays.telegram ? 'Connected' : 'Standby (Token not set)'}
+                <span className={`font-semibold ${systemStatus?.relays.telegram ? 'text-emerald-600' : 'text-neutral-700'}`}>
+                  {systemStatus?.relays.telegram ? 'Connected & polling' : 'Standby (TELEGRAM_BOT_TOKEN not set)'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
+                <span className="text-neutral-600">WhatsApp Cloud Relay</span>
+                <span className={`font-semibold ${systemStatus?.relays.whatsapp ? 'text-emerald-600' : 'text-neutral-700'}`}>
+                  {systemStatus?.relays.whatsapp ? 'Connected (webhook ready)' : 'Standby (WhatsApp env not set)'}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
@@ -2721,39 +3062,275 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               {relayModalOpen === 'telegram' ? (
                 <>
                   <p>
-                    ODON can be fully controlled directly from your personal or team Telegram chats. Commands sent to your bot execute autonomous agent turns and return rich markdown answers.
+                    ODON can be fully controlled from Telegram. Messages sent to your bot run an autonomous agent turn in the workspace and the final answer is sent back to the same chat. Text, images, PDFs, and text documents are supported.
                   </p>
                   <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 font-mono text-[11px] space-y-1">
-                    <div className="text-neutral-500 font-sans text-[10px]">Start daemon with your bot token:</div>
-                    <div className="text-neutral-800">$env:TELEGRAM_BOT_TOKEN="your_token"</div>
-                    <div className="text-blue-600">odond serve --telegram-token "your_token"</div>
+                    <div className="text-neutral-500 font-sans text-[10px]">Set these in `.env` (or pass --telegram-token):</div>
+                    <div className="text-neutral-800">TELEGRAM_BOT_TOKEN=123456:ABC...</div>
+                    <div className="text-neutral-800">TELEGRAM_ALLOWED_USERS=@yourname,123456789</div>
+                    <div className="mt-1 text-neutral-500 font-sans text-[10px]">Then restart:</div>
+                    <div className="text-blue-600">odond serve</div>
                   </div>
                   <div className="text-[11px] text-neutral-500">
                     Status:{' '}
-                    <span className="font-semibold text-emerald-600">
-                      {systemStatus?.relays.telegram ? 'Connected & Listening' : 'Waiting for Bot Token'}
+                    <span className={`font-semibold ${systemStatus?.relays.telegram ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {systemStatus?.relays.telegram
+                        ? 'Connected — polling for updates'
+                        : 'Standby — waiting for TELEGRAM_BOT_TOKEN'}
                     </span>
                   </div>
                 </>
               ) : (
                 <>
                   <p>
-                    WhatsApp relay connects ODON via a local WhatsApp bridge or cloud webhook. Messages sent to your WhatsApp number trigger background agent orchestration.
+                    WhatsApp Cloud API (Meta Graph API) sends messages to ODON through a webhook and ODON replies through the same Cloud API number. Text, images, PDFs, and text documents are supported.
                   </p>
                   <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 font-mono text-[11px] space-y-1">
-                    <div className="text-neutral-500 font-sans text-[10px]">Webhook Listener Endpoint:</div>
-                    <div className="text-neutral-800">http://127.0.0.1:4096/api/relays/whatsapp</div>
+                    <div className="text-neutral-500 font-sans text-[10px]">Set these in `.env`:</div>
+                    <div className="text-neutral-800">WHATSAPP_ACCESS_TOKEN=EAAG...</div>
+                    <div className="text-neutral-800">WHATSAPP_PHONE_NUMBER_ID=1234567890</div>
+                    <div className="text-neutral-800">WHATSAPP_VERIFY_TOKEN=my-verify-token</div>
+                    <div className="text-neutral-800">WHATSAPP_APP_SECRET=... (optional)</div>
+                    <div className="mt-1 text-neutral-500 font-sans text-[10px]">Meta webhook URL (must be publicly reachable):</div>
+                    <div className="text-neutral-800 break-all">https://your-domain/api/relays/whatsapp</div>
                   </div>
                   <div className="text-[11px] text-neutral-500">
-                    Status: <span className="font-semibold text-amber-600">Standby (Ready for webhook pairing)</span>
+                    Status:{' '}
+                    <span className={`font-semibold ${systemStatus?.relays.whatsapp ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {systemStatus?.relays.whatsapp
+                        ? 'Connected — webhook ready'
+                        : 'Standby — waiting for WhatsApp env vars'}
+                    </span>
                   </div>
                 </>
               )}
             </div>
-            <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-end">
+            <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('odon_settings_tab', 'relays');
+                  }
+                  setRelayModalOpen(null);
+                  setSettingsOpen(true);
+                }}
+                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-xs font-medium cursor-pointer transition-colors"
+              >
+                Open Settings → Relays
+              </button>
               <button
                 onClick={() => setRelayModalOpen(null)}
                 className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium cursor-pointer transition-colors shadow-2xs"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          WORKSPACE / FOLDER PICKER
+      ───────────────────────────────────────────────────────────── */}
+      {workspaceModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-2xs"
+          onClick={() => setWorkspaceModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[560px] max-w-[92vw] max-h-[86vh] bg-white rounded-2xl border border-neutral-200 shadow-2xl p-5 flex flex-col"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <FolderPlus className="w-4 h-4 text-blue-600" />
+                <span className="font-bold text-sm text-neutral-900">Workspace / Folder</span>
+              </div>
+              <button
+                onClick={() => setWorkspaceModalOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3 overflow-y-auto pr-1">
+              <div className="p-2.5 rounded-xl bg-blue-50/60 border border-blue-200/70">
+                <div className="text-[10px] uppercase tracking-wider text-blue-700 font-semibold">Active workspace</div>
+                <div className="text-[12px] font-semibold text-neutral-900 truncate mt-0.5">
+                  {workspaceLabel(activeWorkspace || workspaces.default) || 'Default workspace'}
+                </div>
+                <div className="text-[10px] text-neutral-500 font-mono truncate">
+                  {activeWorkspace || workspaces.default || '—'}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">
+                  Allowed folders ({workspaces.allowed.length})
+                </div>
+                {workspaces.allowed.map((path) => {
+                  const isActive = (activeWorkspace || workspaces.default) === path;
+                  const isDefault = path === workspaces.default;
+                  return (
+                    <div
+                      key={path}
+                      className={`flex items-center gap-2 p-2 rounded-lg border ${
+                        isActive
+                          ? 'border-blue-400 bg-blue-50/40'
+                          : 'border-neutral-200 bg-white hover:bg-neutral-50'
+                      }`}
+                    >
+                      <button
+                        onClick={() => applyWorkspace(path)}
+                        className="flex-1 text-left min-w-0 cursor-pointer"
+                        title={path}
+                      >
+                        <div className="text-[11px] font-semibold text-neutral-800 truncate">
+                          {workspaceLabel(path)}
+                        </div>
+                        <div className="text-[10px] text-neutral-400 font-mono truncate">{path}</div>
+                      </button>
+                      {isActive ? (
+                        <span className="text-[10px] font-semibold text-blue-600 flex items-center gap-1 shrink-0">
+                          <Check className="w-3 h-3" /> Active
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => applyWorkspace(path)}
+                          className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-700 shrink-0 cursor-pointer"
+                        >
+                          Use
+                        </button>
+                      )}
+                      {isDefault ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-neutral-100 text-neutral-500 shrink-0">
+                          Default
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => removeAllowedWorkspace(path)}
+                          className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-md shrink-0 cursor-pointer"
+                          title="Remove from allowlist"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 border-t border-neutral-100 space-y-2">
+                <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold flex items-center gap-1.5">
+                  <FolderOpen className="w-3 h-3" /> Browse folders
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => workspaceBrowse?.parent && loadWorkspaceBrowse(workspaceBrowse.parent)}
+                    disabled={!workspaceBrowse?.parent || workspaceBusy}
+                    className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-40 text-neutral-600 cursor-pointer"
+                    title="Up one level"
+                  >
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                  <input
+                    type="text"
+                    value={workspaceInput}
+                    onChange={(e) => setWorkspaceInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && loadWorkspaceBrowse(workspaceInput)}
+                    placeholder="C:\Projects\my-app or ~/projects/my-app"
+                    className="flex-1 px-2.5 py-2 rounded-lg border border-neutral-300 text-[11px] font-mono outline-none focus:border-blue-500 min-w-0"
+                  />
+                  <button
+                    onClick={() => loadWorkspaceBrowse(workspaceInput)}
+                    disabled={workspaceBusy}
+                    className="px-2.5 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-[11px] text-neutral-700 disabled:opacity-40 cursor-pointer"
+                  >
+                    Go
+                  </button>
+                </div>
+
+                {workspaceBrowse?.roots && workspaceBrowse.roots.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {workspaceBrowse.roots.map((root) => (
+                      <button
+                        key={root}
+                        onClick={() => loadWorkspaceBrowse(root)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 hover:bg-neutral-200 text-[10px] font-mono text-neutral-700 cursor-pointer"
+                      >
+                        <HardDrive className="w-3 h-3" />
+                        {root}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-neutral-200 divide-y divide-neutral-100 bg-white">
+                  {workspaceBusy && !workspaceBrowse && (
+                    <div className="p-3 text-[11px] text-neutral-500 flex items-center gap-2">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Loading folders...
+                    </div>
+                  )}
+                  {workspaceBrowse?.entries.map((entry) => (
+                    <button
+                      key={entry.path}
+                      onClick={() => loadWorkspaceBrowse(entry.path)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50 cursor-pointer"
+                      title={entry.path}
+                    >
+                      <Folder className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                      <span className="truncate">{entry.name}</span>
+                    </button>
+                  ))}
+                  {workspaceBrowse && workspaceBrowse.entries.length === 0 && (
+                    <div className="p-3 text-[11px] text-neutral-400 flex items-center gap-1.5">
+                      <Home className="w-3.5 h-3.5" /> No subfolders here.
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-neutral-400 truncate">
+                    {workspaceBrowse?.current || 'Select a folder to open'}
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => workspaceBrowse?.current && applyWorkspace(workspaceBrowse.current)}
+                      disabled={!workspaceBrowse?.current || workspaceBusy}
+                      className="px-2.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-[11px] font-medium disabled:opacity-40 cursor-pointer"
+                    >
+                      Use this folder
+                    </button>
+                    <button
+                      onClick={() => addAndUseWorkspace(workspaceInput || workspaceBrowse?.current || '')}
+                      disabled={workspaceBusy || !(workspaceInput || workspaceBrowse?.current)}
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold disabled:opacity-40 cursor-pointer"
+                    >
+                      Add &amp; Use
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {workspaceError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-700 flex items-start gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span className="break-words">{workspaceError}</span>
+                </div>
+              )}
+
+              <p className="text-[10px] text-neutral-400 leading-snug">
+                Only folders you explicitly add are available to the agent. System directories and
+                the daemon default cannot be removed. Each chat keeps its own workspace.
+              </p>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-end">
+              <button
+                onClick={() => setWorkspaceModalOpen(false)}
+                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-xs font-medium cursor-pointer"
               >
                 Close
               </button>

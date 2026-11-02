@@ -5,13 +5,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use odon_core::{
-    AgentEvent, AgentState, Artifact, Message, OdonError, Result, Session, SessionMode,
-    ToolCallInfo,
+    AgentEvent, AgentState, Artifact, Message, MessageAttachment, OdonError, Result, Session,
+    SessionMode, ToolCallInfo,
 };
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent, ToolDefinition};
 use odon_security::{ApprovalEngine, AuditLogger};
 use odon_storage::StorageEngine;
 use odon_tools::{ToolContext, ToolRegistry};
+
+use crate::steer::SteerQueue;
 
 #[derive(Default, Debug, Clone)]
 struct AccumulatedToolCall {
@@ -102,8 +104,18 @@ impl AgentRuntime {
         })
     }
 
+    /// The folder a session is pinned to, falling back to the daemon default.
+    fn session_workspace(&self, session_id: &str) -> String {
+        self.storage
+            .get_session(session_id)
+            .ok()
+            .and_then(|session| session.workspace_root)
+            .filter(|path| std::path::Path::new(path).is_dir())
+            .unwrap_or_else(|| self.workspace_root.clone())
+    }
+
     /// Build context harness with OS, time, workspace status, memories, and tools
-    pub fn build_system_harness(&self) -> String {
+    pub fn build_system_harness(&self, workspace_root: &str) -> String {
         let now = chrono::Utc::now().to_rfc3339();
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
@@ -131,7 +143,7 @@ impl AgentRuntime {
              3. Formulate well-structured answers using clean Markdown with headers, bullet points, and code blocks.\n\
              4. When creating code, documents (PRDs, specs), or images, invoke the dedicated artifact tools (artifact_create_code, artifact_create_document, artifact_create_image) so they appear as first-class visual components.\n\
              5. When asked to inspect, read, search, or edit files, execute the corresponding filesystem or git tools directly.",
-            now, os, arch, self.workspace_root, memories_text
+            now, os, arch, workspace_root, memories_text
         )
     }
 
@@ -158,6 +170,55 @@ impl AgentRuntime {
         effort: Option<&str>,
         cancellation: CancellationToken,
     ) -> Result<Message> {
+        self.execute_turn_with_attachments(
+            session_id,
+            user_prompt,
+            Vec::new(),
+            model_override,
+            effort,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Execute a turn with binary attachments (images / PDFs) that providers
+    /// render as native multimodal content.
+    pub async fn execute_turn_with_attachments(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<Message> {
+        self.execute_turn_controlled(
+            session_id,
+            user_prompt,
+            attachments,
+            model_override,
+            effort,
+            cancellation,
+            None,
+        )
+        .await
+    }
+
+    /// Execute a turn with optional mid-turn steering. Steers are injected as
+    /// user messages at the next agent-loop checkpoint; priority steers also
+    /// interrupt the current provider stream so the new guidance is applied
+    /// immediately.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_turn_controlled(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+        steer: Option<SteerQueue>,
+    ) -> Result<Message> {
         info!("Executing agent turn for session: {}", session_id);
 
         // 0. Ensure session exists in storage
@@ -177,7 +238,7 @@ impl AgentRuntime {
         }
 
         // 1. Persist User Message
-        let user_msg = Message::new_user(session_id, user_prompt);
+        let user_msg = Message::new_user_with_attachments(session_id, user_prompt, attachments);
         self.storage
             .save_message(&user_msg)
             .map_err(|e| OdonError::Storage(e.to_string()))?;
@@ -227,7 +288,8 @@ impl AgentRuntime {
             })
             .collect();
 
-        let system_harness = self.build_system_harness();
+        let workspace_root = self.session_workspace(session_id);
+        let system_harness = self.build_system_harness(&workspace_root);
         let mut active_artifacts = Vec::new();
         let mut total_accumulated_text = String::new();
         let mut total_accumulated_thought = String::new();
@@ -245,6 +307,23 @@ impl AgentRuntime {
                     state: AgentState::Completed,
                 });
                 break;
+            }
+
+            // Inject any steers that arrived since the previous checkpoint.
+            if let Some(queue) = &steer {
+                for message in queue.drain() {
+                    let steer_message = Message::new_user_with_attachments(
+                        session_id,
+                        message.text.clone(),
+                        message.attachments,
+                    );
+                    let _ = self.storage.save_message(&steer_message);
+                    let _ = self.event_tx.send(AgentEvent::SteerApplied {
+                        session_id: session_id.to_string(),
+                        steer_id: message.id,
+                        text: message.text,
+                    });
+                }
             }
 
             // Load fresh history from storage
@@ -267,7 +346,8 @@ impl AgentRuntime {
 
             let (stream_tx, mut stream_rx) = mpsc::channel::<StreamEvent>(128);
             let prov_clone = provider.clone();
-            let cancel_clone = cancellation.clone();
+            let iteration_cancel = cancellation.child_token();
+            let cancel_clone = iteration_cancel.clone();
 
             let prov_task = tokio::spawn(async move {
                 prov_clone
@@ -280,8 +360,23 @@ impl AgentRuntime {
             let mut tool_accumulator: HashMap<usize, AccumulatedToolCall> = HashMap::new();
             let mut stream_error = None;
 
-            // Process stream deltas
-            while let Some(evt) = stream_rx.recv().await {
+            // Process stream deltas. A priority steer cancels only this
+            // iteration's stream so the new guidance can be applied promptly.
+            let mut steer_interrupted = false;
+            loop {
+                let evt = if let Some(queue) = &steer {
+                    tokio::select! {
+                        evt = stream_rx.recv() => evt,
+                        _ = queue.wait_priority() => {
+                            iteration_cancel.cancel();
+                            steer_interrupted = true;
+                            None
+                        }
+                    }
+                } else {
+                    stream_rx.recv().await
+                };
+                let Some(evt) = evt else { break; };
                 match evt {
                     StreamEvent::TextDelta(delta) => {
                         step_text.push_str(&delta);
@@ -324,9 +419,20 @@ impl AgentRuntime {
                 }
             }
 
+            // Drop the receiver so a cancelled provider never blocks on a full
+            // event channel while it is shutting down.
+            drop(stream_rx);
+
             match prov_task.await {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => stream_error = Some(err.to_string()),
+                Ok(Err(err)) => {
+                    // Unwrap the provider's message so the caller does not see
+                    // "Provider error (x): Provider error (x): ...".
+                    stream_error = Some(match err {
+                        OdonError::Provider { message, .. } => message,
+                        other => other.to_string(),
+                    });
+                }
                 Err(err) => stream_error = Some(format!("Provider task failed: {err}")),
             }
 
@@ -341,8 +447,22 @@ impl AgentRuntime {
                 });
             }
 
-            // If no tools were called in this step, we reached the final answer
+            if steer_interrupted {
+                // Preempted by a priority steer: skip this partial step and let
+                // the next iteration drain and apply the guidance.
+                continue;
+            }
+
+            // If no tools were called in this step, we reached the final answer.
+            // If a steer is waiting, run another iteration so it is not lost.
             if tool_accumulator.is_empty() {
+                let pending_steer = steer
+                    .as_ref()
+                    .map(|queue| queue.has_pending())
+                    .unwrap_or(false);
+                if pending_steer && current_iteration < max_turn_iterations {
+                    continue;
+                }
                 break;
             }
 
@@ -378,15 +498,47 @@ impl AgentRuntime {
                     // Prepare context
                     let tool_ctx = ToolContext {
                         session_id: session_id.to_string(),
-                        workspace_root: self.workspace_root.clone(),
+                        workspace_root: workspace_root.clone(),
                         approval_engine: self.approval.clone(),
                         audit_logger: self.audit.clone(),
                         storage: Some(self.storage.clone()),
                     };
 
-                    // Execute tool
+                    // Execute tool, but let a Stop request interrupt it while
+                    // keeping the history valid with a synthetic tool result.
                     let start = std::time::Instant::now();
-                    let tool_res = self.tools.execute_tool(&tool_call.name, &tool_ctx, args_val.clone()).await;
+                    let tool_future =
+                        self.tools.execute_tool(&tool_call.name, &tool_ctx, args_val.clone());
+                    tokio::pin!(tool_future);
+                    let tool_res = tokio::select! {
+                        _ = cancellation.cancelled() => {
+                            let cancelled = serde_json::json!({
+                                "error": "Tool execution cancelled by user"
+                            });
+                            let _ = self.event_tx.send(AgentEvent::ToolCallFinished {
+                                session_id: session_id.to_string(),
+                                call_id: call_id.clone(),
+                                output: cancelled.clone(),
+                                is_error: true,
+                            });
+                            executed_tools_info.push(ToolCallInfo {
+                                call_id: call_id.clone(),
+                                tool_name: tool_call.name.clone(),
+                                arguments: args_val.clone(),
+                                output: Some(cancelled.clone()),
+                                is_error: true,
+                                requires_approval: false,
+                                is_approved: Some(true),
+                            });
+                            tool_result_msgs.push((
+                                call_id.clone(),
+                                tool_call.name.clone(),
+                                cancelled.to_string(),
+                            ));
+                            break;
+                        }
+                        res = &mut tool_future => res,
+                    };
                     let _duration = start.elapsed().as_millis() as u64;
 
                     let (output_val, is_err) = match tool_res {

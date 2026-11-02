@@ -93,6 +93,30 @@ ODON provides 149 real, concrete tools with complete parameter schemas and valid
 - Fully customizable model list for local gateways (vLLM, Ollama, LiteLLM, LM Studio).
 - Manual input for Model ID, Display Name, and Context Window with instant `+ Tambah Baris Model` button.
 
+### 8. 📡 Messaging Relays (Telegram + WhatsApp)
+- **Telegram Bot**: configure the bot token and allowed user IDs directly in **Settings → Relays** (runtime connect/disconnect, no daemon restart). Long-polling relay with a shared agent dispatcher; text, images, PDFs, and text documents are forwarded to the agent, and the final answer is sent back to the same chat. Commands: `/start`, `/help`, `/new`, `/status`.
+- **WhatsApp Web**: **Settings → Relays → Generate QR / Connect** starts a local Baileys bridge. Pair by scanning the QR code (`WhatsApp → Linked devices`) or by entering a phone number to receive a **pairing code**. Sessions persist in `~/.odon/whatsapp-auth`, and inbound/outbound messages use the same agent runtime.
+- **WhatsApp Cloud API** remains available as an optional transport via Meta webhooks (`GET/POST /api/relays/whatsapp`) and Graph API replies.
+- Per-chat sessions are stable (`tg_<chat_id>` / `wa_<phone>`) and both relays run through the existing agent runtime, tools, and approval engine. Relay tokens are stored in `~/.odon/relays.json`.
+
+### 9. 🗃️ Multi-Workspace Composer
+- Add folders from the chat composer (`FolderPlus` button). Every folder is validated, canonicalized, and persisted in `~/.odon/workspaces.json` before the agent can use it.
+- Each chat keeps its own workspace; switching folders updates the session, and all filesystem/shell/terminal tools plus the system prompt are scoped to that folder.
+- System directories (drive roots, `C:\Windows`, `/etc`, `/bin`, `/proc`, …) are refused. File Explorer and file-serving APIs only read inside allowed workspaces.
+
+---
+
+## 🔐 Security Hardening
+
+- **Command policy**: catastrophic commands (`rm -rf /`, fork bombs, disk wipes, download-and-execute, reverse shells, credential theft, …) are denied in the registry, the shell tools, and the HTTP terminal endpoint, independently of approval mode. Matching is normalized against quoting, `$IFS`, and line-continuation tricks.
+- **SSRF guard**: `web_fetch`, `web_scrape`, `url_preview`, `http_*`, `probe_url`, `browser_*` only allow public `http(s)` URLs by default. Private/loopback/link-local/CGNAT/metadata addresses and cross-host redirects are blocked. Opt in with `ODON_ALLOW_PRIVATE_NETWORK=1`, or restrict with `ODON_ALLOWED_HOSTS` / `ODON_BLOCKED_HOSTS`.
+- **Daemon auth & CORS**: binding to a non-loopback address requires `ODON_API_TOKEN`. CORS only accepts localhost/127.0.0.1/Tauri origins plus `ODON_ALLOWED_ORIGINS`. The desktop app has an API token field under Settings → System.
+- **Relay trust**: Telegram/WhatsApp deny all inbound messages when their allowlist is empty unless `TELEGRAM_ALLOW_ANYONE=1` / `WHATSAPP_ALLOW_ANYONE=1` is set. WhatsApp also verifies `X-Hub-Signature-256` when `WHATSAPP_APP_SECRET` is provided.
+- **SSH**: `-i` key paths are restricted to `~/.ssh`, `~/.odon/ssh-keys`, and `ODON_SSH_KEY_DIRS`; host/user values are validated; private key material is never stored inside `ssh-profiles.json`; host keys use `accept-new`.
+- **Filesystem**: API paths must resolve inside an allowed workspace, with canonical symlink checks. Skill names and SSH certificate filenames are slugified.
+- **Frontend**: Markdown output is HTML-escaped before formatting (no raw model HTML/XSS), links allow only http(s)/mailto, the browser preview iframe is sandboxed without `allow-same-origin`, and API keys are no longer stored in `localStorage`.
+- **Audit**: tool executions are appended to `~/.odon/audit.jsonl` (and approval decisions to `~/.odon/approval-audit.jsonl`) so history survives restarts.
+
 ---
 
 ## 🏛️ Cargo Workspace Architecture
@@ -151,6 +175,19 @@ pnpm dev
 
 # Open http://localhost:3000 in your browser
 ```
+
+### 4. Enable Telegram / WhatsApp Relays
+Open the desktop app and go to **Settings → Relays**:
+
+- **Telegram**: paste the bot token from @BotFather and the allowed user IDs/usernames, then click **Save & Connect**.
+- **WhatsApp Web**: install the bridge dependencies once, then click **Generate QR / Connect**:
+  ```bash
+  cd scripts/whatsapp-bridge
+  npm install
+  ```
+  Scan the QR with `WhatsApp → Linked devices`, or enter a phone number to use a pairing code. The bridge runs locally on port 4097 (configurable with `WA_BRIDGE_PORT`).
+
+Environment variables still work as a fallback (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, `WHATSAPP_*`). For the optional WhatsApp Cloud API transport, expose the daemon through HTTPS and set the Meta webhook URL to `https://<your-domain>/api/relays/whatsapp`, subscribing to the `messages` field. Telegram and WhatsApp Web require no public URL.
 
 ---
 

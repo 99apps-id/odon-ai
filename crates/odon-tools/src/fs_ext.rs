@@ -7,6 +7,34 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::registry::{Tool, ToolContext};
 
+fn add_path_to_zip(
+    zip: &mut zip::ZipWriter<std::fs::File>,
+    base: &Path,
+    path: &Path,
+    options: zip::write::SimpleFileOptions,
+) -> std::result::Result<(), String> {
+    if path.is_dir() {
+        let mut entries: Vec<_> = fs::read_dir(path)
+            .map_err(|e| e.to_string())?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            add_path_to_zip(zip, base, &entry.path(), options)?;
+        }
+    } else if path.is_file() {
+        let name = path
+            .strip_prefix(base)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        zip.start_file(name, options).map_err(|e| e.to_string())?;
+        let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut file, zip).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
     let p = Path::new(relative);
     if p.is_absolute()
@@ -600,12 +628,44 @@ impl Tool for FsZipTool {
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let src = args.get("source").and_then(|s| s.as_str()).unwrap_or("");
         let arc = args.get("archive_path").and_then(|a| a.as_str()).unwrap_or("");
-        let _ = resolve_path(&ctx.workspace_root, src)?;
+        let src_full = resolve_path(&ctx.workspace_root, src)?;
         let arc_full = resolve_path(&ctx.workspace_root, arc)?;
+        if !src_full.exists() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Source path does not exist: {src}"),
+            });
+        }
+        if !arc_full.to_string_lossy().to_lowercase().ends_with(".zip") {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "archive_path must end with .zip".to_string(),
+            });
+        }
+        if let Some(parent) = arc_full.parent() {
+            fs::create_dir_all(parent).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
+        }
 
-        // Simple placeholder creation or container representation
-        let header_info = format!("ZIP ARCHIVE OF {}\r\nCREATED BY ODON", src);
-        fs::write(&arc_full, header_info.as_bytes()).map_err(|e| OdonError::Tool {
+        let file = fs::File::create(&arc_full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let base = if src_full.is_dir() {
+            src_full.clone()
+        } else {
+            src_full.parent().unwrap_or(&src_full).to_path_buf()
+        };
+        add_path_to_zip(&mut zip, &base, &src_full, options).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e,
+        })?;
+        zip.finish().map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: e.to_string(),
         })?;
@@ -633,10 +693,62 @@ impl Tool for FsUnzipTool {
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let arc = args.get("archive_path").and_then(|a| a.as_str()).unwrap_or("");
         let dst = args.get("destination").and_then(|d| d.as_str()).unwrap_or("");
-        let _ = resolve_path(&ctx.workspace_root, arc)?;
+        let arc_full = resolve_path(&ctx.workspace_root, arc)?;
         let dst_full = resolve_path(&ctx.workspace_root, dst)?;
-        let _ = fs::create_dir_all(&dst_full);
-        Ok(json!({ "archive_path": arc, "destination": dst, "status": "extracted" }))
+        let file = fs::File::open(&arc_full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to open archive: {e}"),
+        })?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Invalid zip archive: {e}"),
+        })?;
+        fs::create_dir_all(&dst_full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: e.to_string(),
+        })?;
+
+        let mut extracted = 0usize;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
+            // `enclosed_name` rejects absolute paths and `..` traversal.
+            let Some(relative) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
+                continue;
+            };
+            let out_path = dst_full.join(relative);
+            if entry.is_dir() {
+                fs::create_dir_all(&out_path).map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
+            } else {
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent).map_err(|e| OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: e.to_string(),
+                    })?;
+                }
+                let mut out_file = fs::File::create(&out_path).map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
+                std::io::copy(&mut entry, &mut out_file).map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
+                extracted += 1;
+            }
+        }
+
+        Ok(json!({
+            "archive_path": arc,
+            "destination": dst,
+            "status": "extracted",
+            "files": extracted
+        }))
     }
 }
 

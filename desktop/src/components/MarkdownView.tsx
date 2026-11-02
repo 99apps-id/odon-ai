@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { api } from '../api';
 import {
   Check,
   Copy,
@@ -289,6 +290,21 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
 // ─────────────────────────────────────────────────────────────
 // INLINE FORMATTING (Bold, Italic, Code, Links, Keyboard keys)
 // ─────────────────────────────────────────────────────────────
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeHref(raw: string): string | null {
+  const href = raw.trim();
+  if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) return href;
+  return null;
+}
+
 function formatInline(text: string, onOpenBrowser?: (url: string) => void, dense?: boolean): string {
   if (!text) return '';
 
@@ -296,7 +312,8 @@ function formatInline(text: string, onOpenBrowser?: (url: string) => void, dense
     ? 'px-1 py-0.2 rounded text-[0.875em] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 font-normal'
     : 'px-1.5 py-0.5 rounded text-[0.875em] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200/90 dark:border-neutral-700 font-normal';
 
-  return text
+  // Escape first: model output is untrusted and must never inject raw HTML.
+  return escapeHtml(text)
     // Escaped HTML tags allow-listing (e.g. <kbd>, <mark>, <b>, <i>, <br>)
     .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-neutral-900 dark:text-neutral-100">$1</strong>')
     .replace(/__(.*?)__/g, '<strong class="font-semibold text-neutral-900 dark:text-neutral-100">$1</strong>')
@@ -304,15 +321,13 @@ function formatInline(text: string, onOpenBrowser?: (url: string) => void, dense
     .replace(/_([^_]+)_/g, '<em class="italic">$1</em>')
     .replace(/~~(.*?)~~/g, '<del class="line-through text-neutral-400 dark:text-neutral-500">$1</del>')
     .replace(/`([^`]+)`/g, `<code class="${codeClass}">$1</code>`)
-    .replace(/<kbd>(.*?)<\/kbd>/gi, '<kbd class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-neutral-200/80 dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 shadow-2xs font-semibold">$1</kbd>')
-    // Links with Preview chip if localhost or web
+    .replace(/&lt;kbd&gt;(.*?)&lt;\/kbd&gt;/gi, '<kbd class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-neutral-200/80 dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 shadow-2xs font-semibold">$1</kbd>')
+    // Links: only http(s)/mailto are rendered as anchors. javascript:, data:
+    // and relative schemes are shown as plain text.
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
-      const isWeb = href.startsWith('http://') || href.startsWith('https://');
-      const isLocalhost = href.includes('localhost') || href.includes('127.0.0.1');
-      if (isWeb || isLocalhost) {
-        return `<a href="${href}" target="_blank" rel="noreferrer" class="text-blue-600 dark:text-blue-400 font-medium underline decoration-blue-300 hover:decoration-blue-600 transition-colors inline-flex items-center gap-1">${label}</a>`;
-      }
-      return `<a href="${href}" target="_blank" rel="noreferrer" class="text-neutral-900 dark:text-neutral-100 underline decoration-neutral-300 hover:decoration-neutral-900 transition-colors">${label}</a>`;
+      const safe = safeHref(href);
+      if (!safe) return `<span class="text-neutral-700 dark:text-neutral-300">${label}</span>`;
+      return `<a href="${safe}" target="_blank" rel="noreferrer noopener" class="text-blue-600 dark:text-blue-400 font-medium underline decoration-blue-300 hover:decoration-blue-600 transition-colors inline-flex items-center gap-1">${label}</a>`;
     });
 }
 
@@ -534,13 +549,28 @@ function AlertBlock({
 // ─────────────────────────────────────────────────────────────
 export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
   const [downloading, setDownloading] = useState(false);
-  const fullSrc = src.startsWith('/api/') ? `http://127.0.0.1:4096${src}` : src;
+  const safeSrc =
+    /^https?:\/\//i.test(src) ||
+    /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/i.test(src) ||
+    src.startsWith('/api/')
+      ? src
+      : '';
+  const fullSrc = api.authorizeUrl(safeSrc);
   const fileName = alt || src.split('/').pop() || 'image.png';
+
+  if (!safeSrc) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] text-neutral-500">
+        <ImageIcon className="w-3.5 h-3.5" />
+        {alt || 'Image'}
+      </span>
+    );
+  }
 
   const handleDownload = async () => {
     setDownloading(true);
     try {
-      const resp = await fetch(fullSrc);
+      const resp = await api.fetchApi(fullSrc);
       const blob = await resp.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');

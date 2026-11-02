@@ -54,6 +54,44 @@ export interface FsReadResult {
   error?: string;
 }
 
+export interface WorkspaceInfo {
+  default: string;
+  allowed: string[];
+}
+
+export interface WorkspaceBrowseEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+}
+
+export interface WorkspaceBrowseResult {
+  current: string;
+  parent: string | null;
+  roots: string[];
+  entries: WorkspaceBrowseEntry[];
+  error?: string;
+}
+
+export interface TelegramRelayStatus {
+  configured: boolean;
+  online: boolean;
+  token_masked: string;
+  allowed_users: string[];
+}
+
+export interface WhatsAppBridgeStatus {
+  running: boolean;
+  connected: boolean;
+  qr?: string | null;
+  pairing_code?: string | null;
+  phone?: string | null;
+  jid?: string | null;
+  push_name?: string | null;
+  error?: string | null;
+  updated_at?: string;
+}
+
 export interface SshProfile {
   id: string;
   alias: string;
@@ -99,6 +137,34 @@ export interface GitHubRepoItem {
 }
 
 export const api = {
+  getApiToken(): string {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('odon_api_token') || '';
+  },
+
+  setApiToken(token: string) {
+    if (typeof window === 'undefined') return;
+    const trimmed = token.trim();
+    if (trimmed) localStorage.setItem('odon_api_token', trimmed);
+    else localStorage.removeItem('odon_api_token');
+  },
+
+  /** fetch wrapper that attaches the optional ODON_API_TOKEN. */
+  async fetchApi(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const token = this.getApiToken();
+    if (!token) return window.fetch(input, init);
+    const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+    headers.set('Authorization', `Bearer ${token}`);
+    return window.fetch(input, { ...init, headers });
+  },
+
+  authorizeUrl(url: string): string {
+    if (!url.includes('/api/')) return url;
+    const token = this.getApiToken();
+    if (!token) return url;
+    return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+  },
+
   getBaseUrl(): string {
     if (typeof window !== 'undefined') {
       const explicit = localStorage.getItem('odon_api_base');
@@ -117,48 +183,119 @@ export const api = {
   },
 
   async getStatus(): Promise<SystemStatus> {
-    const res = await fetch(`${this.getBaseUrl()}/api/status`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/status`);
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     return res.json();
   },
 
   async getTools(): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/tools`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/tools`);
     if (!res.ok) throw new Error(`Failed to list tools: ${res.statusText}`);
     return res.json();
   },
 
   async listSessions(): Promise<Session[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions`);
     if (!res.ok) throw new Error(`Failed to list sessions: ${res.statusText}`);
     return res.json();
   },
 
-  async createSession(title: string, mode: string = 'general', model: string = 'odon-auto'): Promise<Session> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions`, {
+  async createSession(
+    title: string,
+    mode: string = 'general',
+    model: string = 'odon-auto',
+    workspaceRoot?: string,
+  ): Promise<Session> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, mode, model }),
+      body: JSON.stringify({ title, mode, model, workspace_root: workspaceRoot }),
     });
-    if (!res.ok) throw new Error(`Failed to create session: ${res.statusText}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to create session: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getWorkspaces(): Promise<WorkspaceInfo> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/workspaces`);
+    if (!res.ok) return { default: '', allowed: [] };
+    return res.json();
+  },
+
+  async addWorkspace(path: string): Promise<WorkspaceInfo & { added?: string; error?: string }> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/workspaces`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 404 || res.status === 405) {
+        throw new Error(
+          `Daemon odond belum mendukung Workspace API (HTTP ${res.status}). Rebuild lalu restart odond, kemudian coba lagi.`,
+        );
+      }
+      throw new Error(data.error || `Failed to add workspace: ${res.status}`);
+    }
+    return data;
+  },
+
+  async removeWorkspace(path: string): Promise<WorkspaceInfo> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/workspaces?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to remove workspace: ${res.status}`);
+    }
+    return res.json();
+  },
+
+  async browseWorkspaces(path?: string): Promise<WorkspaceBrowseResult> {
+    const suffix = path ? `?path=${encodeURIComponent(path)}` : '';
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/workspaces/browse${suffix}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const error =
+        res.status === 404 || res.status === 405
+          ? `Daemon odond belum mendukung Workspace API (HTTP ${res.status}). Rebuild lalu restart odond.`
+          : err.error || `Failed to browse folders: ${res.status}`;
+      return { current: path || '', parent: null, roots: [], entries: [], error };
+    }
+    return res.json();
+  },
+
+  async setSessionWorkspace(sessionId: string, path: string | null): Promise<Session> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/workspace`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to set workspace: ${res.status}`);
+    }
     return res.json();
   },
 
   async getSession(id: string): Promise<{ session: Session; messages: Message[]; artifacts: Artifact[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions/${id}`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${id}`);
     if (!res.ok) throw new Error(`Failed to get session: ${res.statusText}`);
     return res.json();
   },
 
   async deleteSession(id: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions/${id}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${id}`, {
       method: 'DELETE',
     });
     return res.ok;
   },
 
   async listMessages(sessionId: string): Promise<Message[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`);
     if (!res.ok) return [];
     return res.json();
   },
@@ -170,7 +307,7 @@ export const api = {
     effort?: string,
     attachments?: Array<{ name: string; mime_type: string; data_base64: string }>,
   ): Promise<Message> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, model, effort, attachments: attachments || [] }),
@@ -183,6 +320,33 @@ export const api = {
     return data.message;
   },
 
+  async cancelTurn(sessionId: string): Promise<{ cancelled: boolean }> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/cancel`, {
+      method: 'POST',
+    });
+    if (!res.ok) return { cancelled: false };
+    return res.json().catch(() => ({ cancelled: false }));
+  },
+
+  async steerMessage(
+    sessionId: string,
+    text: string,
+    attachments?: Array<{ name: string; mime_type: string; data_base64: string }>,
+    priority: boolean = false,
+    steerId?: string,
+  ): Promise<{ queued: boolean; steer_id?: string; priority?: boolean }> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/steer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, attachments: attachments || [], priority, steer_id: steerId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Steer failed with status ${res.status}`);
+    }
+    return res.json();
+  },
+
   async testProvider(providerId: string, model?: string): Promise<{
     ok: boolean;
     provider: string;
@@ -191,7 +355,7 @@ export const api = {
     sample?: string;
     error?: string;
   }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/providers/test`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider_id: providerId, model }),
@@ -210,31 +374,31 @@ export const api = {
   },
 
   async listArtifacts(sessionId: string): Promise<Artifact[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/sessions/${sessionId}/artifacts`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/artifacts`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async getArtifact(id: string): Promise<Artifact> {
-    const res = await fetch(`${this.getBaseUrl()}/api/artifacts/${id}`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/artifacts/${id}`);
     if (!res.ok) throw new Error(`Failed to fetch artifact ${id}`);
     return res.json();
   },
 
   async listTools(): Promise<ToolSchema[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/tools`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/tools`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async listApprovals(): Promise<ApprovalRequest[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/approvals`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/approvals`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async resolveApproval(id: string, decision: 'approve_once' | 'approve_always' | 'deny', reason?: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/approvals/${id}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/approvals/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision, reason }),
@@ -243,19 +407,19 @@ export const api = {
   },
 
   async getModels(): Promise<{ providers: ProviderItem[]; catalog_as_of?: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/models`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/models`);
     if (!res.ok) throw new Error(`Failed to fetch models: ${res.statusText}`);
     return res.json();
   },
 
   async getTerminalInfo(): Promise<TerminalInfo> {
-    const res = await fetch(`${this.getBaseUrl()}/api/terminal/info`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/terminal/info`);
     if (!res.ok) throw new Error(`Failed to fetch terminal info: ${res.statusText}`);
     return res.json();
   },
 
   async executeTerminal(command: string, cwd?: string): Promise<TerminalExecResult> {
-    const res = await fetch(`${this.getBaseUrl()}/api/terminal/exec`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/terminal/exec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command, cwd }),
@@ -268,7 +432,7 @@ export const api = {
   },
 
   async loginOAuth(provider: string): Promise<OAuthLoginResponse> {
-    const res = await fetch(`${this.getBaseUrl()}/api/oauth/login`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/oauth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider }),
@@ -281,7 +445,7 @@ export const api = {
   },
 
   async getOAuthAccounts(): Promise<OAuthAccountInfo[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/oauth/accounts`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/oauth/accounts`);
     if (!res.ok) return [];
     return res.json();
   },
@@ -293,13 +457,13 @@ export const api = {
     base_url?: string;
     is_default: boolean;
   }>> {
-    const res = await fetch(`${this.getBaseUrl()}/api/providers/config`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async saveProviderConfig(provider_id: string, api_key: string, base_url?: string, is_default?: boolean): Promise<any> {
-    const res = await fetch(`${this.getBaseUrl()}/api/providers/config`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider_id, api_key, base_url, is_default }),
@@ -312,14 +476,14 @@ export const api = {
   },
 
   async deleteProviderConfig(provider_id: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/providers/config/${provider_id}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config/${provider_id}`, {
       method: 'DELETE',
     });
     return res.ok;
   },
 
   async disconnectOAuth(provider: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/oauth/disconnect`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/oauth/disconnect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider }),
@@ -329,33 +493,33 @@ export const api = {
 
   // Approvals & Audit Trail
   async getApprovalHistory(): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/approvals/history`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/approvals/history`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async getApprovalPolicies(): Promise<string[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/approvals/policies`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/approvals/policies`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async deleteApprovalPolicy(key: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/approvals/policies/${encodeURIComponent(key)}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/approvals/policies/${encodeURIComponent(key)}`, {
       method: 'DELETE',
     });
     return res.ok;
   },
 
   async getSettings(): Promise<{ execution_mode: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/status`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/status`);
     if (!res.ok) return { execution_mode: 'Autonomous' };
     const data = await res.json();
     return { execution_mode: data.execution_mode || 'Autonomous' };
   },
 
   async updateSettings(settings: Record<string, unknown>): Promise<{ updated: boolean }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/settings`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
@@ -366,13 +530,13 @@ export const api = {
 
   // MCP Servers
   async getMcpServers(): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/mcp/servers`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async saveMcpServer(server: any): Promise<any> {
-    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/mcp/servers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(server),
@@ -381,14 +545,14 @@ export const api = {
   },
 
   async deleteMcpServer(id: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers/${id}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/mcp/servers/${id}`, {
       method: 'DELETE',
     });
     return res.ok;
   },
 
   async toggleMcpServer(id: string): Promise<any> {
-    const res = await fetch(`${this.getBaseUrl()}/api/mcp/servers/${id}/toggle`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/mcp/servers/${id}/toggle`, {
       method: 'POST',
     });
     return res.json();
@@ -396,13 +560,13 @@ export const api = {
 
   // GitHub
   async getGitHubStatus(): Promise<GitHubStatusResponse> {
-    const res = await fetch(`${this.getBaseUrl()}/api/github/status`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/status`);
     if (!res.ok) return { authenticated: false };
     return res.json();
   },
 
   async getGitHubUserRepos(): Promise<{ repos: GitHubRepoItem[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/github/user-repos`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/user-repos`);
     if (!res.ok) return { repos: [] };
     return res.json();
   },
@@ -411,7 +575,7 @@ export const api = {
     const params = new URLSearchParams();
     if (owner) params.append('owner', owner);
     if (repo) params.append('repo', repo);
-    const res = await fetch(`${this.getBaseUrl()}/api/github/prs?${params.toString()}`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/prs?${params.toString()}`);
     if (!res.ok) return [];
     return res.json();
   },
@@ -421,13 +585,13 @@ export const api = {
     if (owner) params.append('owner', owner);
     if (repo) params.append('repo', repo);
     params.append('state', state);
-    const res = await fetch(`${this.getBaseUrl()}/api/github/issues?${params.toString()}`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/issues?${params.toString()}`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async createGitHubIssue(owner: string, repo: string, title: string, body?: string): Promise<any> {
-    const res = await fetch(`${this.getBaseUrl()}/api/github/issues`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/issues`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ owner, repo, title, body }),
@@ -437,13 +601,13 @@ export const api = {
 
   // Automations
   async getAutomations(): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/automations`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/automations`);
     if (!res.ok) return [];
     return res.json();
   },
 
   async saveAutomation(job: any): Promise<any> {
-    const res = await fetch(`${this.getBaseUrl()}/api/automations`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/automations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(job),
@@ -452,41 +616,90 @@ export const api = {
   },
 
   async deleteAutomation(id: string): Promise<boolean> {
-    const res = await fetch(`${this.getBaseUrl()}/api/automations/${id}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/automations/${id}`, {
       method: 'DELETE',
     });
     return res.ok;
   },
 
   async triggerAutomation(id: string): Promise<any> {
-    const res = await fetch(`${this.getBaseUrl()}/api/automations/${id}/trigger`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/automations/${id}/trigger`, {
       method: 'POST',
     });
     return res.json();
   },
 
   async getAutomationLogs(): Promise<any[]> {
-    const res = await fetch(`${this.getBaseUrl()}/api/automations/logs`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/automations/logs`);
     if (!res.ok) return [];
     return res.json();
+  },
+
+  // Relay configuration (runtime, no daemon restart required)
+  async getTelegramRelay(): Promise<TelegramRelayStatus> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/relays/telegram`);
+    if (!res.ok) return { configured: false, online: false, token_masked: '', allowed_users: [] };
+    return res.json();
+  },
+
+  async saveTelegramRelay(token: string, allowedUsers: string[]): Promise<TelegramRelayStatus> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/relays/telegram`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, allowed_users: allowedUsers }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to connect Telegram: ${res.status}`);
+    return data;
+  },
+
+  async disconnectTelegramRelay(): Promise<void> {
+    await this.fetchApi(`${this.getBaseUrl()}/api/relays/telegram`, { method: 'DELETE' });
+  },
+
+  async getWhatsAppBridgeStatus(): Promise<WhatsAppBridgeStatus> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/relays/whatsapp/bridge/status`);
+    if (!res.ok) return { running: false, connected: false };
+    return res.json();
+  },
+
+  async startWhatsAppBridge(
+    phone: string | null,
+    allowedNumbers: string[],
+    allowAnyone: boolean,
+  ): Promise<WhatsAppBridgeStatus> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/relays/whatsapp/bridge/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, allowed_numbers: allowedNumbers, allow_anyone: allowAnyone }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to start WhatsApp: ${res.status}`);
+    return data;
+  },
+
+  async logoutWhatsAppBridge(): Promise<void> {
+    await this.fetchApi(`${this.getBaseUrl()}/api/relays/whatsapp/bridge/logout`, {
+      method: 'POST',
+    });
   },
 
   // File Explorer APIs
   async fsList(path?: string): Promise<FsListResult> {
     const url = path ? `${this.getBaseUrl()}/api/fs/list?path=${encodeURIComponent(path)}` : `${this.getBaseUrl()}/api/fs/list`;
-    const res = await fetch(url);
+    const res = await this.fetchApi(url);
     if (!res.ok) return { current_path: '', workspace_root: '', entries: [], error: 'Failed to list directory' };
     return res.json();
   },
 
   async fsRead(path: string): Promise<FsReadResult> {
-    const res = await fetch(`${this.getBaseUrl()}/api/fs/read?path=${encodeURIComponent(path)}`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/fs/read?path=${encodeURIComponent(path)}`);
     if (!res.ok) return { path, name: '', size: 0, is_text: false, error: 'Failed to read file' };
     return res.json();
   },
 
   async fsWrite(path: string, content: string): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/fs/write`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/fs/write`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, content }),
@@ -495,7 +708,7 @@ export const api = {
   },
 
   async fsMkdir(path: string): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/fs/mkdir`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/fs/mkdir`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
@@ -504,7 +717,7 @@ export const api = {
   },
 
   async fsDelete(path: string): Promise<{ success: boolean; error?: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/fs/delete?path=${encodeURIComponent(path)}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/fs/delete?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
     });
     return res.json();
@@ -512,13 +725,13 @@ export const api = {
 
   // SSH Remote APIs
   async getSshProfiles(): Promise<{ profiles: SshProfile[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/ssh/profiles`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/profiles`);
     if (!res.ok) return { profiles: [] };
     return res.json();
   },
 
   async saveSshProfile(profile: SshProfile): Promise<{ success: boolean; profiles: SshProfile[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/ssh/profiles`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/profiles`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(profile),
@@ -527,14 +740,14 @@ export const api = {
   },
 
   async deleteSshProfile(id: string): Promise<{ success: boolean; profiles: SshProfile[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/ssh/profiles/${encodeURIComponent(id)}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/profiles/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     return res.json();
   },
 
   async execSsh(payload: { profile_id?: string; host?: string; port?: number; user?: string; key_path?: string; command: string }): Promise<TerminalExecResult> {
-    const res = await fetch(`${this.getBaseUrl()}/api/ssh/exec`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/exec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -546,7 +759,7 @@ export const api = {
   },
 
   async importSshCertificate(filename: string, content: string, profile_id?: string): Promise<{ success: boolean; saved_path: string; filename: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/ssh/certificates/import`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/certificates/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename, content, profile_id }),
@@ -558,27 +771,39 @@ export const api = {
     return res.json();
   },
 
+  getWsBaseUrl(): string {
+    const explicit = this.getBaseUrl();
+    if (explicit) return explicit.replace(/^http/, 'ws');
+    if (typeof window !== 'undefined') {
+      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${scheme}://${window.location.host}`;
+    }
+    return 'ws://127.0.0.1:4096';
+  },
+
   getTerminalWsUrl(params?: { shell?: string; cwd?: string; ssh_profile_id?: string; cols?: number; rows?: number }): string {
-    const base = this.getBaseUrl().replace(/^http/, 'ws');
+    const base = this.getWsBaseUrl();
     const query = new URLSearchParams();
     if (params?.shell) query.set('shell', params.shell);
     if (params?.cwd) query.set('cwd', params.cwd);
     if (params?.ssh_profile_id) query.set('ssh_profile_id', params.ssh_profile_id);
     if (params?.cols) query.set('cols', params.cols.toString());
     if (params?.rows) query.set('rows', params.rows.toString());
+    const token = this.getApiToken();
+    if (token) query.set('token', token);
     const qs = query.toString();
     return `${base}/api/terminal/ws${qs ? `?${qs}` : ''}`;
   },
 
   // Skills APIs
   async getSkills(): Promise<{ skills: SkillItemInfo[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/skills`);
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/skills`);
     if (!res.ok) return { skills: [] };
     return res.json();
   },
 
   async saveSkill(name: string, content: string): Promise<{ success: boolean; path?: string; error?: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/skills`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/skills`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, content }),
@@ -587,20 +812,20 @@ export const api = {
   },
 
   async deleteSkill(name: string): Promise<{ success: boolean }> {
-    const res = await fetch(`${this.getBaseUrl()}/api/skills/${encodeURIComponent(name)}`, {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/skills/${encodeURIComponent(name)}`, {
       method: 'DELETE',
     });
     return res.json();
   },
 
   createTerminalWs(): WebSocket {
-    const baseUrl = this.getBaseUrl();
-    const wsUrl = baseUrl.replace(/^http/, 'ws') + '/api/terminal/ws';
-    return new WebSocket(wsUrl);
+    return new WebSocket(this.getTerminalWsUrl());
   },
 
   subscribeEvents(onEvent: (event: AgentEvent) => void): () => void {
-    const es = new EventSource(`${this.getBaseUrl()}/api/events`);
+    const token = this.getApiToken();
+    const suffix = token ? `?token=${encodeURIComponent(token)}` : '';
+    const es = new EventSource(`${this.getBaseUrl()}/api/events${suffix}`);
 
     es.onmessage = (e) => {
       try {

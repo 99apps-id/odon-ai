@@ -15,6 +15,7 @@ import {
   Database,
 } from 'lucide-react';
 import { Artifact } from '../types';
+import { api } from '../api';
 import { MarkdownView } from './MarkdownView';
 
 interface ArtifactDrawerProps {
@@ -199,7 +200,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                 {selectedArtifact.payload.type === 'image' && (() => {
                   const imgData = selectedArtifact.payload.data;
                   const rawUrl = imgData.preview_url || '';
-                  const fullSrc = rawUrl.startsWith('/api/') ? `http://127.0.0.1:4096${rawUrl}` : rawUrl;
+                  const fullSrc = rawUrl.startsWith('/api/') ? api.authorizeUrl(rawUrl) : rawUrl;
                   const fileName = selectedArtifact.title.endsWith('.png') ? selectedArtifact.title : `${selectedArtifact.title}.png`;
 
                   return (
@@ -229,7 +230,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                           onClick={async () => {
                             if (!fullSrc) return;
                             try {
-                              const resp = await fetch(fullSrc);
+                              const resp = await api.fetchApi(fullSrc);
                               const blob = await resp.blob();
                               const url = window.URL.createObjectURL(blob);
                               const a = document.createElement('a');

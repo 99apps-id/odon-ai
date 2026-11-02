@@ -114,6 +114,7 @@ export type AgentEvent =
   | { type: 'tool_call_started'; payload: { session_id: string; call_id: string; tool_name: string; arguments: any } }
   | { type: 'tool_call_finished'; payload: { session_id: string; call_id: string; output: any; is_error: boolean } }
   | { type: 'artifact_created'; payload: { session_id: string; artifact: Artifact } }
+  | { type: 'steer_applied'; payload: { session_id: string; steer_id: string; text: string } }
   | { type: 'approval_requested'; payload: { session_id: string; approval_id: string; tool_name: string; risk_tier: number; description: string } }
   | { type: 'approval_resolved'; payload: { session_id: string; approval_id: string; decision: 'approved' | 'rejected' | 'expired' } }
   | { type: 'error'; payload: { session_id: string; message: string } };
@@ -143,12 +144,35 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
     name: 'GitHub Copilot',
     category: 'oauth',
     auth_type: 'oauth',
-    description: 'GitHub Copilot subscription models via the Copilot API',
+    description: 'GitHub Copilot subscription models (live model-picker list; retired models removed)',
+    // Sources: docs.github.com/copilot/reference/ai-models/supported-models
+    // and api.githubcopilot.com/models (model_picker_enabled, type=chat).
     models: [
-      { id: 'gpt-4o', name: 'GPT-4o (GitHub Copilot)', context: 128000, recommended: true },
-      { id: 'gpt-4.1', name: 'GPT-4.1 (GitHub Copilot)', context: 1047576, recommended: true },
-      { id: 'claude-3.7-sonnet', name: 'Claude 3.7 Sonnet (GitHub Copilot)', context: 200000 },
-      { id: 'o3-mini', name: 'o3-mini (GitHub Copilot)', context: 200000 },
+      { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', context: 400000, recommended: true },
+      { id: 'claude-sonnet-5.5', name: 'Claude Sonnet 5.5', context: 328000, recommended: true },
+      { id: 'gpt-5.3-codex', name: 'GPT-5.3-Codex', context: 400000, recommended: true },
+      { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', context: 265536, recommended: true },
+      { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra', context: 400000 },
+      { id: 'gpt-6-astra', name: 'GPT-6 Astra', context: 400000 },
+      { id: 'gpt-6-sol', name: 'GPT-6 Sol', context: 400000 },
+      { id: 'gpt-6-luna', name: 'GPT-6 Luna', context: 400000 },
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', context: 400000 },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', context: 400000 },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', context: 328000 },
+      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', context: 264000 },
+      { id: 'claude-opus-5.5', name: 'Claude Opus 5.5', context: 328000 },
+      { id: 'claude-opus-5', name: 'Claude Opus 5', context: 264000 },
+      { id: 'claude-opus-4.8', name: 'Claude Opus 4.8', context: 264000 },
+      { id: 'claude-opus-4.8-fast', name: 'Claude Opus 4.8 (fast mode)', context: 264000 },
+      { id: 'claude-haiku-5.5', name: 'Claude Haiku 5.5', context: 200000 },
+      { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', context: 200000 },
+      { id: 'claude-fable-5.1', name: 'Claude Fable 5.1', context: 264000 },
+      { id: 'claude-fable-5', name: 'Claude Fable 5', context: 264000 },
+      { id: 'gemini-4-argon', name: 'Gemini 4 Argon', context: 265536 },
+      { id: 'grok-4.7', name: 'Grok 4.7', context: 328000 },
+      { id: 'grok-4.6', name: 'Grok 4.6', context: 328000 },
+      { id: 'kimi-k3', name: 'Kimi K3', context: 1048576 },
+      { id: 'mai-code-1.1-flash', name: 'MAI-Code-1.1-Flash', context: 256000 },
     ],
   },
   {

@@ -2,18 +2,29 @@ use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use odon_core::{MessageRole, OdonError, Result};
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+use crate::multimodal;
 use crate::stream::StreamEvent;
 use crate::trait_def::{ChatRequest, ModelProvider};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthMode {
+    ApiKey,
+    Bearer,
+}
 
 pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
     base_url: String,
+    label: String,
+    auth_mode: AuthMode,
+    extra_headers: HeaderMap,
+    default_max_tokens: u32,
 }
 
 impl AnthropicProvider {
@@ -22,6 +33,10 @@ impl AnthropicProvider {
             client: reqwest::Client::new(),
             api_key: api_key.into(),
             base_url: "https://api.anthropic.com/v1".to_string(),
+            label: "anthropic".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            extra_headers: HeaderMap::new(),
+            default_max_tokens: 4096,
         }
     }
 
@@ -30,14 +45,43 @@ impl AnthropicProvider {
             client: reqwest::Client::new(),
             api_key: api_key.into(),
             base_url: base_url.into(),
+            label: "anthropic".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            extra_headers: HeaderMap::new(),
+            default_max_tokens: 4096,
         }
+    }
+
+    /// Anthropic-compatible endpoints such as GitHub Copilot's `/v1/messages`
+    /// authenticate with a bearer token instead of `x-api-key`.
+    pub fn with_bearer_auth(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+        let mut provider = Self::with_base_url(api_key, base_url);
+        provider.auth_mode = AuthMode::Bearer;
+        provider
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn with_extra_headers(mut self, headers: HeaderMap) -> Self {
+        for (name, value) in headers.iter() {
+            self.extra_headers.insert(name.clone(), value.clone());
+        }
+        self
+    }
+
+    pub fn with_default_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.default_max_tokens = max_tokens;
+        self
     }
 }
 
 #[async_trait]
 impl ModelProvider for AnthropicProvider {
     fn provider_name(&self) -> &str {
-        "anthropic"
+        &self.label
     }
 
     async fn stream_chat(
@@ -50,12 +94,33 @@ impl ModelProvider for AnthropicProvider {
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            "x-api-key",
-            HeaderValue::from_str(&self.api_key)
-                .map_err(|e| OdonError::Auth(format!("Invalid Anthropic API key format: {e}")))?,
-        );
+        match self.auth_mode {
+            AuthMode::ApiKey => {
+                headers.insert(
+                    "x-api-key",
+                    HeaderValue::from_str(&self.api_key)
+                        .map_err(|e| OdonError::Auth(format!("Invalid Anthropic API key format: {e}")))?,
+                );
+            }
+            AuthMode::Bearer => {
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {}", self.api_key))
+                        .map_err(|e| OdonError::Auth(format!("Invalid bearer token format: {e}")))?,
+                );
+            }
+        }
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        for (name, value) in self.extra_headers.iter() {
+            headers.insert(name.clone(), value.clone());
+        }
+        if request
+            .messages
+            .iter()
+            .any(|m| m.content.attachments.iter().any(|a| a.mime_type == "application/pdf"))
+        {
+            headers.insert("anthropic-beta", HeaderValue::from_static("pdfs-2024-09-25"));
+        }
 
         // Anthropic wants: assistant turns carry `tool_use` blocks, and the matching
         // results come back as `tool_result` blocks inside a single user turn.
@@ -63,7 +128,10 @@ impl ModelProvider for AnthropicProvider {
         for msg in request.messages {
             match msg.role {
                 MessageRole::User => {
-                    messages_payload.push(json!({ "role": "user", "content": msg.content.text }));
+                    messages_payload.push(json!({
+                        "role": "user",
+                        "content": multimodal::anthropic_blocks(&msg.content),
+                    }));
                 }
                 MessageRole::Assistant => {
                     let mut blocks = Vec::new();
@@ -102,17 +170,21 @@ impl ModelProvider for AnthropicProvider {
             }
         }
 
-        let model_str = match request.model.as_str() {
-            "odon-auto" | "auto" | "" | "claude-3-7-sonnet" => "claude-3-7-sonnet-20250219",
-            "claude-3-5-sonnet" => "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku" => "claude-3-5-haiku-20241022",
-            other => other,
+        let model_str = if self.label == "github-copilot" {
+            request.model.as_str()
+        } else {
+            match request.model.as_str() {
+                "odon-auto" | "auto" | "" | "claude-3-7-sonnet" => "claude-3-7-sonnet-20250219",
+                "claude-3-5-sonnet" => "claude-3-5-sonnet-20241022",
+                "claude-3-5-haiku" => "claude-3-5-haiku-20241022",
+                other => other,
+            }
         };
 
         let mut body = json!({
             "model": model_str,
             "messages": messages_payload,
-            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "max_tokens": request.max_tokens.unwrap_or(self.default_max_tokens),
             "stream": true,
         });
 
@@ -137,15 +209,29 @@ impl ModelProvider for AnthropicProvider {
             .send()
             .await
             .map_err(|e| OdonError::Provider {
-                provider: "anthropic".to_string(),
+                provider: self.label.clone(),
                 message: format!("Anthropic request failed: {}", e),
             })?;
 
         if !resp.status().is_success() {
-            let err_body = resp.text().await.unwrap_or_default();
+            let status = resp.status();
+            let mut err_body = resp.text().await.unwrap_or_default();
+            if err_body.len() > 2000 {
+                err_body.truncate(2000);
+                err_body.push_str("…");
+            }
             return Err(OdonError::Provider {
-                provider: "anthropic".to_string(),
-                message: format!("Anthropic API error: {}", err_body),
+                provider: self.label.clone(),
+                message: format!(
+                    "HTTP {} from Anthropic (model: {}).{}",
+                    status.as_u16(),
+                    model_str,
+                    if err_body.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(" Response: {}", err_body.trim())
+                    }
+                ),
             });
         }
 

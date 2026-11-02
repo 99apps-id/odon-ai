@@ -6,6 +6,7 @@ pub mod git_ext;
 pub mod github;
 pub mod harness;
 pub mod mcp;
+pub mod net_guard;
 pub mod memory;
 pub mod ops_ext;
 pub mod registry;

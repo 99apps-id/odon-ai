@@ -120,6 +120,12 @@ impl Tool for ExecBackgroundTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let cmd_str = args.get("command").and_then(|c| c.as_str()).unwrap_or("");
+        let policy = ctx.approval_engine.get_policy().await;
+        if let Some(reason) = policy.command_forbidden_reason(cmd_str) {
+            return Err(OdonError::Security(format!(
+                "Command blocked by security policy: {reason}"
+            )));
+        }
         let name = args.get("task_name").and_then(|n| n.as_str()).unwrap_or("bg_task");
         let task_id = format!("task_{}_{}", name, chrono::Utc::now().timestamp());
 

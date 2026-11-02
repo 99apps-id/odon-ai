@@ -5,7 +5,20 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
+use crate::mcp::{load_mcp_servers, save_mcp_servers, McpServerConfig};
 use crate::registry::{Tool, ToolContext};
+
+fn odon_home() -> std::path::PathBuf {
+    std::env::var_os("ODON_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(std::path::PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+fn daemon_base_url() -> String {
+    std::env::var("ODON_DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:4096".to_string())
+}
 
 // 1. Artifact Operations
 pub struct ArtifactDeleteTool;
@@ -218,11 +231,28 @@ impl Tool for RelayStatusTool {
     fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let tg_connected = std::env::var("TELEGRAM_BOT_TOKEN").is_ok();
+        let env_present = |name: &str| {
+            std::env::var(name)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        };
+        let tg_configured = env_present("TELEGRAM_BOT_TOKEN");
+        let wa_configured =
+            env_present("WHATSAPP_ACCESS_TOKEN") && env_present("WHATSAPP_PHONE_NUMBER_ID");
         Ok(json!({
             "relays": {
-                "telegram": { "configured": tg_connected, "status": if tg_connected { "online" } else { "standby" } },
-                "whatsapp": { "configured": false, "status": "standby" },
+                "telegram": {
+                    "configured": tg_configured,
+                    "status": if tg_configured { "online" } else { "standby" },
+                    "allowlist": std::env::var("TELEGRAM_ALLOWED_USERS").unwrap_or_default()
+                },
+                "whatsapp": {
+                    "configured": wa_configured,
+                    "status": if wa_configured { "online" } else { "standby" },
+                    "webhook": "/api/relays/whatsapp",
+                    "verify_token_set": env_present("WHATSAPP_VERIFY_TOKEN"),
+                    "allowlist": std::env::var("WHATSAPP_ALLOWED_NUMBERS").unwrap_or_default()
+                },
                 "slack": { "configured": false, "status": "standby" }
             }
         }))
@@ -238,12 +268,12 @@ impl Tool for AutomationListTool {
     fn parameters_schema(&self) -> Value { json!({ "type": "object", "properties": {} }) }
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
-        Ok(json!({
-            "automations": [
-                { "id": "daily-standup", "name": "Daily Git & Standup Digest", "schedule": "0 8 * * *", "enabled": true },
-                { "id": "repo-health", "name": "Repository Health & Cargo Tests", "schedule": "Every 4 hours", "enabled": true }
-            ]
-        }))
+        let path = odon_home().join(".odon").join("automations.json");
+        let automations: Value = fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            .unwrap_or_else(|| json!([]));
+        Ok(json!({ "automations": automations, "config_path": path }))
     }
 }
 
@@ -264,7 +294,27 @@ impl Tool for AutomationTriggerTool {
     fn risk_tier(&self) -> RiskTier { RiskTier::Tier1WorkspaceMutating }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
-        Ok(json!({ "id": id, "triggered": true, "status": "running" }))
+        if id.is_empty() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "id is required".to_string(),
+            });
+        }
+        // Automations are owned by the daemon; trigger the real endpoint so
+        // this tool reflects actual execution instead of pretending.
+        let url = format!("{}/api/automations/{}/trigger", daemon_base_url().trim_end_matches('/'), id);
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Could not reach the ODON daemon at {url}: {e}"),
+            })?;
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
+        Ok(json!({ "id": id, "http_status": status.as_u16(), "result": body }))
     }
 }
 
@@ -292,7 +342,36 @@ impl Tool for McpAddServerTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("custom");
         let name = args.get("name").and_then(|n| n.as_str()).unwrap_or(id);
-        Ok(json!({ "id": id, "name": name, "status": "configured" }))
+        let transport = args.get("transport").and_then(|t| t.as_str()).unwrap_or("stdio");
+        let command = args.get("command").and_then(|c| c.as_str()).map(String::from);
+        let url = args.get("url").and_then(|u| u.as_str()).map(String::from);
+        let server_args = args.get("args").and_then(|a| a.as_array()).map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        });
+
+        let config = McpServerConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            transport: transport.to_string(),
+            command,
+            args: server_args,
+            env: None,
+            url,
+            enabled: true,
+            tools: Vec::new(),
+        };
+
+        let mut servers = load_mcp_servers();
+        if let Some(pos) = servers.iter().position(|s| s.id == id) {
+            servers[pos] = config;
+        } else {
+            servers.push(config);
+        }
+        save_mcp_servers(&servers)?;
+        Ok(json!({ "id": id, "name": name, "status": "configured", "persisted": true }))
     }
 }
 

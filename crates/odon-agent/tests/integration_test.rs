@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use odon_agent::AgentRuntime;
+use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
 use odon_core::{AgentEvent, ArtifactKind, Result};
@@ -12,7 +12,9 @@ use odon_tools::git::{GitDiffTool, GitStatusTool};
 use odon_tools::github::GitHubGetRepoTool;
 use odon_tools::mcp::McpListToolsTool;
 use odon_tools::ToolRegistry;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
@@ -36,7 +38,7 @@ impl ModelProvider for MockConversationalProvider {
         if has_tools {
             let _ = event_sender
                 .send(StreamEvent::TextDelta(
-                    "All requested artifacts (Code, PRD, and Visuals) for Personal Knowledge Hub have been created successfully."
+                    "All requested artifacts (Code and PRD) for Personal Knowledge Hub have been created successfully."
                         .to_string(),
                 ))
                 .await;
@@ -53,8 +55,7 @@ impl ModelProvider for MockConversationalProvider {
         let _ = event_sender
             .send(StreamEvent::TextDelta(
                 "Got it! I'll help you build the 'Personal Knowledge Hub' end-to-end \
-                 — including the code (React 19), a product requirements document (PRD), \
-                 and high-quality project images."
+                 — including the code (React 19) and a product requirements document (PRD)."
                     .to_string(),
             ))
             .await;
@@ -91,21 +92,9 @@ impl ModelProvider for MockConversationalProvider {
             })
             .await;
 
-        // Simulate tool call delta to create image artifact
-        let _ = event_sender
-            .send(StreamEvent::ToolCallDelta {
-                index: 2,
-                id: Some("call_art_img".to_string()),
-                name: Some("artifact_create_image".to_string()),
-                arguments_delta: Some(serde_json::to_string(&serde_json::json!({
-                    "title": "hero-illustration.png",
-                    "prompt": "Vibrant artistic workspace with knowledge nodes glowing in twilight",
-                    "width": 1920,
-                    "height": 1080,
-                    "model": "FLUX.1-pro"
-                })).unwrap()),
-            })
-            .await;
+        // Image generation requires a real external provider key, so it is
+        // covered by its own failure-path expectation rather than this offline
+        // conversational turn.
 
         let _ = event_sender.send(StreamEvent::Done).await;
         Ok(())
@@ -216,10 +205,9 @@ async fn test_conversational_agent_turn_with_artifacts() {
 
     // Verify generated artifacts in SQLite
     let artifacts = storage.list_artifacts(&session.id).unwrap();
-    assert_eq!(artifacts.len(), 3);
+    assert_eq!(artifacts.len(), 2);
     assert_eq!(artifacts[0].kind, ArtifactKind::Code);
     assert_eq!(artifacts[1].kind, ArtifactKind::Document);
-    assert_eq!(artifacts[2].kind, ArtifactKind::Image);
 }
 
 #[tokio::test]
@@ -384,4 +372,134 @@ async fn test_tool_history_orders_assistant_calls_before_tool_results() {
         assert!(declared.contains(&id), "tool result {id} has no declaring call");
         assert!(!tool_msg.content.tool_calls[0].tool_name.is_empty());
     }
+}
+
+/// Provider that streams slowly so a priority steer can interrupt it.
+struct SteerableProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ModelProvider for SteerableProvider {
+    fn provider_name(&self) -> &str {
+        "steerable"
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        cancellation: CancellationToken,
+    ) -> Result<()> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let last_user = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == odon_core::MessageRole::User)
+            .map(|message| message.content.text.clone())
+            .unwrap_or_default();
+        let ack = last_user.contains("STEER");
+
+        for _ in 0..20 {
+            if cancellation.is_cancelled() {
+                let _ = event_sender.send(StreamEvent::Done).await;
+                return Ok(());
+            }
+            let delta = if ack { "steer-ack " } else { "working " };
+            let _ = event_sender
+                .send(StreamEvent::TextDelta(delta.to_string()))
+                .await;
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_priority_steer_interrupts_running_turn() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = Arc::new(ApprovalEngine::new(SecurityPolicy::default()));
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, mut event_rx) = create_event_bus(128);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let provider = Arc::new(SteerableProvider {
+        calls: calls.clone(),
+    });
+
+    let runtime = Arc::new(AgentRuntime::new(
+        storage.clone(),
+        Arc::new(ToolRegistry::new()),
+        approval,
+        audit,
+        event_tx,
+        std::env::temp_dir().to_string_lossy().to_string(),
+    ));
+    runtime
+        .register_provider("default", provider, true)
+        .await;
+
+    let session = Session::new("Steer Test", SessionMode::General, "steerable");
+    storage.save_session(&session).unwrap();
+
+    let queue = SteerQueue::new();
+    let cancel = CancellationToken::new();
+    let rt = runtime.clone();
+    let sid = session.id.clone();
+    let steer_queue = queue.clone();
+    let task = tokio::spawn(async move {
+        rt.execute_turn_controlled(
+            &sid,
+            "Please do the long task",
+            Vec::new(),
+            None,
+            None,
+            cancel,
+            Some(steer_queue),
+        )
+        .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(90)).await;
+    queue.push(SteerMessage {
+        id: "steer-1".to_string(),
+        text: "STEER: stop and use approach B".to_string(),
+        attachments: Vec::new(),
+        priority: true,
+    });
+
+    let result = tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("turn timed out")
+        .expect("task join failed")
+        .expect("turn failed");
+    assert!(
+        result.content.text.contains("steer-ack"),
+        "final text did not include the steered answer: {}",
+        result.content.text
+    );
+    assert!(
+        calls.load(Ordering::SeqCst) >= 2,
+        "the provider should be called again after the steer"
+    );
+
+    let messages = storage.list_messages(&session.id).unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.role == odon_core::MessageRole::User
+                && message.content.text.contains("STEER")),
+        "the steer must be persisted as a user message"
+    );
+
+    let mut saw_applied = false;
+    while let Ok(event) = event_rx.try_recv() {
+        if let AgentEvent::SteerApplied { steer_id, .. } = event {
+            if steer_id == "steer-1" {
+                saw_applied = true;
+            }
+        }
+    }
+    assert!(saw_applied, "SteerApplied event must be emitted");
 }

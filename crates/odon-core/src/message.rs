@@ -31,6 +31,16 @@ pub struct ToolCallInfo {
     pub is_approved: Option<bool>,
 }
 
+/// A binary attachment supplied with a user turn. `data_base64` is the raw
+/// base64 payload without a `data:<mime>;base64,` prefix so every provider can
+/// rebuild whichever multimodal envelope it needs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageAttachment {
+    pub name: String,
+    pub mime_type: String,
+    pub data_base64: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageContent {
     pub text: String,
@@ -38,6 +48,8 @@ pub struct MessageContent {
     pub tool_calls: Vec<ToolCallInfo>,
     pub artifact_ids: Vec<String>,
     pub action_chips: Vec<OutputActionChip>,
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +64,14 @@ pub struct Message {
 
 impl Message {
     pub fn new_user(session_id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self::new_user_with_attachments(session_id, text, Vec::new())
+    }
+
+    pub fn new_user_with_attachments(
+        session_id: impl Into<String>,
+        text: impl Into<String>,
+        attachments: Vec<MessageAttachment>,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.into(),
@@ -62,6 +82,7 @@ impl Message {
                 tool_calls: Vec::new(),
                 artifact_ids: Vec::new(),
                 action_chips: Vec::new(),
+                attachments,
             },
             model: None,
             created_at: Utc::now(),
@@ -84,6 +105,7 @@ impl Message {
                 tool_calls: Vec::new(),
                 artifact_ids: Vec::new(),
                 action_chips: Vec::new(),
+                attachments: Vec::new(),
             },
             model,
             created_at: Utc::now(),
@@ -114,6 +136,7 @@ impl Message {
                 }],
                 artifact_ids: Vec::new(),
                 action_chips: Vec::new(),
+                attachments: Vec::new(),
             },
             model: None,
             created_at: Utc::now(),

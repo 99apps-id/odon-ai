@@ -30,3 +30,9 @@ node_modules
 ssh-profiles.json
 approval-policies.json
 mcp-servers.json
+
+# Local build/test artifacts and agent tooling
+*.log
+.commandcode/
+scripts/whatsapp-bridge/node_modules/
+scripts/whatsapp-bridge/auth/

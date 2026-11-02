@@ -57,9 +57,15 @@ impl StorageEngine {
     }
 
     pub fn default_storage() -> Result<Self> {
-        let base_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("odon");
+        // `ODON_HOME` keeps the database next to the rest of the daemon state
+        // (OAuth tokens, automations, MCP configs), which is what tests and
+        // portable installs expect. Without it, keep the historical location.
+        let base_dir = match std::env::var_os("ODON_HOME") {
+            Some(home) => PathBuf::from(home).join(".odon"),
+            None => dirs::data_local_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("odon"),
+        };
         std::fs::create_dir_all(&base_dir)?;
         Self::new_at_path(base_dir.join("odon_state.db"))
     }
@@ -337,6 +343,7 @@ impl StorageEngine {
                     tool_calls: Vec::new(),
                     artifact_ids: Vec::new(),
                     action_chips: Vec::new(),
+                    attachments: Vec::new(),
                 });
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))

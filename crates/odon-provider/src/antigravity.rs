@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+use crate::multimodal;
 use crate::stream::StreamEvent;
 use crate::trait_def::{ChatRequest, ModelProvider};
 
@@ -324,7 +325,10 @@ impl ModelProvider for AntigravityProvider {
         let mut contents: Vec<Value> = Vec::new();
         for msg in &request.messages {
             match msg.role {
-                MessageRole::User => contents.push(json!({ "role": "user", "parts": [{ "text": msg.content.text }] })),
+                MessageRole::User => contents.push(json!({
+                    "role": "user",
+                    "parts": multimodal::gemini_parts(&msg.content),
+                })),
                 MessageRole::Assistant => {
                     let mut parts = Vec::new();
                     if !msg.content.text.is_empty() {
@@ -402,13 +406,12 @@ impl ModelProvider for AntigravityProvider {
         }
         let session_id = new_session_id();
         let wire_model = match request.model.as_str() {
-            "gemini-4-argon" => "gemini-4-argon",
-            "gemini-3.1-pro" => "gemini-3.1-pro",
-            "gemini-3.8-flash" | "gemini-3.8-flash-medium" | "gemini-2.0-flash" | "gemini-1.5-flash" | "gemini-2.5-flash" | "odon-auto" | "auto" | "" => "gemini-3.8-flash-medium",
-            "gemini-3.8-flash-high" => "gemini-3.8-flash-high",
-            "claude-sonnet-5-5" | "claude-3-7-sonnet" | "claude-3-5-sonnet" | "claude-3-5-sonnet-20241022" => "claude-sonnet-5-5",
-            "claude-opus-5-5" => "claude-opus-5-5",
-            "claude-sonnet-4-6" => "claude-sonnet-4-6",
+            // Legacy aliases kept so saved sessions keep working.
+            "gemini-4-argon" | "gemini-3.1-pro" | "gemini-3.8-flash" | "gemini-3.8-flash-medium" => "gemini-2.5-pro",
+            "gemini-3.8-flash-high" | "odon-auto" | "auto" | "" => "gemini-2.5-flash",
+            "claude-sonnet-5-5" | "claude-sonnet-4-6" => "claude-sonnet-4-20250514",
+            "claude-opus-5-5" => "claude-opus-4-20250514",
+            "claude-3-5-sonnet" | "claude-3-5-sonnet-20241022" => "claude-3-5-sonnet-20241022",
             other => other,
         };
 

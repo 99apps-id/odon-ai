@@ -7,6 +7,7 @@ use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
+use crate::multimodal;
 use crate::stream::StreamEvent;
 use crate::trait_def::{ChatRequest, ModelProvider};
 
@@ -65,6 +66,9 @@ impl ModelProvider for MuseProvider {
         headers.insert(USER_AGENT, HeaderValue::from_static(MUSE_USER_AGENT));
 
         let mut messages_payload = Vec::new();
+        if let Some(sys) = &request.system_prompt {
+            messages_payload.push(json!({ "role": "system", "content": sys }));
+        }
         for msg in request.messages {
             let role_str = match msg.role {
                 MessageRole::User => "user",
@@ -72,17 +76,68 @@ impl ModelProvider for MuseProvider {
                 MessageRole::System => "system",
                 MessageRole::Tool => "tool",
             };
-            messages_payload.push(json!({
+            let mut payload = json!({
                 "role": role_str,
-                "content": msg.content.text,
-            }));
+                "content": if matches!(msg.role, MessageRole::User) {
+                    multimodal::openai_content(&msg.content)
+                } else if msg.content.text.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    json!(msg.content.text)
+                },
+            });
+            if matches!(msg.role, MessageRole::Assistant) && !msg.content.tool_calls.is_empty() {
+                let calls: Vec<_> = msg
+                    .content
+                    .tool_calls
+                    .iter()
+                    .map(|tc| {
+                        json!({
+                            "id": tc.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.tool_name,
+                                "arguments": tc.arguments.to_string()
+                            }
+                        })
+                    })
+                    .collect();
+                payload["tool_calls"] = json!(calls);
+            }
+            if matches!(msg.role, MessageRole::Tool) {
+                payload["tool_call_id"] = json!(msg
+                    .content
+                    .tool_calls
+                    .first()
+                    .map(|t| t.call_id.clone())
+                    .unwrap_or_else(|| msg.id.clone()));
+            }
+            messages_payload.push(payload);
         }
 
-        let body = json!({
+        let mut body = json!({
             "model": request.model,
             "messages": messages_payload,
             "stream": true,
         });
+
+        if !request.tools.is_empty() {
+            let tools: Vec<_> = request
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = json!(tools);
+        }
 
         let resp = self
             .client
@@ -97,10 +152,24 @@ impl ModelProvider for MuseProvider {
             })?;
 
         if !resp.status().is_success() {
-            let err_body = resp.text().await.unwrap_or_default();
+            let status = resp.status();
+            let mut err_body = resp.text().await.unwrap_or_default();
+            if err_body.len() > 2000 {
+                err_body.truncate(2000);
+                err_body.push_str("…");
+            }
             return Err(OdonError::Provider {
                 provider: "muse".to_string(),
-                message: format!("Muse HTTP status error: {}", err_body),
+                message: format!(
+                    "HTTP {} from Muse (model: {}).{}",
+                    status.as_u16(),
+                    request.model,
+                    if err_body.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(" Response: {}", err_body.trim())
+                    }
+                ),
             });
         }
 
@@ -123,8 +192,25 @@ impl ModelProvider for MuseProvider {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&sanitized) {
                                 if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
                                     if let Some(first) = choices.first() {
-                                        if let Some(delta) = first.get("delta").and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
-                                            let _ = event_sender.send(StreamEvent::TextDelta(delta.to_string())).await;
+                                        if let Some(delta) = first.get("delta") {
+                                            if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                                let _ = event_sender.send(StreamEvent::TextDelta(content.to_string())).await;
+                                            }
+                                            if let Some(thought) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
+                                                let _ = event_sender.send(StreamEvent::ThoughtDelta(thought.to_string())).await;
+                                            }
+                                            if let Some(calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                                                for tc in calls {
+                                                    let index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                                                    let func = tc.get("function");
+                                                    let _ = event_sender.send(StreamEvent::ToolCallDelta {
+                                                        index,
+                                                        id: tc.get("id").and_then(|i| i.as_str()).map(String::from),
+                                                        name: func.and_then(|f| f.get("name")).and_then(|n| n.as_str()).map(String::from),
+                                                        arguments_delta: func.and_then(|f| f.get("arguments")).and_then(|a| a.as_str()).map(String::from),
+                                                    }).await;
+                                                }
+                                            }
                                         }
                                     }
                                 }

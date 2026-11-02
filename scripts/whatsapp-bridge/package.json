@@ -1,0 +1,15 @@
+{
+  "name": "odon-whatsapp-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local WhatsApp Web (multi-device) bridge for ODON: QR / pairing code + message relay",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "pino": "9.5.0",
+    "qrcode": "1.5.4"
+  }
+}

@@ -36,6 +36,15 @@ impl Tool for ShellExecTool {
             }
         })?;
 
+        // Defense-in-depth: refuse catastrophic commands even if a caller
+        // bypasses ToolRegistry.
+        let policy = ctx.approval_engine.get_policy().await;
+        if let Some(reason) = policy.command_forbidden_reason(cmd_str) {
+            return Err(OdonError::Security(format!(
+                "Command blocked by security policy: {reason}"
+            )));
+        }
+
         #[cfg(target_os = "windows")]
         let mut cmd = {
             let mut c = Command::new("powershell");
