@@ -179,6 +179,35 @@ const REGISTERED_TOOLS = [
   { name: 'artifact_update', category: 'Artifacts', tier: 'Tier 1', desc: 'Update existing artifact content' },
 ];
 
+const PERSONA_INSTRUCTIONS: Record<string, string> = {
+  coder: 'Act as an autonomous senior fullstack engineer. Make decisive, surgical edits; prefer minimal, right-sized code and avoid over-engineering.',
+  auditor:
+    'Act as a security auditor. Trace caller graphs, validate invariants and race conditions, and report findings with concrete evidence.',
+  pentest:
+    'Act as an authorized pentester. Stay strictly within the scope the user provides, verify vulnerabilities, and report reproducible steps.',
+  architect:
+    'Act as a systems architect. Emphasize RFCs, component interaction flows, schemas, trade-offs, and long-term maintainability.',
+  sentinel:
+    'Act as an autonomous DevOps sentinel. Monitor health, logs, and recovery; prefer safe, reversible operations.',
+};
+
+function inferToolCategory(name: string): string {
+  if (
+    name.startsWith('fs_') ||
+    ['read_file', 'write_file', 'edit', 'multi_edit', 'list_directory', 'create_directory', 'delete_file', 'move_file', 'copy_file', 'grep', 'glob'].includes(name)
+  ) return 'File System';
+  if (name.startsWith('git_')) return 'Git';
+  if (name.startsWith('github_') || name.startsWith('mcp_')) return 'Integrations';
+  if (name.startsWith('memory')) return 'Memory';
+  if (name.startsWith('artifact')) return 'Artifacts';
+  if (name.startsWith('skill')) return 'Skills';
+  if (name.startsWith('todo') || ['think', 'plan_mode', 'remember'].includes(name)) return 'Harness';
+  if (name.startsWith('web_') || name.startsWith('http_') || ['probe_url', 'dns_lookup', 'port_scan'].includes(name)) return 'Web & Security';
+  if (name.startsWith('browser_')) return 'Browser';
+  if (['shell_exec', 'bash_run', 'terminal_exec', 'exec_background', 'exec_stream_stdout', 'process_kill', 'process_list'].includes(name)) return 'Execution';
+  return 'Runtime';
+}
+
 const TEXT_FILE_EXTENSIONS =
   /\.(txt|md|markdown|json|jsonc|csv|tsv|ya?ml|toml|ini|cfg|conf|env|log|py|rs|ts|tsx|js|jsx|mjs|cjs|html?|css|scss|less|sh|bash|zsh|ps1|bat|cmd|sql|go|java|c|h|cc|cpp|hpp|cs|rb|php|swift|kt|kts|xml|gradle)$/i;
 
@@ -966,7 +995,23 @@ export default function App() {
         const wireProviderId = activeProvider?.id || activeProviderId;
         const modelPayload = selectedModel.includes('::') ? selectedModel : `${wireProviderId}::${selectedModel}`;
         const effort = (typeof window !== 'undefined' && localStorage.getItem('odon_effort_level')) || 'high';
-        const resMsg = await api.sendMessage(sid, textToSend, modelPayload, effort, outgoingAttachments);
+        const personaId = (typeof window !== 'undefined' && localStorage.getItem('odon_active_persona')) || 'coder';
+        const customInstructions = (typeof window !== 'undefined' && localStorage.getItem('odon_custom_instructions')) || '';
+        const extraInstructions = [
+          PERSONA_INSTRUCTIONS[personaId] || '',
+          customInstructions.trim(),
+        ].filter(Boolean).join('\n\n');
+        const globalPlanMode = typeof window !== 'undefined' && localStorage.getItem('odon_plan_mode') === 'true';
+        const planMode = executionMode === 'plan' || globalPlanMode;
+        const resMsg = await api.sendMessage(
+          sid,
+          textToSend,
+          modelPayload,
+          effort,
+          outgoingAttachments,
+          extraInstructions,
+          planMode,
+        );
 
         const assistantMsg: ChatMessage = {
           id: resMsg.id,
@@ -1122,6 +1167,17 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
   const handleClose = () => {
     handleNewChat();
   };
+
+  // The Tools menu is driven by the live registry; the static list is only an
+  // offline fallback so the UI still renders before the daemon responds.
+  const toolCatalog = dynamicTools.length > 0
+    ? dynamicTools.map((tool: any) => ({
+        name: String(tool.name || ''),
+        category: inferToolCategory(String(tool.name || '')),
+        tier: `Tier ${typeof tool.risk_tier === 'number' ? tool.risk_tier : 0}`,
+        desc: String(tool.description || ''),
+      }))
+    : REGISTERED_TOOLS;
 
   // Extract generated code files for CodeEditorView
   const latestCodeArtifact = artifacts.find((a) => a.kind === 'code');
@@ -2165,7 +2221,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                       className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors ml-1 border border-neutral-200/60 cursor-pointer"
                     >
                       <Globe className="w-3.5 h-3.5 text-neutral-500" />
-                      <span>Tools ({REGISTERED_TOOLS.length})</span>
+                      <span>Tools ({toolCatalog.length})</span>
                       <ChevronDown className="w-3 h-3 text-neutral-400" />
                     </button>
                   </div>
@@ -2871,7 +2927,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               <div className="flex items-center gap-2">
                 <Globe className="w-4 h-4 text-blue-600" />
                 <span className="font-bold text-sm text-neutral-900">
-                  Registered Tools ({REGISTERED_TOOLS.length})
+                  Registered Tools ({toolCatalog.length})
                 </span>
               </div>
               <button
@@ -2885,7 +2941,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
               Autonomous execution harness capabilities available to the agent runtime.
             </p>
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-              {REGISTERED_TOOLS.map((t) => (
+              {toolCatalog.map((t) => (
                 <div
                   key={t.name}
                   className="p-2 rounded-xl border border-neutral-100 bg-neutral-50/60 flex items-center justify-between text-xs"

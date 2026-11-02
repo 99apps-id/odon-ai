@@ -319,11 +319,20 @@ export const api = {
     model?: string,
     effort?: string,
     attachments?: Array<{ name: string; mime_type: string; data_base64: string }>,
+    customInstructions?: string,
+    planMode?: boolean,
   ): Promise<Message> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model, effort, attachments: attachments || [] }),
+      body: JSON.stringify({
+        text,
+        model,
+        effort,
+        custom_instructions: customInstructions,
+        plan_mode: planMode,
+        attachments: attachments || [],
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

@@ -472,6 +472,7 @@ async fn test_priority_steer_interrupts_running_turn() {
             None,
             cancel,
             Some(steer_queue),
+            None,
         )
         .await
     });

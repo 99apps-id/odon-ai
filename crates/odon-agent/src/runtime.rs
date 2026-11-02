@@ -200,6 +200,7 @@ impl AgentRuntime {
             effort,
             cancellation,
             None,
+            None,
         )
         .await
     }
@@ -218,6 +219,7 @@ impl AgentRuntime {
         effort: Option<&str>,
         cancellation: CancellationToken,
         steer: Option<SteerQueue>,
+        extra_system_prompt: Option<&str>,
     ) -> Result<Message> {
         info!("Executing agent turn for session: {}", session_id);
 
@@ -290,6 +292,13 @@ impl AgentRuntime {
 
         let workspace_root = self.session_workspace(session_id);
         let system_harness = self.build_system_harness(&workspace_root);
+        let system_harness = match extra_system_prompt {
+            Some(extra) if !extra.trim().is_empty() => format!(
+                "{system_harness}\n\n## Operator Persona & Custom Instructions\n{}",
+                extra.trim()
+            ),
+            _ => system_harness,
+        };
         let mut active_artifacts = Vec::new();
         let mut total_accumulated_text = String::new();
         let mut total_accumulated_thought = String::new();

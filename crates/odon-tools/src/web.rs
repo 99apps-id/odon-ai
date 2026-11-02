@@ -784,11 +784,10 @@ impl Tool for BrowserScreenshotTool {
             }
         }
 
-        Ok(json!({
-            "captured": false,
-            "url": url_str,
-            "message": "Headless browser screenshot dispatched."
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "No headless Chrome/Edge executable was found, so the screenshot could not be captured. Install a Chromium browser or use browser_navigate for page content.".to_string(),
+        })
     }
 }
 
@@ -816,10 +815,12 @@ impl Tool for BrowserClickTool {
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let selector = args.get("selector").and_then(|s| s.as_str()).unwrap_or("");
-        Ok(json!({
-            "clicked": true,
-            "selector": selector
-        }))
+        Err(OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!(
+                "Interactive browser clicking is not implemented in this build (selector '{selector}'). Use browser_navigate to inspect page content."
+            ),
+        })
     }
 }
 

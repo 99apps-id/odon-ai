@@ -1706,6 +1706,10 @@ struct SendMessageRequest {
     model: Option<String>,
     effort: Option<String>,
     #[serde(default)]
+    custom_instructions: Option<String>,
+    #[serde(default)]
+    plan_mode: Option<bool>,
+    #[serde(default)]
     attachments: Vec<AttachmentInput>,
 }
 
@@ -1714,6 +1718,9 @@ async fn send_message(
     State(state): State<AppState>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
+    if let Some(enabled) = req.plan_mode {
+        let _ = odon_tools::harness::set_plan_mode(&state.storage, &session_id, enabled);
+    }
     let cancel = tokio_util::sync::CancellationToken::new();
     let steer = SteerQueue::new();
     let turn_id = uuid::Uuid::new_v4().to_string();
@@ -1754,6 +1761,7 @@ async fn send_message(
             req.effort.as_deref(),
             cancel,
             Some(steer),
+            req.custom_instructions.as_deref(),
         )
         .await;
 

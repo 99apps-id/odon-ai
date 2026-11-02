@@ -220,6 +220,21 @@ impl Tool for PlanModeTool {
     }
 }
 
+/// Persist the session-scoped plan-mode flag without going through the tool loop.
+pub fn set_plan_mode(
+    storage: &odon_storage::StorageEngine,
+    session_id: &str,
+    enabled: bool,
+) -> odon_core::Result<()> {
+    storage
+        .set_memory(
+            &plan_mode_key(session_id),
+            if enabled { "on" } else { "off" },
+            "plan_mode",
+        )
+        .map_err(|e| odon_core::OdonError::Storage(e.to_string()))
+}
+
 /// Whether plan mode is currently on for a session.
 pub fn is_plan_mode(storage: &odon_storage::StorageEngine, session_id: &str) -> bool {
     matches!(
@@ -418,5 +433,14 @@ mod tests {
         storage.set_memory(&plan_mode_key("s1"), "on", "plan_mode").unwrap();
         assert!(is_plan_mode(&storage, "s1"));
         assert!(!is_plan_mode(&storage, "s2"));
+    }
+
+    #[test]
+    fn set_plan_mode_helper_toggles_flag() {
+        let storage = odon_storage::StorageEngine::new_in_memory().unwrap();
+        set_plan_mode(&storage, "s1", true).unwrap();
+        assert!(is_plan_mode(&storage, "s1"));
+        set_plan_mode(&storage, "s1", false).unwrap();
+        assert!(!is_plan_mode(&storage, "s1"));
     }
 }
