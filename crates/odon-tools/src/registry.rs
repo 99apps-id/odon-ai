@@ -30,6 +30,8 @@ pub struct ToolRequirements {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub binaries: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub any_binaries: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<String>,
 }
 
@@ -275,6 +277,18 @@ impl ToolRegistry {
                 for binary in &requirements.binaries {
                     if !binary_on_path(binary) {
                         issues.push(format!("required binary '{binary}' was not found on PATH"));
+                    }
+                }
+                if !requirements.any_binaries.is_empty() {
+                    let available = requirements
+                        .any_binaries
+                        .iter()
+                        .any(|binary| binary_on_path(binary));
+                    if !available {
+                        issues.push(format!(
+                            "requires at least one of these binaries on PATH: {}",
+                            requirements.any_binaries.join(", ")
+                        ));
                     }
                 }
                 for variable in &requirements.environment {

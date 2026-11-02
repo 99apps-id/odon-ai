@@ -407,7 +407,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 218);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 217);
     }
 
     #[test]

@@ -32,8 +32,25 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
+    fn apply_pragmas(conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;",
+        )?;
+        Ok(())
+    }
+
+    fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+        self.conn
+            .lock()
+            .map_err(|_| StorageError::NotFound("storage lock poisoned".to_string()))
+    }
+
     pub fn new_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        Self::apply_pragmas(&conn)?;
         let engine = Self {
             conn: Arc::new(Mutex::new(conn)),
             _db_path: PathBuf::from(":memory:"),
@@ -48,6 +65,7 @@ impl StorageEngine {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(&path)?;
+        Self::apply_pragmas(&conn)?;
         let engine = Self {
             conn: Arc::new(Mutex::new(conn)),
             _db_path: path,
@@ -114,7 +132,8 @@ impl StorageEngine {
                 summary TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                PRIMARY KEY (artifact_id, version)
+                PRIMARY KEY (artifact_id, version),
+                FOREIGN KEY (artifact_id) REFERENCES artifacts (id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -126,7 +145,8 @@ impl StorageEngine {
                 approved INTEGER NOT NULL,
                 success INTEGER NOT NULL,
                 duration_ms INTEGER NOT NULL,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id);
@@ -143,7 +163,8 @@ impl StorageEngine {
             CREATE TABLE IF NOT EXISTS todos (
                 session_id TEXT PRIMARY KEY,
                 items_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS provider_configs (
@@ -156,10 +177,34 @@ impl StorageEngine {
             ",
         )?;
         // Older databases predate multi-endpoint provider metadata. SQLite has
-        // no IF NOT EXISTS for ADD COLUMN, so duplicate-column errors are benign.
-        let _ = conn.execute("ALTER TABLE provider_configs ADD COLUMN name TEXT", []);
+        // no IF NOT EXISTS for ADD COLUMN, so only add a column when it is
+        // actually missing instead of swallowing every migration error.
+        for (column, ddl) in [
+            ("name", "ALTER TABLE provider_configs ADD COLUMN name TEXT"),
+            (
+                "models_json",
+                "ALTER TABLE provider_configs ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'",
+            ),
+        ] {
+            let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('provider_configs')")?;
+            let exists = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .any(|name| name.as_deref() == Ok(column));
+            if !exists {
+                conn.execute(ddl, [])?;
+            }
+        }
+        // Best-effort cleanup for databases created before cascades existed.
         let _ = conn.execute(
-            "ALTER TABLE provider_configs ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'",
+            "DELETE FROM artifact_versions WHERE artifact_id NOT IN (SELECT id FROM artifacts)",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM audit_logs WHERE session_id NOT IN (SELECT id FROM sessions)",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM todos WHERE session_id NOT IN (SELECT id FROM sessions)",
             [],
         );
         Ok(())
@@ -620,16 +665,33 @@ impl StorageEngine {
     }
 
     pub fn delete_artifact(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let count = conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id])?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM artifact_versions WHERE artifact_id = ?1",
+            params![id],
+        )?;
+        let count = tx.execute("DELETE FROM artifacts WHERE id = ?1", params![id])?;
+        tx.commit()?;
         Ok(count > 0)
     }
 
     pub fn delete_session(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let _ = conn.execute("DELETE FROM messages WHERE session_id = ?1", params![id]);
-        let _ = conn.execute("DELETE FROM artifacts WHERE session_id = ?1", params![id]);
-        let count = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM messages WHERE session_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM artifact_versions WHERE artifact_id IN (SELECT id FROM artifacts WHERE session_id = ?1)",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM artifacts WHERE session_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM audit_logs WHERE session_id = ?1",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM todos WHERE session_id = ?1", params![id])?;
+        let count = tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        tx.commit()?;
         Ok(count > 0)
     }
 

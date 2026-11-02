@@ -553,10 +553,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const prefix = KEY_PREFIXES[providerId];
 
     if (rawKey && prefix && !rawKey.startsWith(prefix)) {
-      setKeyError(`${currentProvider.name} API keys usually begin with "${prefix}".`);
-    } else {
-      setKeyError(null);
+      setKeyError(`${currentProvider.name} API keys usually begin with "${prefix}". Not saved.`);
+      return;
     }
+    setKeyError(null);
 
     localStorage.setItem(`odon_base_${providerId}`, baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || '');
 
@@ -568,7 +568,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         setProviders(data.providers);
       }
     } catch (e: any) {
-      console.warn('Backend saveProviderConfig warning:', e.message);
+      setKeyError(`Failed to save key: ${e?.message || e}`);
+      return;
     }
 
     setSaved(true);
@@ -588,7 +589,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (data?.providers?.length) {
         setProviders(data.providers);
       }
-    } catch { }
+    } catch (e: any) {
+      setKeyError(`Failed to clear key: ${e?.message || e}`);
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

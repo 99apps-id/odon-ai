@@ -284,8 +284,10 @@
       "status": "stable"
     },
     "visibility": "model",
-    "ready": true,
-    "issues": []
+    "ready": false,
+    "issues": [
+      "requires at least one of these binaries on PATH: chrome, msedge, google-chrome, chromium, microsoft-edge"
+    ]
   },
   {
     "name": "browser_session_list",

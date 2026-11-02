@@ -525,6 +525,22 @@ impl WhatsAppBridge {
             .unwrap_or_else(|_| "http://127.0.0.1:4097".to_string())
     }
 
+    /// Shared-secret check for the locally spawned bridge. Timing-safe so the
+    /// fixed bridge token cannot be guessed byte-by-byte over loopback.
+    fn verify_bridge_token(&self, presented: Option<&str>) -> bool {
+        let Some(candidate) = presented else {
+            return false;
+        };
+        if self.token.len() != candidate.len() {
+            return false;
+        }
+        let mut diff = 0u8;
+        for (x, y) in self.token.bytes().zip(candidate.bytes()) {
+            diff |= x ^ y;
+        }
+        diff == 0
+    }
+
     fn port(&self) -> u16 {
         self.base_url()
             .rsplit(':')
@@ -2156,6 +2172,7 @@ async fn main() -> anyhow::Result<()> {
                             tool_name,
                             risk_tier,
                             description,
+                            ..
                         } = event
                         {
                             let Some((channel, sender)) = relay_channel_for_session(&session_id)
@@ -2395,38 +2412,60 @@ async fn require_api_token(
     req: Request,
     next: Next,
 ) -> axum::response::Response {
-    let Some(expected) = state.api_token.as_deref() else {
-        return next.run(req).await;
-    };
     let path = req.uri().path();
     if !path.starts_with("/api/")
         || path == "/api/relays/whatsapp"
+        || path == "/api/relays/whatsapp/inbound"
+        || path == "/api/health"
         || req.method() == Method::OPTIONS
     {
         return next.run(req).await;
     }
+    let Some(expected) = state.api_token.as_deref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "API token is not configured. Set ODON_API_TOKEN and restart the daemon.",
+        )
+            .into_response();
+    };
 
+    // Constant-time comparison so token guesses cannot use timing oracles.
+    fn constant_time_eq(a: &str, b: &str) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut diff = 0u8;
+        for (x, y) in a.bytes().zip(b.bytes()) {
+            diff |= x ^ y;
+        }
+        diff == 0
+    }
     let bearer_ok = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .map(|value| value == format!("Bearer {expected}"))
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|value| constant_time_eq(value, expected))
         .unwrap_or(false);
     let header_ok = req
         .headers()
         .get("x-odon-token")
         .and_then(|value| value.to_str().ok())
-        .map(|value| value == expected)
+        .map(|value| constant_time_eq(value, expected))
         .unwrap_or(false);
-    let query_ok = req
-        .uri()
-        .query()
-        .map(|query| {
-            query
-                .split('&')
-                .any(|pair| pair == format!("token={expected}"))
-        })
-        .unwrap_or(false);
+    // Query-string tokens leak into logs/history/Referer, so they are only
+    // accepted on the two browser transports that cannot send headers.
+    let query_allowed = path == "/api/events" || path == "/api/terminal/ws";
+    let query_ok = query_allowed
+        && req
+            .uri()
+            .query()
+            .map(|query| {
+                query
+                    .split('&')
+                    .any(|pair| pair == format!("token={expected}"))
+            })
+            .unwrap_or(false);
 
     if bearer_ok || header_ok || query_ok {
         next.run(req).await
@@ -3337,8 +3376,18 @@ struct WhatsAppBridgeInbound {
 
 async fn whatsapp_bridge_inbound(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<WhatsAppBridgeInbound>,
 ) -> impl IntoResponse {
+    let presented = headers
+        .get("x-bridge-token")
+        .and_then(|value| value.to_str().ok());
+    if !state.whatsapp_bridge.verify_bridge_token(presented) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "Invalid bridge token" })),
+        );
+    }
     let digits: String = req
         .from
         .split('@')
@@ -3720,14 +3769,21 @@ async fn update_settings(
 ) -> impl IntoResponse {
     if let Some(m) = req.mode {
         let exec_mode = match m.to_lowercase().as_str() {
+            "autonomous" => ExecutionMode::Autonomous,
             "supervised" => ExecutionMode::Supervised,
             "locked" => ExecutionMode::Locked,
-            _ => ExecutionMode::Autonomous,
+            other => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": format!("Unknown execution mode: {other}") })),
+                )
+                    .into_response();
+            }
         };
         state.approval.update_mode(exec_mode).await;
     }
     let policy = state.approval.get_policy().await;
-    Json(json!({ "execution_mode": format!("{:?}", policy.mode) }))
+    Json(json!({ "execution_mode": format!("{:?}", policy.mode) })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -4438,6 +4494,36 @@ async fn ws_terminal_handler(
     axum::extract::Query(query): axum::extract::Query<TerminalWsQuery>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    // Interactive shells cannot be pre-approved per keystroke, so the upgrade
+    // itself is the gate: confinement to the workspace and, on Unix, an
+    // explicit shell allowlist. API-token middleware still applies first.
+    if query.ssh_profile_id.is_none() {
+        let cwd = query.cwd.as_deref().unwrap_or(&state.workspace_root);
+        let candidate = std::path::Path::new(cwd);
+        let abs = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            std::path::Path::new(&state.workspace_root).join(candidate)
+        };
+        if let Err(reason) = ensure_allowed_path(&state, &abs).await {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": reason })),
+            )
+                .into_response();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let shell = query.shell.as_deref().unwrap_or("bash");
+            if !["bash", "sh", "zsh", "fish", "dash"].contains(&shell) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "Unsupported shell" })),
+                )
+                    .into_response();
+            }
+        }
+    }
     let workspace = state.workspace_root.clone();
     ws.on_upgrade(move |socket| handle_terminal_socket(socket, workspace, query))
 }

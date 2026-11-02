@@ -398,6 +398,7 @@ impl ApprovalEngine {
             tool_name: tool_name.to_string(),
             risk_tier: risk as u8,
             description: description.to_string(),
+            parameters: parameters.clone(),
         });
 
         // Wait for decision or timeout
@@ -493,9 +494,17 @@ impl ApprovalEngine {
             .get("path")
             .or_else(|| parameters.get("cwd"))
             .or_else(|| parameters.get("destination"))
+            .or_else(|| parameters.get("id"))
             .and_then(|value| value.as_str())
             .unwrap_or("workspace");
-        format!("{tool_name}|{scope}")
+        // Bind "always allow" to the exact invocation, not just the tool and
+        // directory: hash the full parameters so a future command, target, or
+        // server definition never inherits a past approval.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        parameters.to_string().hash(&mut hasher);
+        format!("{tool_name}|{scope}|{:016x}", hasher.finish())
     }
 
     pub async fn list_pending(&self) -> Vec<ApprovalRequest> {

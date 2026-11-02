@@ -138,6 +138,7 @@ async function notifyDaemon(message) {
   try {
     const headers = { 'Content-Type': 'application/json' };
     if (API_TOKEN) headers.Authorization = `Bearer ${API_TOKEN}`;
+    if (BRIDGE_TOKEN) headers['x-bridge-token'] = BRIDGE_TOKEN;
     const res = await fetch(`${DAEMON_URL}/api/relays/whatsapp/inbound`, {
       method: 'POST',
       headers,

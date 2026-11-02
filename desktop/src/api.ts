@@ -611,8 +611,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
-    if (!res.ok) return { updated: true };
-    return res.json().catch(() => ({ updated: true }));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to update settings: ${res.status}`);
+    return data;
   },
 
   // MCP Servers
@@ -628,7 +629,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(server),
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to save MCP server: ${res.status}`);
+    return data;
   },
 
   async deleteMcpServer(id: string): Promise<boolean> {
@@ -642,7 +645,9 @@ export const api = {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/mcp/servers/${id}/toggle`, {
       method: 'POST',
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to toggle MCP server: ${res.status}`);
+    return data;
   },
 
   // GitHub
@@ -683,7 +688,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ owner, repo, title, body }),
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to create issue: ${res.status}`);
+    return data;
   },
 
   // Automations
@@ -699,7 +706,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(job),
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to save automation: ${res.status}`);
+    return data;
   },
 
   async deleteAutomation(id: string): Promise<boolean> {
@@ -713,7 +722,9 @@ export const api = {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/automations/${id}/trigger`, {
       method: 'POST',
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to trigger automation: ${res.status}`);
+    return data;
   },
 
   async getAutomationLogs(): Promise<any[]> {
@@ -791,7 +802,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, content }),
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to write file: ${res.status}`);
+    return data;
   },
 
   async fsMkdir(path: string): Promise<{ success: boolean; error?: string }> {
@@ -800,14 +813,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to create directory: ${res.status}`);
+    return data;
   },
 
   async fsDelete(path: string): Promise<{ success: boolean; error?: string }> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/fs/delete?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
     });
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error || `Failed to delete: ${res.status}`);
+    return data;
   },
 
   // SSH Remote APIs

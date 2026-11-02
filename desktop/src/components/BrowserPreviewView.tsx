@@ -90,6 +90,19 @@ export function BrowserPreviewView({
     if (seed) applySeed(seed);
   }, [seed]);
 
+  const renderUrl = (formatted: string) => {
+    setInputUrl(formatted);
+    setUrl(formatted);
+    setHtmlContent(null);
+    setMode('iframe');
+    setIsLoading(true);
+
+    // Fetch and proxy the page. Direct iframes are blocked by X-Frame-Options,
+    // CSP frame-ancestors, and unavailable localhost servers; the daemon proxy
+    // makes typed URLs render reliably and still exposes text to the reader.
+    fetchPagePreview(formatted);
+  };
+
   const navigateTo = (newUrl: string) => {
     let formatted = newUrl.trim();
     // Only http(s) pages may be embedded. data:, javascript: and file: URLs
@@ -101,21 +114,12 @@ export function BrowserPreviewView({
       }
       formatted = `https://${formatted}`;
     }
-    setInputUrl(formatted);
-    setUrl(formatted);
-    setHtmlContent(null);
-    setMode('iframe');
-    setIsLoading(true);
-
     const updatedHistory = history.slice(0, historyIndex + 1);
     updatedHistory.push(formatted);
     setHistory(updatedHistory);
     setHistoryIndex(updatedHistory.length - 1);
 
-    // Fetch and proxy the page. Direct iframes are blocked by X-Frame-Options,
-    // CSP frame-ancestors, and unavailable localhost servers; the daemon proxy
-    // makes typed URLs render reliably and still exposes text to the reader.
-    fetchPagePreview(formatted);
+    renderUrl(formatted);
   };
 
   const buildPreviewError = (targetUrl: string, message: string) =>
@@ -153,14 +157,14 @@ export function BrowserPreviewView({
   };
 
   const handleRefresh = () => {
-    navigateTo(url);
+    renderUrl(url);
   };
 
   const handleBack = () => {
     if (historyIndex > 0) {
       const prev = history[historyIndex - 1];
       setHistoryIndex(historyIndex - 1);
-      navigateTo(prev);
+      renderUrl(prev);
     }
   };
 
@@ -168,7 +172,7 @@ export function BrowserPreviewView({
     if (historyIndex < history.length - 1) {
       const next = history[historyIndex + 1];
       setHistoryIndex(historyIndex + 1);
-      navigateTo(next);
+      renderUrl(next);
     }
   };
 

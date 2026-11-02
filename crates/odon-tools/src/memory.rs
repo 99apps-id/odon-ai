@@ -239,8 +239,18 @@ impl Tool for MemoryForgetTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
     }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let key = args.get("key").and_then(|k| k.as_str()).unwrap_or("");
-        Ok(json!({ "key": key, "forgotten": true }))
+        let Some(storage) = &ctx.storage else {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Storage engine unavailable in tool context".to_string(),
+            });
+        };
+        let deleted = storage.delete_memory(key).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Failed to delete memory: {e}"),
+        })?;
+        Ok(json!({ "key": key, "forgotten": deleted }))
     }
 }

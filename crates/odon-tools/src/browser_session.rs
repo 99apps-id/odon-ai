@@ -252,6 +252,18 @@ impl Tool for BrowserSessionCreateTool {
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
     }
+    fn requirements(&self) -> crate::registry::ToolRequirements {
+        crate::registry::ToolRequirements {
+            any_binaries: vec![
+                "chrome".to_string(),
+                "msedge".to_string(),
+                "google-chrome".to_string(),
+                "chromium".to_string(),
+                "microsoft-edge".to_string(),
+            ],
+            ..Default::default()
+        }
+    }
     async fn execute(&self, ctx: &ToolContext, a: Value) -> Result<Value> {
         let id = sid();
         let root = session_dir(&ctx.workspace_root, &id);

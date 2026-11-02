@@ -662,7 +662,9 @@ export default function App() {
           id: event.payload.approval_id,
           toolName: event.payload.tool_name,
           risk: `Tier ${event.payload.risk_tier}`,
-          arguments: { description: event.payload.description },
+          arguments: (event.payload.parameters as Record<string, unknown> | undefined) ?? {
+            description: event.payload.description,
+          },
         });
       } else if (event.type === 'tool_call_started') {
         const toolName = event.payload.tool_name;

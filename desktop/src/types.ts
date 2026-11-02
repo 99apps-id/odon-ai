@@ -123,7 +123,7 @@ export type AgentEvent =
   | { type: 'tool_call_finished'; payload: { session_id: string; call_id: string; output: any; is_error: boolean } }
   | { type: 'artifact_created'; payload: { session_id: string; artifact: Artifact } }
   | { type: 'steer_applied'; payload: { session_id: string; steer_id: string; text: string } }
-  | { type: 'approval_requested'; payload: { session_id: string; approval_id: string; tool_name: string; risk_tier: number; description: string } }
+  | { type: 'approval_requested'; payload: { session_id: string; approval_id: string; tool_name: string; risk_tier: number; description: string; parameters?: Record<string, unknown> } }
   | { type: 'approval_resolved'; payload: { session_id: string; approval_id: string; decision: 'approved' | 'rejected' | 'expired' } }
   | { type: 'error'; payload: { session_id: string; message: string } };
 

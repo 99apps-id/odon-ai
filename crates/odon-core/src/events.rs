@@ -53,6 +53,7 @@ pub enum AgentEvent {
         tool_name: String,
         risk_tier: u8,
         description: String,
+        parameters: serde_json::Value,
     },
     ApprovalResolved {
         session_id: String,
