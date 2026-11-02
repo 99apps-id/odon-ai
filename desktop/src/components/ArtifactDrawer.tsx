@@ -109,7 +109,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                       }}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium shrink-0 border transition-all ${
                         isSelected
-                          ? 'border-neutral-900 dark:border-neutral-100 bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
+                          ? 'border-blue-600 bg-blue-600 text-white shadow-2xs'
                           : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'
                       }`}
                     >
@@ -243,7 +243,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                               window.open(fullSrc, '_blank');
                             }
                           }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 text-xs font-medium hover:bg-neutral-800 transition-colors shadow-2xs cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />
                           Save Image

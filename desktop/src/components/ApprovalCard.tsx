@@ -144,7 +144,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
           <button
             type="button"
             onClick={() => onDecide('approve_once')}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 rounded-lg shadow-sm transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 dark:bg-blue-600 dark:hover:bg-blue-500 rounded-lg shadow-sm transition-all cursor-pointer"
           >
             <Check className="w-3.5 h-3.5" />
             <span>Approve Once</span>

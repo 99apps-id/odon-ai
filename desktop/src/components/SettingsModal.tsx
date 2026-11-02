@@ -710,7 +710,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </div>
                                 <button
                                   onClick={() => handleCopyCode(oauthPrompt.userCode!)}
-                                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-xs font-semibold hover:opacity-90 transition-opacity"
+                                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-2xs"
                                 >
                                   {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                                   <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
@@ -1537,9 +1537,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <Server className="w-4 h-4 text-purple-600" />
+                      <Server className="w-4 h-4 text-neutral-700 dark:text-neutral-300" />
                       <span className="font-semibold text-xs text-neutral-900 dark:text-white">{p.alias}</span>
-                      <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-purple-50 text-purple-700">
+                      <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700">
                         {p.user}@{p.host}:{p.port}
                       </span>
                     </div>
@@ -1680,7 +1680,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 text-xs font-semibold transition-colors shadow-xs"
+              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-xs"
             >
               {saved ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : null}
               <span>{saved ? 'Saved!' : 'Save Configuration'}</span>

@@ -22,3 +22,11 @@ node_modules
 !.env.example
 .termixgo/
 .termigo/
+.odon/
+*.pem
+*.key
+*.id_rsa
+*.id_ed25519
+ssh-profiles.json
+approval-policies.json
+mcp-servers.json

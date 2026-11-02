@@ -217,7 +217,7 @@ export const AutomationsView: React.FC = () => {
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-neutral-900 dark:bg-indigo-600 hover:bg-neutral-800 dark:hover:bg-indigo-500 transition-all shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-all shadow-2xs"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New Automation</span>
@@ -481,7 +481,7 @@ export const AutomationsView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-bold text-white bg-neutral-900 dark:bg-indigo-600 hover:bg-neutral-800 rounded-xl"
+                className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors shadow-2xs"
               >
                 Save Automation
               </button>

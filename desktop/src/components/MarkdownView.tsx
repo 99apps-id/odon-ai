@@ -365,7 +365,7 @@ function CodeBlock({
           ) : isWebLang ? (
             <Globe className="w-3.5 h-3.5 text-blue-400" />
           ) : (
-            <Code2 className="w-3.5 h-3.5 text-purple-400" />
+            <Code2 className="w-3.5 h-3.5 text-blue-400" />
           )}
           <span className="font-semibold text-neutral-300">{language || 'text'}</span>
         </div>
@@ -585,7 +585,7 @@ export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
           <button
             onClick={handleDownload}
             disabled={downloading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 text-[11px] font-medium transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium transition-colors shadow-2xs cursor-pointer"
           >
             {downloading ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Download className="w-3.5 h-3.5" />}
             <span>{downloading ? 'Saved' : 'Save Image'}</span>

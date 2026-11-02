@@ -323,7 +323,7 @@ export function BrowserPreviewView({
                 </button>
                 <button
                   onClick={handleSendToAgent}
-                  className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
+                  className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
                 >
                   <Send className="w-3 h-3" />
                   <span>{agentSent ? 'Sent to Agent!' : 'Send Page to Agent'}</span>

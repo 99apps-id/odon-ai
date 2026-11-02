@@ -388,7 +388,7 @@ export const SshTerminalView: React.FC = () => {
                   type="text"
                   value={newAlias}
                   onChange={(e) => setNewAlias(e.target.value)}
-                  placeholder="e.g. prod-server, vps-naracitra"
+                  placeholder="e.g. prod-server, cloud-vps"
                   className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-blue-500"
                 />
               </div>
@@ -400,7 +400,7 @@ export const SshTerminalView: React.FC = () => {
                     type="text"
                     value={newHost}
                     onChange={(e) => setNewHost(e.target.value)}
-                    placeholder="103.126.116.111 or server.example.com"
+                    placeholder="192.168.1.100 or server.example.com"
                     className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 font-mono outline-none focus:border-blue-500"
                   />
                 </div>

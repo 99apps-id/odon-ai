@@ -45,7 +45,7 @@ Unlike traditional rigid terminal loops, ODON delivers seamless multi-turn thoug
 - **File Management**: Create files, create directories, and delete items safely.
 
 ### 2. 🌐 SSH Remote Terminal
-- **Saved Host Profiles**: Configure remote servers with custom SSH ports, identities, and keys (presets included for `vps-naracitra` and `laptop-farka1in`).
+- **Saved Host Profiles**: Configure remote servers with custom SSH ports, identities, and keys with secure persistent storage.
 - **Interactive Remote Execution**: Run remote shell sessions directly through the backend daemon using system OpenSSH.
 - **Session History**: Command history buffer with arrow key navigation, exit code tracking, and one-click output copy.
 

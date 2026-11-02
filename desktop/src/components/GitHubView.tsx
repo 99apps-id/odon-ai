@@ -116,7 +116,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-neutral-900 dark:bg-blue-600 hover:bg-neutral-800 dark:hover:bg-blue-500 transition-all shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-all shadow-2xs"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New Issue</span>
@@ -130,7 +130,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           onClick={() => setActiveTab('prs')}
           className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
             activeTab === 'prs'
-              ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-2xs'
+              ? 'bg-blue-600 text-white shadow-2xs'
               : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
           }`}
         >
@@ -141,7 +141,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           onClick={() => setActiveTab('issues')}
           className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
             activeTab === 'issues'
-              ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-2xs'
+              ? 'bg-blue-600 text-white shadow-2xs'
               : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
           }`}
         >
@@ -331,7 +331,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-bold text-white bg-neutral-900 dark:bg-blue-600 hover:bg-neutral-800 rounded-xl"
+                className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors shadow-2xs"
               >
                 Submit Issue
               </button>

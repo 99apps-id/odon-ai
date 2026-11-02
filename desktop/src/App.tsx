@@ -1471,7 +1471,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                                 <div key={art.id} className="p-3.5 rounded-2xl border border-neutral-200/90 bg-white shadow-2xs max-w-lg">
                                   <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
-                                      <div className="p-1.5 rounded-lg bg-purple-50 text-purple-600 border border-purple-100">
+                                      <div className="p-1.5 rounded-lg bg-neutral-100 text-neutral-800 border border-neutral-200">
                                         <ImageIcon className="w-4 h-4" />
                                       </div>
                                       <div>
@@ -1487,7 +1487,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
                                     </span>
                                   </div>
 
-                                  <div className="relative aspect-video rounded-xl bg-neutral-950 flex items-center justify-center overflow-hidden my-2.5">
+                                  <div className="relative aspect-video rounded-xl bg-neutral-100 border border-neutral-200 flex items-center justify-center overflow-hidden my-2.5">
                                     {fullSrc ? (
                                       <img src={fullSrc} alt={art.payload.data.prompt} className="w-full h-full object-contain" />
                                     ) : (
@@ -2611,7 +2611,7 @@ Pastikan service daemon aktif di \`http://127.0.0.1:4096\` untuk mendapatkan jaw
             <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-end">
               <button
                 onClick={() => setRelayModalOpen(null)}
-                className="px-3.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium cursor-pointer"
+                className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium cursor-pointer transition-colors shadow-2xs"
               >
                 Close
               </button>

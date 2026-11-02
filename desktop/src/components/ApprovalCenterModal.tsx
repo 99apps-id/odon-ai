@@ -134,7 +134,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               onClick={() => setActiveTab('pending')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 activeTab === 'pending'
-                  ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-2xs'
+                  ? 'bg-blue-600 text-white shadow-2xs'
                   : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
               }`}
             >
@@ -147,7 +147,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               onClick={() => setActiveTab('audit')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 activeTab === 'audit'
-                  ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-2xs'
+                  ? 'bg-blue-600 text-white shadow-2xs'
                   : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
               }`}
             >
@@ -158,7 +158,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               onClick={() => setActiveTab('policies')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 activeTab === 'policies'
-                  ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-2xs'
+                  ? 'bg-blue-600 text-white shadow-2xs'
                   : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
               }`}
             >
@@ -221,7 +221,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                     <button
                       type="button"
                       onClick={() => onDecideApproval('approve_once')}
-                      className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-neutral-900 dark:bg-blue-600 hover:bg-neutral-800 dark:hover:bg-blue-500 transition-all shadow-xs"
+                      className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 transition-all shadow-xs"
                     >
                       <Check className="w-3.5 h-3.5 inline mr-1" />
                       Approve Once
@@ -296,7 +296,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                       onClick={() => handleSetMode(m)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                         executionMode.toLowerCase() === m.toLowerCase()
-                          ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-2xs'
+                          ? 'bg-blue-600 text-white shadow-2xs'
                           : 'bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-700'
                       }`}
                     >

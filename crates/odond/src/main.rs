@@ -2043,34 +2043,8 @@ fn load_ssh_profiles() -> Vec<SshProfile> {
             return profiles;
         }
     }
-    vec![
-        SshProfile {
-            id: "vps-naracitra".to_string(),
-            alias: "vps-naracitra".to_string(),
-            host: "103.126.116.111".to_string(),
-            port: 2233,
-            user: "naracitrasolusindo".to_string(),
-            key_path: Some("~/.ssh/Nara.pem".to_string()),
-            certificate_filename: Some("Nara.pem".to_string()),
-            certificate_data: None,
-            auth_type: "key".to_string(),
-            description: Some("Ubuntu 24.04 Production VPS (Naracitra)".to_string()),
-            created_at: "2026-10-19T00:00:00Z".to_string(),
-        },
-        SshProfile {
-            id: "laptop-farka1in".to_string(),
-            alias: "laptop-farka1in".to_string(),
-            host: "100.68.30.91".to_string(),
-            port: 22,
-            user: "iwan".to_string(),
-            key_path: None,
-            certificate_filename: None,
-            certificate_data: None,
-            auth_type: "key".to_string(),
-            description: Some("Tailscale Windows 10 Home Workstation".to_string()),
-            created_at: "2026-10-19T00:00:00Z".to_string(),
-        },
-    ]
+    // Default to empty list; user-managed via Settings or SSH tab
+    Vec::new()
 }
 
 fn save_ssh_profiles_to_disk(profiles: &[SshProfile]) {
