@@ -12,6 +12,7 @@ pub mod net_guard;
 pub mod ops_ext;
 pub mod quality;
 pub mod registry;
+pub mod review;
 pub mod sftp;
 pub mod shell;
 pub mod shell_ext;
@@ -128,6 +129,11 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(quality::FormatCodeTool));
     reg.register(Box::new(quality::RunChecksTool));
     reg.register(Box::new(quality::TestFileTool));
+    reg.register(Box::new(review::ReviewDiffTool));
+    reg.register(Box::new(review::ReviewFileTool));
+    reg.register(Box::new(review::ReviewSecurityTool));
+    reg.register(Box::new(review::ReviewSessionChangesTool));
+    reg.register(Box::new(review::ChangeSummaryTool));
 
     // 5. Shell & Execution
     reg.register(Box::new(shell::ShellExecTool));
@@ -247,7 +253,7 @@ mod tests {
         let schemas = reg.schemas();
         assert_eq!(
             schemas.len(),
-            169,
+            174,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
 
@@ -297,6 +303,57 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 167);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 172);
+    }
+
+    #[test]
+    fn golden_manifest_matches_registry() {
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("golden_manifest.json"),
+        )
+        .expect("golden_manifest.json must exist");
+        let manifest_items: Vec<serde_json::Value> =
+            serde_json::from_str(&manifest).expect("manifest must be valid JSON");
+        let reg = build_full_tool_registry();
+        let schemas = reg.schemas();
+        let diagnostics = reg.diagnostics();
+
+        let by_name: std::collections::HashMap<_, _> =
+            schemas.iter().map(|s| (s.name.as_str(), s)).collect();
+        let diagnostic_by_name: std::collections::HashMap<_, _> =
+            diagnostics.iter().map(|d| (d.name.as_str(), d)).collect();
+
+        assert_eq!(
+            manifest_items.len(),
+            schemas.len(),
+            "manifest length must match registry length"
+        );
+
+        for item in &manifest_items {
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .expect("manifest item must have name");
+            let schema = by_name.get(name).expect("manifest references unknown tool");
+            let diagnostic = diagnostic_by_name
+                .get(name)
+                .expect("manifest references tool without diagnostic");
+
+            assert_eq!(
+                schema.availability.label(),
+                item.get("availability")
+                    .and_then(|v| v.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap(),
+                "availability mismatch for {name}"
+            );
+            assert_eq!(
+                diagnostic.ready,
+                item.get("ready").and_then(|v| v.as_bool()).unwrap(),
+                "readiness mismatch for {name}"
+            );
+        }
     }
 }

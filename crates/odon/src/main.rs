@@ -169,6 +169,8 @@ enum ToolCommands {
         #[arg(long)]
         strict: bool,
     },
+    /// Show the golden tool manifest path and count
+    Manifest {},
     /// Execute a tool locally (mutating tools require --yes)
     Run {
         name: String,
@@ -444,6 +446,19 @@ async fn main() -> anyhow::Result<()> {
                 if strict && failures > 0 {
                     anyhow::bail!("{failures} tool(s) are not ready");
                 }
+            }
+            ToolCommands::Manifest {} => {
+                let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("odon-tools")
+                    .join("src")
+                    .join("golden_manifest.json");
+                println!("{}", manifest.display());
+                let bytes = std::fs::read(&manifest)
+                    .map_err(|error| anyhow::anyhow!("Cannot read manifest: {error}"))?;
+                let items: Vec<serde_json::Value> = serde_json::from_slice(&bytes)
+                    .map_err(|error| anyhow::anyhow!("Invalid manifest JSON: {error}"))?;
+                println!("{} tool(s) in golden manifest", items.len());
             }
             ToolCommands::Run {
                 name,
