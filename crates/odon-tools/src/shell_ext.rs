@@ -1118,7 +1118,7 @@ impl Tool for ClipboardReadTool {
         json!({ "type": "object", "properties": {} })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, _args: Value) -> Result<Value> {
         let text = read_clipboard_text(self.name())

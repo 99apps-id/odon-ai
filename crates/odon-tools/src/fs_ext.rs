@@ -58,7 +58,7 @@ fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
     let candidate = canonical_root.join(p);
 
     let mut existing = candidate.as_path();
-    while !existing.exists() {
+    while std::fs::symlink_metadata(existing).is_err() {
         existing = existing.parent().ok_or_else(|| OdonError::Tool {
             tool: "filesystem_ext".to_string(),
             message: format!("Invalid workspace path: {relative}"),
@@ -1082,7 +1082,7 @@ impl Tool for TermigoPasteBufferHistoryTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier0ReadOnly
+        RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let limit = args

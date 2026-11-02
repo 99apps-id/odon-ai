@@ -100,7 +100,7 @@ impl ApprovalEngine {
         let mut loaded_audit = Vec::new();
         if let Ok(file) = std::fs::File::open(&audit_path) {
             use std::io::BufRead;
-            for line in std::io::BufReader::new(file).lines().flatten() {
+            for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
                 if let Ok(rec) = serde_json::from_str::<AuditRecord>(&line) {
                     loaded_audit.push(rec);
                 }
@@ -177,7 +177,6 @@ impl ApprovalEngine {
             | "fs_du"
             | "fs_find"
             | "termigo_copy_selection"
-            | "termigo_paste_buffer_history"
             | "editor_open"
             | "editor_reveal"
             | "editor_reload"
@@ -231,7 +230,6 @@ impl ApprovalEngine {
             | "disk_usage"
             | "file_hash"
             | "file_checksum"
-            | "clipboard_read"
             | "terminal_info"
             | "memory_recall"
             | "memory_search"
@@ -304,6 +302,8 @@ impl ApprovalEngine {
             | "http_upload"
             | "code_index"
             | "app_focus"
+            | "clipboard_read"
+            | "termigo_paste_buffer_history"
             | "notification_send"
             | "port_scan"
             | "network_traceroute"

@@ -72,6 +72,10 @@ impl AuditLogger {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "audit calls mirror the persisted event fields at security boundaries"
+    )]
     pub async fn record(
         &self,
         session_id: &str,

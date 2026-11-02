@@ -31,7 +31,7 @@ fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
     // Canonicalize the target when it exists. For a new path, canonicalize its
     // nearest existing ancestor so an in-workspace symlink cannot escape root.
     let mut existing = candidate.as_path();
-    while !existing.exists() {
+    while std::fs::symlink_metadata(existing).is_err() {
         existing = existing.parent().ok_or_else(|| OdonError::Tool {
             tool: "filesystem".to_string(),
             message: format!("Invalid workspace path: {relative}"),

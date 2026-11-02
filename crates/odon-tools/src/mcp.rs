@@ -571,7 +571,10 @@ async fn call_server(config: &McpServerConfig, method: &str, params: Value) -> R
                 pool.remove(&key);
             }
             drop(guard);
-            client.lock().await.close().await;
+            if let Ok(mutex) = Arc::try_unwrap(client) {
+                let owned_client = mutex.into_inner();
+                owned_client.close().await;
+            }
             Err(error)
         }
     }

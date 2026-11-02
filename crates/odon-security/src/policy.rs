@@ -104,10 +104,7 @@ fn normalize_command(command: &str) -> String {
     normalized = normalized.replace("${ifs}", " ").replace("$ifs", " ");
     // A command name split across quotes/backticks (e.g. r''m) is equivalent
     // to the plain name for our baseline patterns.
-    normalized = normalized
-        .replace('\'', "")
-        .replace('"', "")
-        .replace('`', "");
+    normalized = normalized.replace(['\'', '"', '`'], "");
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

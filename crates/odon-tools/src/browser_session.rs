@@ -189,6 +189,49 @@ fn schema(props: Value, req: Value) -> Value {
     json!({ "type": "object", "properties": props, "required": req })
 }
 
+async fn evaluate_js(id: &str, expression: &str) -> Result<Value> {
+    let response = cdp(
+        id,
+        "Runtime.evaluate",
+        json!({ "expression": expression, "returnByValue": true, "awaitPromise": false }),
+    )
+    .await?;
+    if let Some(exception) = response.pointer("/result/exceptionDetails") {
+        let text = exception
+            .pointer("/exception/description")
+            .or_else(|| exception.pointer("/text"))
+            .and_then(Value::as_str)
+            .unwrap_or("browser evaluation failed");
+        return Err(err(text.to_string()));
+    }
+    Ok(response.pointer("/result/result").cloned().unwrap_or(Value::Null))
+}
+
+fn visible_expression(selector: &str) -> String {
+    let encoded = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        "(()=>{{const e=document.querySelector({encoded});if(!e)return false;const r=e.getBoundingClientRect();const style=getComputedStyle(e);return r.width>0&&r.height>0&&style.visibility!=='hidden'&&style.display!=='none'}})()",
+        encoded = encoded
+    )
+}
+
+async fn wait_visible(id: &str, selector: &str, timeout_ms: u64) -> Result<bool> {
+    let expression = visible_expression(selector);
+    let started = std::time::Instant::now();
+    while started.elapsed().as_millis() < timeout_ms as u128 {
+        let value = evaluate_js(id, &expression).await?;
+        if value
+            .get("value")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Ok(false)
+}
+
 // ── Tools ───────────────────────────────────────────────────────────────────
 
 pub struct BrowserSessionCreateTool;
@@ -424,6 +467,7 @@ impl Tool for BrowserSessionClickTool {
             json!({
                 "session_id": { "type": "string" },
                 "selector": { "type": "string" },
+                "timeout_ms": { "type": "integer", "description": "Wait for the element to be visible before clicking (default 5000, max 30000)" }
             }),
             json!(["session_id", "selector"]),
         )
@@ -441,12 +485,29 @@ impl Tool for BrowserSessionClickTool {
             .get("selector")
             .and_then(Value::as_str)
             .ok_or_else(|| err("selector is required"))?;
+        let timeout_ms = a
+            .get("timeout_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(5_000)
+            .clamp(100, 30_000);
+        let visible = wait_visible(id, s, timeout_ms).await?;
+        if !visible {
+            return Err(err(format!(
+                "selector '{s}' did not become visible within {timeout_ms} ms"
+            )));
+        }
+        let encoded = serde_json::to_string(s).unwrap();
         let js = format!(
-            "(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');e.click();return true}})()",
-            serde_json::to_string(s).unwrap()
+            "(()=>{{const e=document.querySelector({encoded});if(!e)throw new Error('selector not found');if(e instanceof HTMLButtonElement||e instanceof HTMLInputElement)e.disabled&&(()=>{{throw new Error('element is disabled')}})();e.scrollIntoView({{block:'center',inline:'nearest'}});e.click();return true}})()",
+            encoded = encoded
         );
-        Ok(cdp(id, "Runtime.evaluate", json!({ "expression": js, "returnByValue": true }))
-            .await?)
+        let value = evaluate_js(id, &js).await?;
+        Ok(json!({
+            "session_id": id,
+            "selector": s,
+            "clicked": value.get("value").and_then(Value::as_bool).unwrap_or(false),
+            "waited_ms": timeout_ms
+        }))
     }
 }
 

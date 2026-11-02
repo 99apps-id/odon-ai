@@ -116,6 +116,10 @@ impl Artifact {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "public constructor mirrors the serialized image artifact fields"
+    )]
     pub fn new_image(
         session_id: impl Into<String>,
         title: impl Into<String>,

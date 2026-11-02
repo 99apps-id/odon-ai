@@ -33,7 +33,7 @@ fn safe_workspace_path(root: &str, relative: &str) -> Result<PathBuf> {
     })?;
     let joined = root.join(path);
     let mut existing_ancestor = joined.as_path();
-    while !existing_ancestor.exists() {
+    while std::fs::symlink_metadata(existing_ancestor).is_err() {
         existing_ancestor = existing_ancestor.parent().ok_or_else(|| OdonError::Tool {
             tool: "filesystem".to_string(),
             message: format!("Cannot resolve parent for {relative}"),
