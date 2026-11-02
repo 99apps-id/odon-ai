@@ -1,5 +1,0 @@
-    }
-    Ok(id)
-}
-fn browser() -> Result<PathBuf> { let mut p=Vec::new(); if cfg!(windows) { if let Ok(x)=std::env::var("PROGRAMFILES") { p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe")); } if let Ok(x)=std::env::var("LOCALAPPDATA") { p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe")); p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe")); } } else { p.extend([PathBuf::from("/usr/bin/google-chrome"),PathBuf::from("/usr/bin/chromium"),PathBuf::from("/usr/bin/microsoft-edge")]); } p.into_iter().find(|x| x.is_file()).ok_or_else(|| err("Chrome/Chromium/Edge executable not found")) }
-async fn port() -> Result<u16> { let l=tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e|err(e.to_string()))?; Ok(l.local_addr().map_err(|e|err(e.to_string()))?.port()) }

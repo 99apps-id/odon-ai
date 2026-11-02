@@ -1,9 +1,0 @@
-        assert!(validate_session_id("../escape").is_err());
-        assert!(validate_session_id("nested/name").is_err());
-        assert!(validate_session_id("").is_err());
-        assert!(validate_session_id(&"a".repeat(97)).is_err());
-    }
-}
-
-pub struct BrowserSessionClickTool;
-#[async_trait] impl Tool for BrowserSessionClickTool { fn name(&self)->&str{"browser_session_click"} fn description(&self)->&str{"Click an element inside a persistent browser session"} fn parameters_schema(&self)->Value{schema(json!({"session_id":{"type":"string"},"selector":{"type":"string"}}),json!(["session_id","selector"]))} fn risk_tier(&self)->RiskTier{RiskTier::Tier1WorkspaceMutating} async fn execute(&self,_:&ToolContext,a:Value)->Result<Value>{let id=validate_session_id(a.get("session_id").and_then(Value::as_str).ok_or_else(||err("session_id is required"))?)?;let s=a.get("selector").and_then(Value::as_str).ok_or_else(||err("selector is required"))?;let js=format!("(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');e.click();return true}})()",serde_json::to_string(s).unwrap());Ok(cdp(id,"Runtime.evaluate",json!({"expression":js,"returnByValue":true})).await?)} }
