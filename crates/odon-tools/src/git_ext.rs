@@ -24,6 +24,54 @@ fn clip_output(raw: &[u8]) -> (String, bool) {
     }
 }
 
+/// A git ref/revision must not smuggle options or shell-ish characters into argv.
+fn valid_git_ref_arg(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && !value.starts_with('-')
+        && !value.contains("..")
+        && !value.contains(char::is_whitespace)
+        && !value.contains(['\\', '<', '>', '|', '"', '\'', '`', '$', ';', '&'])
+}
+
+/// Remote name: simple porcelain-safe identifier.
+fn valid_remote_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && !value.starts_with('-')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// Reject transport helpers that execute commands (`ext::`, `fd::`) and option
+/// injection, while still allowing https/ssh/git/scp-like and local paths.
+fn valid_remote_url(value: &str) -> bool {
+    if value.is_empty() || value.len() > 2048 || value.starts_with('-') {
+        return false;
+    }
+    if value
+        .chars()
+        .any(|c| c == '\0' || c.is_control())
+    {
+        return false;
+    }
+    let lower = value.to_ascii_lowercase();
+    for forbidden in ["ext::", "fd::", "--upload-pack=", "--receive-pack="] {
+        if lower.contains(forbidden) {
+            return false;
+        }
+    }
+    lower.starts_with("https://")
+        || lower.starts_with("http://")
+        || lower.starts_with("ssh://")
+        || lower.starts_with("git://")
+        || lower.starts_with("file://")
+        || value.starts_with('/')
+        || (value.len() > 2 && value.as_bytes()[1] == b':') // C:\ local path
+        || value.contains('@') // scp-like syntax user@host:path
+}
+
 async fn run_git(workspace: &str, args: &[&str]) -> Result<(i32, String, String)> {
     if args
         .first()
@@ -138,6 +186,12 @@ impl Tool for GitMergeTool {
             .unwrap_or("main");
         let msg = args.get("message").and_then(|m| m.as_str());
 
+        if !valid_git_ref_arg(branch) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid merge branch: {branch:?}"),
+            });
+        }
         let mut git_args = vec!["merge", branch];
         if let Some(m) = msg {
             git_args.push("-m");
@@ -176,6 +230,11 @@ impl Tool for GitRebaseTool {
 
         let git_args = if abort {
             vec!["rebase", "--abort"]
+        } else if !valid_git_ref_arg(onto) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid rebase target: {onto:?}"),
+            });
         } else {
             vec!["rebase", onto]
         };
@@ -208,6 +267,12 @@ impl Tool for GitCherryPickTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("");
+        if !valid_git_ref_arg(commit) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid commit ref: {commit:?}"),
+            });
+        }
         let (code, stdout, stderr) = run_git(&ctx.workspace_root, &["cherry-pick", commit]).await?;
         Ok(json!({ "commit": commit, "exit_code": code, "stdout": stdout, "stderr": stderr }))
     }
@@ -237,6 +302,12 @@ impl Tool for GitRevertTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let commit = args.get("commit").and_then(|c| c.as_str()).unwrap_or("");
+        if !valid_git_ref_arg(commit) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid commit ref: {commit:?}"),
+            });
+        }
         let (code, stdout, stderr) =
             run_git(&ctx.workspace_root, &["revert", "--no-edit", commit]).await?;
         Ok(json!({ "commit": commit, "exit_code": code, "stdout": stdout, "stderr": stderr }))
@@ -269,6 +340,12 @@ impl Tool for GitResetHardTool {
             .get("target")
             .and_then(|t| t.as_str())
             .unwrap_or("HEAD");
+        if !valid_git_ref_arg(target) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid reset target: {target:?}"),
+            });
+        }
         let (code, stdout, stderr) =
             run_git(&ctx.workspace_root, &["reset", "--hard", target]).await?;
         Ok(json!({ "target": target, "exit_code": code, "stdout": stdout, "stderr": stderr }))
