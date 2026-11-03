@@ -20,6 +20,7 @@ use clap::{Parser, Subcommand};
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use ring::rand::SecureRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -887,48 +888,186 @@ impl WhatsAppBridge {
     }
 }
 
-fn get_oauth_tokens_path() -> PathBuf {
-    let base = std::env::var_os("ODON_HOME")
+fn oauth_base_dir() -> PathBuf {
+    std::env::var_os("ODON_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join(".odon").join("oauth-tokens.json")
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn get_oauth_tokens_path() -> PathBuf {
+    oauth_base_dir().join(".odon").join("oauth-tokens.enc")
+}
+
+fn legacy_oauth_tokens_path() -> PathBuf {
+    oauth_base_dir().join(".odon").join("oauth-tokens.json")
+}
+
+fn oauth_key_file_path() -> PathBuf {
+    oauth_base_dir().join(".odon").join("oauth.key")
+}
+
+/// Best-effort 0600 on unix. Windows inherits the profile directory DACL.
+fn restrict_file(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
+/// Magic prefix that marks an encrypted token store.
+const OAUTH_MAGIC: &[u8] = b"ODONOAUTH1";
+const OAUTH_NONCE_LEN: usize = 12;
+
+/// 32-byte AEAD key for the token store. Prefers `ODON_OAUTH_KEY` so a token
+/// file leaked on its own is useless; otherwise falls back to a random key
+/// generated once at `~/.odon/oauth.key` so encryption works with no setup.
+fn oauth_encryption_key() -> [u8; 32] {
+    let ikm: Vec<u8> = match std::env::var_os("ODON_OAUTH_KEY") {
+        Some(value) if !value.is_empty() => value.to_string_lossy().into_owned().into_bytes(),
+        _ => load_or_create_key_file(),
+    };
+    let salt = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, b"odon-oauth-store-salt-v1");
+    let prk = salt.extract(&ikm);
+    let okm = prk
+        .expand(&[b"odon-oauth-store-key-v1"], ring::hkdf::HKDF_SHA256)
+        .expect("HKDF expand with one info chunk cannot fail");
+    let mut key = [0u8; 32];
+    okm.fill(&mut key).expect("32-byte HKDF output fits");
+    key
+}
+
+fn load_or_create_key_file() -> Vec<u8> {
+    let path = oauth_key_file_path();
+    if let Ok(bytes) = std::fs::read(&path) {
+        if bytes.len() >= 32 {
+            return bytes;
+        }
+    }
+    let mut key = vec![0u8; 32];
+    if ring::rand::SystemRandom::new().fill(&mut key).is_err() {
+        tracing::error!("OS random source unavailable; OAuth tokens cannot be encrypted");
+        return key;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::write(&path, &key).is_ok() {
+        restrict_file(&path);
+    }
+    key
+}
+
+fn encrypt_oauth_blob(plaintext: &[u8]) -> Option<Vec<u8>> {
+    encrypt_oauth_blob_with_key(&oauth_encryption_key(), plaintext)
+}
+
+fn encrypt_oauth_blob_with_key(key: &[u8; 32], plaintext: &[u8]) -> Option<Vec<u8>> {
+    let unbound = ring::aead::UnboundKey::new(&ring::aead::CHACHA20_POLY1305, key).ok()?;
+    let less_safe = ring::aead::LessSafeKey::new(unbound);
+    let mut nonce_bytes = [0u8; OAUTH_NONCE_LEN];
+    ring::rand::SystemRandom::new()
+        .fill(&mut nonce_bytes)
+        .ok()?;
+    let nonce = ring::aead::Nonce::assume_unique_for_key(nonce_bytes);
+    let mut in_out = plaintext.to_vec();
+    less_safe
+        .seal_in_place_append_tag(nonce, ring::aead::Aad::empty(), &mut in_out)
+        .ok()?;
+    let mut blob = Vec::with_capacity(OAUTH_MAGIC.len() + OAUTH_NONCE_LEN + in_out.len());
+    blob.extend_from_slice(OAUTH_MAGIC);
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&in_out);
+    Some(blob)
+}
+
+fn decrypt_oauth_blob(blob: &[u8]) -> Option<Vec<u8>> {
+    decrypt_oauth_blob_with_key(&oauth_encryption_key(), blob)
+}
+
+fn decrypt_oauth_blob_with_key(key: &[u8; 32], blob: &[u8]) -> Option<Vec<u8>> {
+    let rest = blob.strip_prefix(OAUTH_MAGIC)?;
+    if rest.len() < OAUTH_NONCE_LEN {
+        return None;
+    }
+    let (nonce_bytes, ciphertext) = rest.split_at(OAUTH_NONCE_LEN);
+    let nonce_arr: [u8; OAUTH_NONCE_LEN] = nonce_bytes.try_into().ok()?;
+    let unbound = ring::aead::UnboundKey::new(&ring::aead::CHACHA20_POLY1305, key).ok()?;
+    let less_safe = ring::aead::LessSafeKey::new(unbound);
+    let nonce = ring::aead::Nonce::assume_unique_for_key(nonce_arr);
+    let mut in_out = ciphertext.to_vec();
+    let plaintext = less_safe
+        .open_in_place(nonce, ring::aead::Aad::empty(), &mut in_out)
+        .ok()?;
+    Some(plaintext.to_vec())
+}
+
+fn persist_oauth_tokens(tokens: &HashMap<String, odon_provider::OAuthToken>) -> bool {
+    let path = get_oauth_tokens_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(plaintext) = serde_json::to_vec(tokens) else {
+        return false;
+    };
+    let Some(blob) = encrypt_oauth_blob(&plaintext) else {
+        tracing::error!("Failed to encrypt OAuth token store; tokens were not saved");
+        return false;
+    };
+    if std::fs::write(&path, blob).is_ok() {
+        restrict_file(&path);
+        true
+    } else {
+        false
+    }
 }
 
 fn load_oauth_tokens() -> HashMap<String, odon_provider::OAuthToken> {
-    let path = get_oauth_tokens_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
+    if let Ok(blob) = std::fs::read(get_oauth_tokens_path()) {
+        if let Some(plaintext) = decrypt_oauth_blob(&blob) {
+            return serde_json::from_slice(&plaintext).unwrap_or_default();
+        }
+        // A file without our magic that begins with `{` is a plaintext store.
+        if blob.first() == Some(&b'{') {
+            return serde_json::from_slice(&blob).unwrap_or_default();
+        }
+        return HashMap::new();
+    }
+    // First encrypted load: migrate the legacy plaintext JSON store if present.
+    if let Ok(content) = std::fs::read_to_string(legacy_oauth_tokens_path()) {
+        if let Ok(tokens) =
+            serde_json::from_str::<HashMap<String, odon_provider::OAuthToken>>(&content)
+        {
+            if !tokens.is_empty() {
+                // Only drop the legacy plaintext file once the encrypted
+                // store is safely on disk, so a failed migration never
+                // destroys the only copy of the tokens.
+                if persist_oauth_tokens(&tokens) {
+                    let _ = std::fs::remove_file(legacy_oauth_tokens_path());
+                }
+            }
+            return tokens;
+        }
+    }
+    HashMap::new()
 }
 
 fn save_oauth_token(catalog_id: &str, token: &odon_provider::OAuthToken) {
     let mut tokens = load_oauth_tokens();
     tokens.insert(catalog_id.to_string(), token.clone());
-    let path = get_oauth_tokens_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(data) = serde_json::to_string_pretty(&tokens) {
-        if std::fs::write(&path, data).is_ok() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-            }
-        }
-    }
+    persist_oauth_tokens(&tokens);
 }
 
 fn remove_oauth_token(catalog_id: &str) {
     let mut tokens = load_oauth_tokens();
     if tokens.remove(catalog_id).is_some() {
-        if let Ok(data) = serde_json::to_string_pretty(&tokens) {
-            let path = get_oauth_tokens_path();
-            let _ = std::fs::write(&path, data);
-        }
+        persist_oauth_tokens(&tokens);
     }
 }
 
@@ -6949,5 +7088,48 @@ mod tests {
         let provider = build_oauth_provider("claude-oauth", &token)
             .expect("Claude OAuth must register a runtime provider");
         assert_eq!(provider.provider_name(), "claude-oauth");
+    }
+}
+
+#[cfg(test)]
+mod oauth_store_tests {
+    use super::*;
+
+    const KEY: [u8; 32] = [7u8; 32];
+
+    #[test]
+    fn oauth_blob_round_trips_through_the_aead() {
+        let plaintext = br#"{"chatgpt":{"access_token":"super-secret-value"}}"#;
+        let blob = encrypt_oauth_blob_with_key(&KEY, plaintext).expect("encrypt");
+        // The ciphertext must carry our magic header and must not leak the payload.
+        assert!(blob.starts_with(OAUTH_MAGIC));
+        assert!(
+            !blob
+                .windows(plaintext.len())
+                .any(|window| window == plaintext),
+            "ciphertext must not contain the plaintext token"
+        );
+        let recovered = decrypt_oauth_blob_with_key(&KEY, &blob).expect("decrypt");
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn oauth_blob_rejects_a_wrong_key() {
+        let blob = encrypt_oauth_blob_with_key(&KEY, b"tokens").expect("encrypt");
+        assert!(decrypt_oauth_blob_with_key(&[9u8; 32], &blob).is_none());
+    }
+
+    #[test]
+    fn oauth_blob_rejects_tampering() {
+        let mut blob = encrypt_oauth_blob_with_key(&KEY, b"tokens").expect("encrypt");
+        let last = blob.len() - 1;
+        blob[last] ^= 0xFF;
+        assert!(decrypt_oauth_blob_with_key(&KEY, &blob).is_none());
+    }
+
+    #[test]
+    fn oauth_blob_ignores_non_magic_input() {
+        // A legacy plaintext JSON store has no magic header and is not decryptable.
+        assert!(decrypt_oauth_blob_with_key(&KEY, b"{\"x\":1}").is_none());
     }
 }
