@@ -3,7 +3,7 @@ use odon_core::{
     Artifact, ArtifactKind, ArtifactPayload, Message, MessageContent, MessageRole, Session,
     SessionMode, SessionStatus,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -297,10 +297,16 @@ impl StorageEngine {
             let status: SessionStatus = serde_json::from_str(&status_str)?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
 
             Ok(Session {
                 id: row.get(0)?,
@@ -343,10 +349,16 @@ impl StorageEngine {
                 serde_json::from_str(&status_str).unwrap_or(SessionStatus::Active);
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
 
             Ok(Session {
                 id,
@@ -430,7 +442,10 @@ impl StorageEngine {
                 });
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
 
             Ok(Message {
                 id,
@@ -456,13 +471,15 @@ impl StorageEngine {
         let kind_str = serde_json::to_string(&artifact.kind)?;
         let payload_json = serde_json::to_string(&artifact.payload)?;
 
+        // `.ok()` here would also turn a genuine SQL failure into "no existing
+        // row", silently treating the artifact as new; only absence is expected.
         let existing: Option<(String, String, String, String)> = conn
             .query_row(
                 "SELECT title, kind, summary, payload_json FROM artifacts WHERE id = ?1",
                 params![artifact.id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
-            .ok();
+            .optional()?;
 
         conn.execute(
             "INSERT INTO artifacts (id, session_id, title, kind, summary, payload_json, created_at)
@@ -532,7 +549,10 @@ impl StorageEngine {
         })?;
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|value| value.with_timezone(&Utc))
-            .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+            .unwrap_or_else(|_| {
+                tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                Utc::now()
+            });
         Ok(ArtifactVersion {
             artifact_id: row.get(0)?,
             version: row.get(1)?,
@@ -612,7 +632,10 @@ impl StorageEngine {
             })?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
 
             Ok(Artifact {
                 id,
@@ -659,7 +682,10 @@ impl StorageEngine {
             })?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
 
             Ok(Artifact {
                 id,
@@ -729,7 +755,10 @@ impl StorageEngine {
             let updated_at_str: String = row.get(3)?;
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
             Ok(Some(MemoryItem {
                 key: row.get(0)?,
                 value: row.get(1)?,
@@ -752,7 +781,12 @@ impl StorageEngine {
                 let updated_at_str: String = row.get(3)?;
                 let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(
+                            "corrupt timestamp in odon_state.db; substituting current time"
+                        );
+                        Utc::now()
+                    });
                 Ok(MemoryItem {
                     key: row.get(0)?,
                     value: row.get(1)?,
@@ -771,7 +805,12 @@ impl StorageEngine {
                 let updated_at_str: String = row.get(3)?;
                 let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(
+                            "corrupt timestamp in odon_state.db; substituting current time"
+                        );
+                        Utc::now()
+                    });
                 Ok(MemoryItem {
                     key: row.get(0)?,
                     value: row.get(1)?,
@@ -928,12 +967,7 @@ pub struct MemoryItem {
 ///
 /// `table` and `column` are compile-time literals from the migration list
 /// above, never user input, so interpolating them into the pragma is safe.
-fn ensure_column(
-    conn: &rusqlite::Connection,
-    table: &str,
-    column: &str,
-    ddl: &str,
-) -> Result<()> {
+fn ensure_column(conn: &rusqlite::Connection, table: &str, column: &str, ddl: &str) -> Result<()> {
     let mut stmt = conn.prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?;
     let exists = stmt
         .query_map([], |row| row.get::<_, String>(0))?
