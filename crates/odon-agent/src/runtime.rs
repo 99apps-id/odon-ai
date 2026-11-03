@@ -649,18 +649,37 @@ impl AgentRuntime {
             // Process stream deltas. A priority steer cancels only this
             // iteration's stream so the new guidance can be applied promptly.
             let mut steer_interrupted = false;
+            // A provider that stops producing events without closing the stream
+            // leaves recv() pending forever, because the sender still lives
+            // inside prov_task. The turn then never finishes and the UI sits in
+            // "running" with no error. Bound the wait so a stall surfaces.
+            let stream_idle_timeout = std::time::Duration::from_secs(180);
             loop {
-                let evt = if let Some(queue) = &steer {
-                    tokio::select! {
-                        evt = stream_rx.recv() => evt,
-                        _ = queue.wait_priority() => {
-                            iteration_cancel.cancel();
-                            steer_interrupted = true;
-                            None
+                let next = tokio::time::timeout(stream_idle_timeout, async {
+                    if let Some(queue) = &steer {
+                        tokio::select! {
+                            evt = stream_rx.recv() => evt,
+                            _ = queue.wait_priority() => {
+                                iteration_cancel.cancel();
+                                steer_interrupted = true;
+                                None
+                            }
                         }
+                    } else {
+                        stream_rx.recv().await
                     }
-                } else {
-                    stream_rx.recv().await
+                })
+                .await;
+                let evt = match next {
+                    Ok(evt) => evt,
+                    Err(_) => {
+                        iteration_cancel.cancel();
+                        stream_error = Some(format!(
+                            "model stream sent nothing for {}s; aborted",
+                            stream_idle_timeout.as_secs()
+                        ));
+                        None
+                    }
                 };
                 let Some(evt) = evt else {
                     break;
@@ -716,9 +735,11 @@ impl AgentRuntime {
             // event channel while it is shutting down.
             drop(stream_rx);
 
-            match prov_task.await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => {
+            // Backstop: a provider that ignores cancellation must not be able
+            // to hold the turn open indefinitely.
+            match tokio::time::timeout(stream_idle_timeout, prov_task).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(err))) => {
                     // Unwrap the provider's message so the caller does not see
                     // "Provider error (x): Provider error (x): ...".
                     stream_error = Some(match err {
@@ -726,7 +747,12 @@ impl AgentRuntime {
                         other => other.to_string(),
                     });
                 }
-                Err(err) => stream_error = Some(format!("Provider task failed: {err}")),
+                Ok(Err(err)) => stream_error = Some(format!("Provider task failed: {err}")),
+                Err(_) => {
+                    stream_error.get_or_insert_with(|| {
+                        "provider task did not exit after its stream stalled".to_string()
+                    });
+                }
             }
 
             if let Some(message) = stream_error {
