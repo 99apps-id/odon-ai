@@ -204,6 +204,30 @@ fn local_workspace_path(ctx: &ToolContext, input: &str, for_write: bool) -> Resu
 
     if for_write {
         let parent = joined.parent().unwrap_or(&root);
+        // Validate before creating anything. This used to call create_dir_all
+        // first and only then check containment, so a path like
+        // ../../outside/x created that directory tree outside the workspace
+        // and the operation was rejected afterwards - too late.
+        let mut ancestor = parent;
+        while std::fs::symlink_metadata(ancestor).is_err() {
+            let Some(next) = ancestor.parent() else {
+                return Err(OdonError::Tool {
+                    tool: "sftp".to_string(),
+                    message: "Invalid local destination".to_string(),
+                });
+            };
+            ancestor = next;
+        }
+        let canonical_ancestor = ancestor.canonicalize().map_err(|error| OdonError::Tool {
+            tool: "sftp".to_string(),
+            message: format!("Cannot resolve local destination: {error}"),
+        })?;
+        if !canonical_ancestor.starts_with(&root) {
+            return Err(OdonError::Tool {
+                tool: "sftp".to_string(),
+                message: "Local destination is outside the workspace".to_string(),
+            });
+        }
         std::fs::create_dir_all(parent).map_err(|error| OdonError::Tool {
             tool: "sftp".to_string(),
             message: format!("Cannot create local destination: {error}"),
