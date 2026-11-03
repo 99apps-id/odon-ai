@@ -548,6 +548,7 @@ export default function App() {
   // Backend & Data States
   const [daemonOnline, setDaemonOnline] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const toolsLoadedRef = useRef(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -595,6 +596,13 @@ export default function App() {
       const status = await api.getStatus();
       setDaemonOnline(true);
       setSystemStatus(status);
+      if (!toolsLoadedRef.current) {
+        const tools = await api.getTools();
+        if (tools.length > 0) {
+          setDynamicTools(tools);
+          toolsLoadedRef.current = true;
+        }
+      }
     } catch {
       setDaemonOnline(false);
     }
@@ -622,7 +630,12 @@ export default function App() {
   useEffect(() => {
     checkDaemonStatus();
     loadSessions();
-    api.getTools().then(setDynamicTools).catch(() => {});
+    api.getTools().then((tools) => {
+      if (tools.length > 0) {
+        setDynamicTools(tools);
+        toolsLoadedRef.current = true;
+      }
+    }).catch(() => {});
     api.getModels().then((data) => {
       if (data?.providers?.length) {
         setProviders(data.providers);

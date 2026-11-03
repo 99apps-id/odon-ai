@@ -47,13 +47,35 @@ fn env_value(name: &str) -> String {
         .unwrap_or_default()
 }
 
+// Desktop bundles cannot read the developer machine's ignored `.env.local`.
+// The release build may therefore stamp the registered public-client
+// credentials into the odond sidecar through its build environment. Runtime
+// environment variables deliberately win so operators can rotate them without
+// rebuilding. Like every installed OAuth public client, these values are
+// extractable from the binary and must not be treated as server-side secrets.
+const STAMPED_ANTIGRAVITY_CLIENT_ID: &str =
+    match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_ID") {
+        Some(value) => value,
+        None => "",
+    };
+const STAMPED_ANTIGRAVITY_CLIENT_SECRET: &str =
+    match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_SECRET") {
+        Some(value) => value,
+        None => "",
+    };
+
 /// Antigravity's registered client (same one Termigo uses). Read from the
 /// environment / .env.local at runtime, never compiled into the repository.
 fn antigravity_credentials() -> (String, String) {
-    let pick = |primary: &str, legacy: &str| {
+    let pick = |primary: &str, legacy: &str, stamped: &str| {
         let v = env_value(primary);
         if v.is_empty() {
-            env_value(legacy)
+            let legacy_value = env_value(legacy);
+            if legacy_value.is_empty() {
+                stamped.trim().to_string()
+            } else {
+                legacy_value
+            }
         } else {
             v
         }
@@ -62,10 +84,12 @@ fn antigravity_credentials() -> (String, String) {
         pick(
             "TERMIGO_ANTIGRAVITY_CLIENT_ID",
             "TERMIXGO_ANTIGRAVITY_CLIENT_ID",
+            STAMPED_ANTIGRAVITY_CLIENT_ID,
         ),
         pick(
             "TERMIGO_ANTIGRAVITY_CLIENT_SECRET",
             "TERMIXGO_ANTIGRAVITY_CLIENT_SECRET",
+            STAMPED_ANTIGRAVITY_CLIENT_SECRET,
         ),
     )
 }

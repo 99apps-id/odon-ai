@@ -1,7 +1,7 @@
 name: Release
 
 # Builds the ODON desktop application (Tauri shell + odond sidecar) for
-# Linux and macOS and publishes the installers to a GitHub Release.
+# Linux, macOS, and Windows and publishes the installers to a GitHub Release.
 #
 # Publish: push a version tag, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
 # Remember to bump the version in desktop/package.json,
@@ -38,6 +38,10 @@ jobs:
             os: macos-13
             rust-target: x86_64-apple-darwin
             bundles: dmg
+          - label: Windows (x86_64)
+            os: windows-2022
+            rust-target: x86_64-pc-windows-msvc
+            bundles: nsis
 
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +85,9 @@ jobs:
       # The desktop shell spawns this exact binary as its daemon sidecar;
       # tauri.conf.json's externalBin points at the staged copy.
       - name: Stage the odond sidecar
+        env:
+          TERMIGO_ANTIGRAVITY_CLIENT_ID: ${{ secrets.TERMIGO_ANTIGRAVITY_CLIENT_ID }}
+          TERMIGO_ANTIGRAVITY_CLIENT_SECRET: ${{ secrets.TERMIGO_ANTIGRAVITY_CLIENT_SECRET }}
         run: bash scripts/stage-sidecar.sh "${{ matrix.rust-target }}"
 
       - name: Build the desktop bundles
@@ -95,6 +102,7 @@ jobs:
             desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/deb/*.deb
             desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/appimage/*.AppImage
             desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
           if-no-files-found: error
 
       - name: Publish bundles to the GitHub Release
@@ -105,4 +113,5 @@ jobs:
             desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/deb/*.deb
             desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/appimage/*.AppImage
             desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
           fail_on_unmatched_files: true
