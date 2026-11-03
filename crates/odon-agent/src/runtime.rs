@@ -921,10 +921,33 @@ impl AgentRuntime {
                         let semaphore = semaphore.clone();
                         join_set.spawn(async move {
                             let _permit = semaphore.acquire_owned().await;
-                            let (output, is_error) = match tools
-                                .execute_tool(&call.name, &tool_ctx, call.args.clone())
-                                .await
+                            // Bound each tool call. Without a ceiling, any block
+                            // inside a tool - a child process holding an inherited
+                            // pipe, a wedged HTTP client - leaves the turn waiting
+                            // with no error while the UI keeps spinning. Generous
+                            // by default, overridable for long builds.
+                            let tool_timeout = std::time::Duration::from_secs(
+                                std::env::var("ODON_TOOL_TIMEOUT_SECS")
+                                    .ok()
+                                    .and_then(|value| value.trim().parse().ok())
+                                    .unwrap_or(600),
+                            );
+                            let outcome = match tokio::time::timeout(
+                                tool_timeout,
+                                tools.execute_tool(&call.name, &tool_ctx, call.args.clone()),
+                            )
+                            .await
                             {
+                                Ok(result) => result,
+                                Err(_) => Err(OdonError::Tool {
+                                    tool: call.name.clone(),
+                                    message: format!(
+                                        "returned nothing after {}s",
+                                        tool_timeout.as_secs()
+                                    ),
+                                }),
+                            };
+                            let (output, is_error) = match outcome {
                                 Ok(val) => (val, false),
                                 Err(e) => {
                                     error!("Tool {} execution failed: {}", call.name, e);
