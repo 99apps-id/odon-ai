@@ -5,7 +5,6 @@ pub mod codex_catalog;
 pub mod copilot;
 pub mod host_creds;
 pub mod multimodal;
-pub mod muse;
 pub mod oauth;
 pub mod openai;
 pub mod simulated;
@@ -15,7 +14,6 @@ pub mod trait_def;
 pub use anthropic::AnthropicProvider;
 pub use antigravity::AntigravityProvider;
 pub use codex::OpenAiCodexProvider;
-pub use muse::MuseProvider;
 pub use oauth::{
     LoginResponse, OAuthAccount, OAuthHandler, OAuthProvider, OAuthService, OAuthToken,
     PendingLogin,

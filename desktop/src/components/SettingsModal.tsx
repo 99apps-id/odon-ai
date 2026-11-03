@@ -1280,7 +1280,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       /* Disconnected state */
                       <div className="space-y-3">
                         {oauthPrompt && oauthPrompt.provider === currentProvider.id ? (
-                          /* Device Code prompt (GitHub Copilot, xAI, Muse) */
+                          /* Device Code prompt (GitHub Copilot, xAI) */
                           <div className="p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 space-y-3">
                             <div className="text-xs font-semibold text-blue-900 dark:text-blue-200">
                               Device Authorization Required

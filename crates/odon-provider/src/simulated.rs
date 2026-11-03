@@ -107,7 +107,7 @@ impl ModelProvider for SimulatedProvider {
         // Simulated provider is intentionally a stub. Return a clear guidance message instead of fake content.
         let response_text = "ODON is currently in **Simulated Mode** because no real provider is configured.\n\n\
         To get real AI responses, do one of the following:\n\n\
-        1. Open **Settings → Providers** and connect an OAuth provider (GitHub Copilot, Antigravity, xAI, Meta Muse, Claude, or ChatGPT).\n\
+        1. Open **Settings → Providers** and connect an OAuth provider (GitHub Copilot, Antigravity, xAI, Claude, or ChatGPT).\n\
         2. Or add a **BYOK API key** for OpenAI, Anthropic, Google Gemini, DeepSeek, Qwen, Mistral, or any OpenAI-compatible endpoint.\n\n\
         After that, select the model from the **model picker** and send your message again.";
 

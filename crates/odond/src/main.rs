@@ -1081,15 +1081,11 @@ fn build_oauth_provider(
     catalog_id: &str,
     token: &odon_provider::OAuthToken,
 ) -> Option<Arc<dyn odon_provider::ModelProvider>> {
-    use odon_provider::{AnthropicProvider, MuseProvider, OpenAiCodexProvider};
+    use odon_provider::{AnthropicProvider, OpenAiCodexProvider};
     match catalog_id {
         "chatgpt" => Some(Arc::new(OpenAiCodexProvider::new(
             token.access_token.clone(),
             token.account_id.clone(),
-            None,
-        ))),
-        "muse" => Some(Arc::new(MuseProvider::new(
-            token.access_token.clone(),
             None,
         ))),
         "claude-oauth" => {
@@ -4809,7 +4805,6 @@ fn oauth_catalog_id(provider: odon_provider::OAuthProvider) -> &'static str {
         Antigravity => "antigravity",
         XaiOauth => "xai-oauth",
         GithubCopilot => "github-copilot",
-        Muse => "muse",
     }
 }
 

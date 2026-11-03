@@ -23,7 +23,6 @@ use url::Url;
 const DEFAULT_LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CALLBACK_BYTES: usize = 16 * 1024;
-const MUSE_USER_AGENT: &str = "muse-code/1.0.2";
 
 const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -115,12 +114,6 @@ const GITHUB_DEVICE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
-const MUSE_CLIENT_ID: &str = "1031625952748946";
-const MUSE_DEVICE_URL: &str = "https://auth.meta.com/oidc/device/authorization/";
-const MUSE_TOKEN_URL: &str = "https://auth.meta.com/oidc/device/token/";
-const MUSE_MINT_URL: &str = "https://api.meta.ai/muse-code/key";
-const MUSE_DEFAULT_VERIFY_URL: &str = "https://auth.meta.com/oauth/device/";
-
 fn auth_error(message: impl Into<String>) -> OdonError {
     OdonError::Auth(message.into())
 }
@@ -133,7 +126,6 @@ pub enum OAuthProvider {
     Antigravity,
     XaiOauth,
     GithubCopilot,
-    Muse,
 }
 
 impl OAuthProvider {
@@ -144,7 +136,6 @@ impl OAuthProvider {
             Self::Antigravity => "antigravity",
             Self::XaiOauth => "xai-oauth",
             Self::GithubCopilot => "github-copilot",
-            Self::Muse => "muse",
         }
     }
 }
@@ -165,7 +156,6 @@ impl FromStr for OAuthProvider {
             "antigravity" => Ok(Self::Antigravity),
             "xai-oauth" | "xai" => Ok(Self::XaiOauth),
             "github-copilot" | "copilot" => Ok(Self::GithubCopilot),
-            "muse" => Ok(Self::Muse),
             _ => Err(auth_error(format!("unsupported OAuth provider: {value}"))),
         }
     }
@@ -287,7 +277,7 @@ impl OAuthService {
                 .begin_browser_login(provider)
                 .await
                 .map(PendingLogin::Browser),
-            OAuthProvider::XaiOauth | OAuthProvider::GithubCopilot | OAuthProvider::Muse => self
+            OAuthProvider::XaiOauth | OAuthProvider::GithubCopilot => self
                 .begin_device_login(provider)
                 .await
                 .map(PendingLogin::Device),
@@ -372,14 +362,11 @@ impl OAuthService {
         if let Some(scope) = config.scope {
             form.push(("scope", scope));
         }
-        let mut request = self
+        let request = self
             .client
             .post(config.device_url)
             .header("accept", "application/json")
             .form(&form);
-        if provider == OAuthProvider::Muse {
-            request = request.header("user-agent", MUSE_USER_AGENT);
-        }
         let response = request
             .send()
             .await
@@ -403,7 +390,7 @@ impl OAuthService {
         let verification_uri = device
             .verification_uri_complete
             .or(device.verification_uri)
-            .unwrap_or_else(|| MUSE_DEFAULT_VERIFY_URL.to_string());
+            .ok_or_else(|| auth_error("device endpoint returned no verification URI"))?;
         validate_device_verification_uri(provider, &verification_uri)?;
         let interval = device.interval.unwrap_or(5).max(3);
         let expires_in = device
@@ -531,7 +518,6 @@ impl OAuthService {
                 token.plan = Some("Antigravity".to_string());
                 Ok(token)
             }
-            OAuthProvider::Muse => mint_muse_key(&self.client, refresh_token).await,
         }
     }
 
@@ -683,11 +669,7 @@ impl PendingDeviceLogin {
                 ("device_code", self.device_code.as_str()),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ]);
-            if self.config.provider == OAuthProvider::Muse {
-                request = request
-                    .header("accept", "application/json")
-                    .header("user-agent", MUSE_USER_AGENT);
-            } else if self.config.provider == OAuthProvider::GithubCopilot {
+            if self.config.provider == OAuthProvider::GithubCopilot {
                 request = request.header("accept", "application/json");
             }
 
@@ -711,7 +693,6 @@ impl PendingDeviceLogin {
                     OAuthProvider::GithubCopilot => {
                         mint_copilot_token(&self.client, &access_token).await
                     }
-                    OAuthProvider::Muse => mint_muse_key(&self.client, &access_token).await,
                     OAuthProvider::XaiOauth => Ok(token_from_raw(
                         self.config.provider,
                         RawTokenResponse {
@@ -842,13 +823,6 @@ fn device_config(provider: OAuthProvider) -> Result<DeviceConfig> {
             device_url: GITHUB_DEVICE_URL,
             token_url: GITHUB_TOKEN_URL,
             scope: Some("read:user"),
-        }),
-        OAuthProvider::Muse => Ok(DeviceConfig {
-            provider,
-            client_id: MUSE_CLIENT_ID,
-            device_url: MUSE_DEVICE_URL,
-            token_url: MUSE_TOKEN_URL,
-            scope: None,
         }),
         _ => Err(auth_error(format!("{provider} does not use device login"))),
     }
@@ -1048,7 +1022,6 @@ fn validate_device_verification_uri(provider: OAuthProvider, uri: &str) -> Resul
             "accounts.x.ai" | "auth.x.ai" | "x.ai" | "console.x.ai"
         ),
         OAuthProvider::GithubCopilot => matches!(host, "github.com" | "copilot.github.com"),
-        OAuthProvider::Muse => matches!(host, "auth.meta.com" | "meta.com"),
         _ => false,
     };
     if parsed.scheme() != "https"
@@ -1182,49 +1155,6 @@ async fn mint_copilot_token(client: &reqwest::Client, github_token: &str) -> Res
         id_token: None,
         email: None,
         plan: Some("GitHub Copilot".to_string()),
-    })
-}
-
-async fn mint_muse_key(client: &reqwest::Client, dca_token: &str) -> Result<OAuthToken> {
-    let response = client
-        .post(MUSE_MINT_URL)
-        .header("authorization", format!("Bearer {dca_token}"))
-        .header("user-agent", MUSE_USER_AGENT)
-        .header("accept", "application/json")
-        .header("x-api-version", "1.0.0")
-        .json(&serde_json::json!({ "onboard": true }))
-        .send()
-        .await
-        .map_err(|e| auth_error(format!("Muse key mint failed: {e}")))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(auth_error(format!(
-            "Muse key endpoint returned {status}: {}",
-            safe_error_summary(&body)
-        )));
-    }
-    #[derive(Deserialize)]
-    struct MuseResponse {
-        api_key: Option<String>,
-        key: Option<String>,
-        user_email: Option<String>,
-    }
-    let minted: MuseResponse = serde_json::from_str(&body)
-        .map_err(|e| auth_error(format!("could not parse Muse key response: {e}")))?;
-    let key = minted
-        .api_key
-        .or(minted.key)
-        .ok_or_else(|| auth_error("Muse key response had no API key"))?;
-    Ok(OAuthToken {
-        provider: OAuthProvider::Muse.to_string(),
-        access_token: key,
-        refresh_token: Some(dca_token.to_string()),
-        expires_at: None,
-        account_id: minted.user_email.clone(),
-        id_token: None,
-        email: minted.user_email,
-        plan: Some("Meta Muse Code".to_string()),
     })
 }
 
