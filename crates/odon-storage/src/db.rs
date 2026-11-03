@@ -177,24 +177,29 @@ impl StorageEngine {
             );
             ",
         )?;
-        // Older databases predate multi-endpoint provider metadata. SQLite has
-        // no IF NOT EXISTS for ADD COLUMN, so only add a column when it is
-        // actually missing instead of swallowing every migration error.
-        for (column, ddl) in [
-            ("name", "ALTER TABLE provider_configs ADD COLUMN name TEXT"),
+        // Older databases predate columns such as `sessions.metadata` and
+        // multi-endpoint provider metadata. `CREATE TABLE IF NOT EXISTS` leaves
+        // an existing table untouched, so those columns must be added here;
+        // SQLite has no IF NOT EXISTS for ADD COLUMN, so only add a column when
+        // it is actually missing instead of swallowing every migration error.
+        for (table, column, ddl) in [
             (
+                "provider_configs",
+                "name",
+                "ALTER TABLE provider_configs ADD COLUMN name TEXT",
+            ),
+            (
+                "provider_configs",
                 "models_json",
                 "ALTER TABLE provider_configs ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'",
             ),
+            (
+                "sessions",
+                "metadata",
+                "ALTER TABLE sessions ADD COLUMN metadata TEXT",
+            ),
         ] {
-            let mut stmt =
-                conn.prepare("SELECT name FROM pragma_table_info('provider_configs')")?;
-            let exists = stmt
-                .query_map([], |row| row.get::<_, String>(0))?
-                .any(|name| name.as_deref() == Ok(column));
-            if !exists {
-                conn.execute(ddl, [])?;
-            }
+            ensure_column(&conn, table, column, ddl)?;
         }
         // Best-effort cleanup for databases created before cascades existed.
         let _ = conn.execute(
@@ -919,9 +924,69 @@ pub struct MemoryItem {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Adds a column to an existing table when the migration has not run yet.
+///
+/// `table` and `column` are compile-time literals from the migration list
+/// above, never user input, so interpolating them into the pragma is safe.
+fn ensure_column(
+    conn: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+    ddl: &str,
+) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?;
+    let exists = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .any(|name| name.as_deref() == Ok(column));
+    if !exists {
+        conn.execute(ddl, [])?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_sessions_table_gains_metadata_column() {
+        // Reproduces an existing install whose `sessions` table was created
+        // before `metadata` existed: opening it must migrate, not fail with
+        // "table sessions has no column named metadata".
+        let path = std::env::temp_dir().join(format!(
+            "odon-legacy-{}-{}.db",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    active_model TEXT NOT NULL,
+                    workspace_root TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        }
+
+        let storage = StorageEngine::new_at_path(&path).unwrap();
+        let mut session = Session::new("Legacy row", SessionMode::General, "odon-auto");
+        session.metadata = Some(serde_json::json!({ "source": "legacy-migration" }));
+        storage.save_session(&session).unwrap();
+
+        let loaded = storage.get_session(&session.id).unwrap();
+        assert_eq!(
+            loaded.metadata,
+            Some(serde_json::json!({ "source": "legacy-migration" }))
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn artifact_versions_are_created_and_restorable() {

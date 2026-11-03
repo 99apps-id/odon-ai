@@ -5,7 +5,7 @@ import {
   GitBranch,
   RefreshCw,
   Plus,
-  Sparkles,
+  ShieldCheck,
   Terminal,
   Clock,
   User,
@@ -163,7 +163,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-950/40 gap-4 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-neutral-900 text-white flex items-center justify-center shadow-xs">
+          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
             <GitPullRequest className="w-4 h-4 text-white" />
           </div>
           <div>
@@ -228,7 +228,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                   />
                   <button
                     type="submit"
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 transition-colors"
+                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                   >
                     Set
                   </button>
@@ -292,7 +292,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 transition-all shadow-2xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-2xs cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>New Issue</span>
@@ -327,7 +327,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           onClick={() => setActiveTab('prs')}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
             activeTab === 'prs'
-              ? 'bg-neutral-900 text-white shadow-2xs'
+              ? 'bg-blue-600 text-white shadow-2xs'
               : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
           }`}
         >
@@ -338,7 +338,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           onClick={() => setActiveTab('issues')}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
             activeTab === 'issues'
-              ? 'bg-neutral-900 text-white shadow-2xs'
+              ? 'bg-blue-600 text-white shadow-2xs'
               : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
           }`}
         >
@@ -391,7 +391,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                       <div className="flex items-center gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
                         <span className="flex items-center gap-1 font-mono">
                           <GitBranch className="w-3 h-3 text-neutral-500" />
-                          {pr.head?.ref || 'feature'} ➔ {pr.base?.ref || 'main'}
+                          {pr.head?.ref || 'feature'} → {pr.base?.ref || 'main'}
                         </span>
                         {pr.user?.login && (
                           <span className="flex items-center gap-1">
@@ -414,7 +414,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                         onClick={() => handleReviewPr(pr)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-neutral-900 dark:text-white bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300" />
+                        <ShieldCheck className="w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300" />
                         <span>Review with Agent</span>
                       </button>
                       {pr.head?.ref && (
@@ -536,7 +536,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-900 text-white hover:bg-neutral-800"
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
                 >
                   Submit Issue
                 </button>

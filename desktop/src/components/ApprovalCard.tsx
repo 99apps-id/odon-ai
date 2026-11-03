@@ -288,7 +288,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
               rows={2}
-              placeholder="e.g. Don't delete that file â€” run git status first instead."
+              placeholder="e.g. Don't delete that file — run git status first instead."
               className="w-full rounded-lg border border-clay-200 dark:border-clay-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-clay-300 dark:focus:ring-clay-700"
             />
             <div className="flex items-center justify-end gap-2">
@@ -312,8 +312,8 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
         )}
 
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 pt-0.5">
-          Press <kbd className={kbdClass}>1</kbd>â€“<kbd className={kbdClass}>4</kbd>{' '}
-          to choose. â€œDon&apos;t ask againâ€ still shows this card for other
+          Press <kbd className={kbdClass}>1</kbd>–<kbd className={kbdClass}>4</kbd>{' '}
+          to choose. “Don&apos;t ask again” still shows this card for other
           tools or other folders.
         </p>
       </div>

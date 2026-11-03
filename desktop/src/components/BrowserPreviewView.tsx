@@ -15,7 +15,7 @@ import {
   Send,
   Eye,
   Terminal,
-  Sparkles,
+  ScanSearch,
   Info,
   Maximize2,
   FileText,
@@ -393,7 +393,7 @@ export function BrowserPreviewView({
           <div className="w-full max-w-3xl bg-white rounded-xl border border-neutral-200 p-5 shadow-xs overflow-y-auto flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-neutral-100 mb-3">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-600" />
+                <ScanSearch className="w-4 h-4 text-blue-600" />
                 <h3 className="font-bold text-xs text-neutral-900">Agent Page Reader & DOM Inspector</h3>
               </div>
               <div className="flex items-center gap-2">

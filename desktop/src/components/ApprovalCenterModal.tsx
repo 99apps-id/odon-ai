@@ -215,7 +215,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                         value={denyReason}
                         onChange={(e) => setDenyReason(e.target.value)}
                         rows={2}
-                        placeholder="e.g. Don't delete that file â€” run git status first instead."
+                        placeholder="e.g. Don't delete that file — run git status first instead."
                         className="w-full rounded-lg border border-clay-200 dark:border-clay-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-clay-300 dark:focus:ring-clay-700"
                       />
                       <div className="flex items-center justify-end gap-2">

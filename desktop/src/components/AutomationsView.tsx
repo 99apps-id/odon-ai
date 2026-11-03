@@ -9,7 +9,7 @@ import {
   AlertTriangle,
   RotateCw,
   Trash2,
-  Sparkles,
+  Cpu,
   Layers,
   ChevronDown,
   ChevronRight,
@@ -301,7 +301,7 @@ export const AutomationsView: React.FC = () => {
                     {job.trigger_value}
                   </span>
                   <span className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-lg">
-                    <Sparkles className="w-3 h-3 text-amber-500" />
+                    <Cpu className="w-3 h-3 text-neutral-500" />
                     {job.model}
                   </span>
                 </div>

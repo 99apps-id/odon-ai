@@ -209,7 +209,7 @@ export const RelaysPanel: React.FC = () => {
                 onChange={(event) => setTelegramToken(event.target.value)}
                 placeholder={
                   telegram?.token_masked
-                    ? `Saved: ${telegram.token_masked} â€” paste a new token to replace`
+                    ? `Saved: ${telegram.token_masked} — paste a new token to replace`
                     : '123456789:ABCdef...'
                 }
                 className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500"
@@ -354,7 +354,7 @@ export const RelaysPanel: React.FC = () => {
                     className="w-52 h-52 rounded-xl bg-white p-2 border border-neutral-200"
                   />
                   <p className="text-[10px] text-neutral-500 text-center mt-2">
-                    WhatsApp â†’ Settings â†’ Linked devices â†’ Link a device.
+                    WhatsApp → Settings → Linked devices → Link a device.
                   </p>
                 </>
               ) : whatsapp?.pairing_code ? (
@@ -366,7 +366,7 @@ export const RelaysPanel: React.FC = () => {
                     {whatsapp.pairing_code}
                   </div>
                   <p className="text-[10px] text-neutral-500 text-center mt-3 max-w-[220px]">
-                    Open WhatsApp â†’ Linked devices â†’ Link with phone number, then enter this
+                    Open WhatsApp → Linked devices → Link with phone number, then enter this
                     code.
                   </p>
                 </>

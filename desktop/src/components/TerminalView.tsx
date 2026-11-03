@@ -7,7 +7,6 @@ import {
   Plus,
   X,
   ChevronDown,
-  Sparkles,
   Command,
 } from 'lucide-react';
 import { NativeTerminal } from './NativeTerminal';

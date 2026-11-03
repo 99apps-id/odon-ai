@@ -7,7 +7,8 @@ import {
   Sliders,
   Check,
   Cpu,
-  Sparkles,
+  Workflow,
+  ScrollText,
   ExternalLink,
   ChevronRight,
   Globe,
@@ -389,7 +390,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setProviderConfigs(configs || []);
       if (configs?.length) {
         // Never put a masked key into the editable field: saving it would
-        // overwrite the real credential with "sk-aâ€¦z9".
+        // overwrite the real credential with "sk-a…z9".
         setConfiguredKeys(() => {
           const next: Record<string, string> = {};
           for (const c of configs) next[c.provider_id] = c.masked_key;
@@ -540,7 +541,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         [providerId]: {
           ok: res.ok,
           text: res.ok
-            ? `Connected in ${res.latency_ms ?? '?'}ms Â· ${(res.sample || 'OK').slice(0, 120)}`
+            ? `Connected in ${res.latency_ms ?? '?'}ms · ${(res.sample || 'OK').slice(0, 120)}`
             : res.error || 'Connection failed',
         },
       }));
@@ -557,7 +558,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSaveKey = async (providerId: string) => {
     let rawKey = (apiKeys[providerId] || '').trim();
     // Defensive: an old build could have prefilled the masked value.
-    if (rawKey.includes('â€¢')) rawKey = '';
+    if (rawKey.includes('•')) rawKey = '';
     const prefix = KEY_PREFIXES[providerId];
 
     if (rawKey && prefix && !rawKey.startsWith(prefix)) {
@@ -607,8 +608,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const maskKey = (key: string) => {
     if (!key) return '';
-    if (key.length <= 8) return 'â€¢'.repeat(key.length);
-    return `${key.slice(0, 4)}${'â€¢'.repeat(Math.max(4, key.length - 8))}${key.slice(-4)}`;
+    if (key.length <= 8) return '•'.repeat(key.length);
+    return `${key.slice(0, 4)}${'•'.repeat(Math.max(4, key.length - 8))}${key.slice(-4)}`;
   };
 
   if (!isOpen) return null;
@@ -676,7 +677,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900'
                 }`}
               >
-                <Sparkles className="w-3.5 h-3.5" />
+                <Workflow className="w-3.5 h-3.5" />
                 <span>Skills</span>
               </button>
               <button
@@ -929,7 +930,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="flex flex-wrap gap-1">
                         {(c.models || []).length === 0 ? (
                           <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                            No models yet â€” edit to add some.
+                            No models yet — edit to add some.
                           </span>
                         ) : (
                           (c.models || []).map((m) => (
@@ -1164,7 +1165,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
                             <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 flex items-center gap-2">
                               <span>Plan: <strong className="text-neutral-700 dark:text-neutral-300">{currentOAuth.plan || 'Standard'}</strong></span>
-                              <span>Â·</span>
+                              <span>·</span>
                               <span className="text-emerald-600 dark:text-emerald-400">Tokens Active</span>
                             </div>
                           </div>
@@ -1264,7 +1265,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             }
                             placeholder={
                               configuredKeys[currentProvider.id] && !apiKeys[currentProvider.id]
-                                ? `Saved key: ${configuredKeys[currentProvider.id]} â€” paste a new key to replace`
+                                ? `Saved key: ${configuredKeys[currentProvider.id]} — paste a new key to replace`
                                 : `Paste your ${currentProvider.name.split(' (')[0]} API key...`
                             }
                             className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500 pr-10"
@@ -1437,7 +1438,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   </div>
                                   <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-2">
                                     <span>id: <strong className="text-neutral-600 dark:text-neutral-300">{m.id}</strong></span>
-                                    <span>Â·</span>
+                                    <span>·</span>
                                     <span>{(m.context / 1000).toFixed(0)}k context</span>
                                   </div>
                                 </div>
@@ -1525,7 +1526,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               </div>
                               <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-2">
                                 <span>wire: <strong className="text-neutral-600 dark:text-neutral-300">{m.id}</strong></span>
-                                <span>Â·</span>
+                                <span>·</span>
                                 <span>{(m.context / 1000).toFixed(0)}k context</span>
                               </div>
                             </div>
@@ -1779,7 +1780,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-amber-500" />
+                        <ScrollText className="w-4 h-4 text-neutral-500" />
                         <span className="font-semibold text-xs text-neutral-900 dark:text-white">
                           {skill.title}
                         </span>
@@ -2176,7 +2177,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onClick={onToggleTheme}
                 className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 text-xs font-semibold hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
               >
-                {isDark ? 'ðŸŒ™ Dark Mode' : 'â˜€ï¸ Light Mode'}
+                {isDark ? '🌙 Dark Mode' : '☀️ Light Mode'}
               </button>
             </div>
 

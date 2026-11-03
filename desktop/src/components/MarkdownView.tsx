@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { api } from '../api';
+import { DiffView, looksLikeUnifiedDiff } from './DiffView';
+import { TOKEN_CLASS, isDiffLanguage, tokenize } from '../lib/highlight';
 import {
   Check,
   Copy,
@@ -10,7 +12,7 @@ import {
   Terminal,
   Globe,
   Info,
-  Sparkles,
+  Lightbulb,
   AlertCircle,
   AlertTriangle,
   ShieldAlert,
@@ -93,7 +95,7 @@ const ChartBlock: React.FC<{ spec: ChartSpec; dense?: boolean }> = ({ spec, dens
             fontSize="9"
             fill="#9ca3af"
           >
-            {label.length > 12 ? `${label.slice(0, 11)}â€¦` : label}
+            {label.length > 12 ? `${label.slice(0, 11)}…` : label}
           </text>
         ))}
         {spec.type === 'line'
@@ -435,9 +437,9 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
   return <div className={`font-sans select-text break-words [overflow-wrap:anywhere] max-w-full min-w-0 overflow-x-hidden ${className}`}>{renderFormatted(content)}</div>;
 };
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 // INLINE FORMATTING (Bold, Italic, Code, Links, Keyboard keys)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -479,9 +481,9 @@ function formatInline(text: string, onOpenBrowser?: (url: string) => void, dense
     });
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 // RICH CODE BLOCK WITH "RUN IN TERMINAL" & "PREVIEW"
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 function CodeBlock({
   language,
   code,
@@ -499,6 +501,13 @@ function CodeBlock({
   const langLower = language.toLowerCase();
   const isTerminalLang = ['bash', 'sh', 'shell', 'zsh', 'terminal', 'powershell', 'ps1', 'cmd'].includes(langLower);
   const isWebLang = ['html', 'svg', 'xml', 'htm'].includes(langLower);
+
+  const diffMode = isDiffLanguage(langLower) || looksLikeUnifiedDiff(code);
+  const tokens = useMemo(
+    () => (diffMode ? [] : tokenize(code, langLower)),
+    [code, langLower, diffMode],
+  );
+  const gutterWidth = String(tokens.length).length;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
@@ -519,25 +528,29 @@ function CodeBlock({
     }
   };
 
+  if (diffMode) {
+    return <DiffView diff={code} dense={dense} label={langLower === 'diff' || langLower === 'patch' ? undefined : (language || 'diff')} />;
+  }
+
   return (
-    <div className={`${dense ? 'my-1.5 rounded-xl' : 'my-3 rounded-2xl'} overflow-hidden border border-[#d8d3c8] dark:border-[#50564f] bg-[#f4f1ea] dark:bg-[#303530] text-[#343a35] dark:text-[#e4e1d9] shadow-2xs font-sans`}>
-      <div className={`flex items-center justify-between ${dense ? 'px-3 py-1.5' : 'px-4 py-2'} bg-[#e9e5dc] dark:bg-[#3a403a] border-b border-[#d8d3c8] dark:border-[#50564f] text-xs font-mono text-[#6d716a] dark:text-[#c2c5bc]`}>
+    <div className={`${dense ? 'my-1.5 rounded-xl' : 'my-3 rounded-2xl'} overflow-hidden border border-[#cbd8c9] bg-white shadow-2xs font-sans`}>
+      <div className={`flex items-center justify-between ${dense ? 'px-3 py-1.5' : 'px-4 py-2'} bg-[#eaf1e7] border-b border-[#cbd8c9] text-xs font-mono text-[#4d5a4b]`}>
         <div className="flex items-center gap-2">
           {isTerminalLang ? (
-            <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+            <Terminal className="w-3.5 h-3.5 text-[#4a6142]" />
           ) : isWebLang ? (
-            <Globe className="w-3.5 h-3.5 text-[#65766b] dark:text-[#aebcaf]" />
+            <Globe className="w-3.5 h-3.5 text-[#4a6142]" />
           ) : (
-            <Code2 className="w-3.5 h-3.5 text-[#65766b] dark:text-[#aebcaf]" />
+            <Code2 className="w-3.5 h-3.5 text-[#4a6142]" />
           )}
-          <span className="font-semibold text-[#545b55] dark:text-[#d9d7cf]">{language || 'text'}</span>
+          <span className="font-semibold text-[#3c4a3a]">{language || 'text'}</span>
         </div>
 
         <div className="flex items-center gap-1.5">
           {isTerminalLang && (
             <button
               onClick={handleRun}
-              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-emerald-200 font-sans text-[11px] font-medium transition-colors border border-emerald-500/30 cursor-pointer"
+              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#dbe7d6] hover:bg-[#d0dfca] text-[#3c4a3a] font-sans text-[11px] font-medium transition-colors border border-[#bccdb6] cursor-pointer"
               title="Execute in ODON Terminal panel"
             >
               <Play className="w-3 h-3 fill-current" />
@@ -548,7 +561,7 @@ function CodeBlock({
           {isWebLang && (
             <button
               onClick={handlePreview}
-              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#dce2d9] hover:bg-[#d1d9ce] dark:bg-[#4a554b] dark:hover:bg-[#566257] text-[#46554a] dark:text-[#e0e8df] font-sans text-[11px] font-medium transition-colors border border-[#bdc8bc] dark:border-[#687369] cursor-pointer"
+              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#dbe7d6] hover:bg-[#d0dfca] text-[#3c4a3a] font-sans text-[11px] font-medium transition-colors border border-[#bccdb6] cursor-pointer"
               title="Preview in Browser panel"
             >
               <ExternalLink className="w-3 h-3" />
@@ -558,23 +571,47 @@ function CodeBlock({
 
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#dedad1] hover:bg-[#d2cdc2] dark:bg-[#4a4f49] dark:hover:bg-[#565c55] text-[#525750] dark:text-[#e4e1d9] font-sans text-[11px] font-medium transition-colors cursor-pointer"
+            className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#e2e8dd] hover:bg-[#d7dfd0] text-[#3c4a3a] font-sans text-[11px] font-medium transition-colors cursor-pointer"
           >
-            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            {copied ? <Check className="w-3 h-3 text-[#2f6b3a]" /> : <Copy className="w-3 h-3" />}
             <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         </div>
       </div>
-      <pre className={`${dense ? "p-2.5 text-[11px] leading-snug" : "p-3.5 text-[12.5px] leading-relaxed"} font-mono overflow-x-auto text-[#343a35] dark:text-[#e4e1d9] scrollbar-thin max-w-full break-words whitespace-pre-wrap`}>
-        <code>{code}</code>
-      </pre>
+      <div className="bg-white">
+        <pre className={`${dense ? 'p-2.5 text-[11px] leading-snug' : 'p-3.5 text-[12.5px] leading-relaxed'} font-mono overflow-x-auto scrollbar-thin max-w-full whitespace-pre-wrap break-words`}>
+          <code>
+            {tokens.map((line, i) => (
+              <div key={i} className="flex gap-3">
+                <span
+                  className="select-none shrink-0 text-right text-[#c4bfb2]"
+                  style={{ width: `${Math.max(gutterWidth, 2)}ch` }}
+                >
+                  {i + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  {line.length === 0 ? (
+                    <span>{'\u00a0'}</span>
+                  ) : (
+                    line.map((tok, j) => (
+                      <span key={j} className={TOKEN_CLASS[tok.kind]}>
+                        {tok.text}
+                      </span>
+                    ))
+                  )}
+                </span>
+              </div>
+            ))}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 // GFM TABLES
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 function TableBlock({ lines, dense = false, onOpenBrowser }: { lines: string[]; dense?: boolean; onOpenBrowser?: (url: string) => void }) {
   if (lines.length < 2) return null;
 
@@ -619,9 +656,9 @@ function TableBlock({ lines, dense = false, onOpenBrowser }: { lines: string[]; 
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 // GFM ALERTS (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION])
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 function AlertBlock({
   type,
   content,
@@ -647,7 +684,7 @@ function AlertBlock({
       bg: 'bg-emerald-50/80 dark:bg-emerald-950/30',
       titleColor: 'text-emerald-900 dark:text-emerald-200',
       textColor: 'text-emerald-950 dark:text-emerald-100',
-      icon: <Sparkles className="w-4 h-4 text-emerald-600" />,
+      icon: <Lightbulb className="w-4 h-4 text-emerald-600" />,
       title: 'Tip',
     },
     IMPORTANT: {
@@ -692,9 +729,9 @@ function AlertBlock({
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 // MARKDOWN IMAGE
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────
 export function MarkdownImage({ alt, src }: { alt: string; src: string }) {
   const [downloading, setDownloading] = useState(false);
   const safeSrc =

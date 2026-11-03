@@ -210,7 +210,7 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
           <span className="font-semibold text-neutral-300 font-mono text-[11px]">
             {title || (sshProfileId ? `SSH: ${sshProfileId}` : shell ? `${shell.toUpperCase()} Native PTY` : 'Shell Native PTY')}
           </span>
-          <span className="text-[10px] text-neutral-500 font-mono">â€¢ PTY</span>
+          <span className="text-[10px] text-neutral-500 font-mono">• PTY</span>
         </div>
 
         <div className="flex items-center gap-2.5">

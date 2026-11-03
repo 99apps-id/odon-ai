@@ -25,7 +25,7 @@ import {
   Video,
   Square,
   X,
-  Sparkles,
+  ListTree,
   Layers,
   ArrowLeft,
   Zap,
@@ -1406,7 +1406,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           <div className="flex flex-col overflow-y-auto">
             {/* Header: Cat Logo + ODON + Subtitle */}
             <div className="flex items-center gap-2.5 px-1 py-1">
-              <CatLogo className="w-8 h-8 text-neutral-900 shrink-0" strokeWidth={2.2} />
+              <CatLogo className="w-10 h-10 text-neutral-900 shrink-0" strokeWidth={2.1} />
               <div className="leading-tight">
                 <div className="font-bold text-base text-neutral-900 tracking-tight">ODON</div>
                 <div className="text-[10px] text-neutral-500 font-normal leading-tight">
@@ -1651,7 +1651,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
                     title={`Active Provider: ${activeProvider?.name} (Click to change)`}
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    <Cpu className="w-3.5 h-3.5 text-blue-600" />
                     <span className="font-semibold text-neutral-900 truncate max-w-[180px]">{displayModelName}</span>
                     <ChevronDown className="w-3 h-3 text-neutral-400 ml-0.5" />
                   </div>
@@ -1789,8 +1789,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             {!inChatMode && (
               <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} flex flex-col items-center my-auto mx-auto min-w-0`}>
                 {/* Cute Cat Logo Illustration */}
-                <div className="mb-3 text-neutral-900 hover:scale-105 transition-transform">
-                  <CatLogo className="w-20 h-20" strokeWidth={2} />
+                <div className="mb-4 text-neutral-900 hover:scale-105 transition-transform">
+                  <CatLogo className="w-32 h-32" strokeWidth={1.9} />
                 </div>
 
                 {/* Main Heading */}
@@ -1852,7 +1852,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         <details className="group rounded-xl bg-neutral-50/80 border border-neutral-200/80 overflow-hidden shadow-2xs">
                           <summary className="px-3 py-1.5 cursor-pointer text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/50 hover:bg-neutral-100 transition-colors">
                             <div className="flex items-center gap-1.5">
-                              <Sparkles className="w-3 h-3 text-amber-500" />
+                              <ListTree className="w-3 h-3 text-clay-600" />
                               <span className="text-[11.5px] font-semibold text-neutral-700">Reasoning & Thought Process</span>
                             </div>
                             <span className="text-[10px] text-neutral-400 font-mono group-open:hidden">Click to expand</span>
@@ -2115,7 +2115,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         <div className="rounded-xl bg-amber-50/40 border border-amber-200/70 overflow-hidden shadow-2xs">
                           <div className="px-3 py-1.5 bg-amber-100/50 border-b border-amber-200/60 text-xs font-semibold text-amber-900 flex items-center justify-between">
                             <div className="flex items-center gap-1.5">
-                              <Sparkles className="w-3 h-3 text-amber-600 animate-spin" />
+                              <Activity className="w-3 h-3 text-clay-700 animate-pulse" />
                               <span className="text-[11.5px]">ODON is reasoning...</span>
                             </div>
                             <span className="text-[10px] text-amber-700 font-mono animate-pulse">Live</span>
@@ -2310,7 +2310,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors border border-neutral-200/60 cursor-pointer"
                       title={`Active Provider: ${activeProvider?.name}`}
                     >
-                      <Sparkles className="w-3 h-3 text-blue-500" />
+                      <Cpu className="w-3 h-3 text-blue-500" />
                       <span className="truncate max-w-[150px] font-medium">{displayModelName}</span>
                       <ChevronDown className="w-3 h-3 text-neutral-400" />
                     </button>
@@ -2320,7 +2320,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   {isGenerating && (
                     <button
                       onClick={handleStop}
-                      className="w-7 h-7 rounded-full bg-neutral-900 hover:bg-neutral-800 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
+                      className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
                       title="Stop process"
                     >
                       <Square className="w-3 h-3 fill-current" />
@@ -3433,7 +3433,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <button
                       onClick={() => workspaceBrowse?.current && applyWorkspace(workspaceBrowse.current)}
                       disabled={!workspaceBrowse?.current || workspaceBusy}
-                      className="px-2.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-[11px] font-medium disabled:opacity-40 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-medium disabled:opacity-40 cursor-pointer"
                     >
                       Use this folder
                     </button>

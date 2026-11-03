@@ -11,7 +11,6 @@ import {
   ChevronRight,
   Terminal,
   Server,
-  Sparkles,
   Check,
   XCircle,
 } from 'lucide-react';
