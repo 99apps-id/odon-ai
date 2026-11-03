@@ -52,10 +52,7 @@ pub async fn extract_document_text(
     let extension = if mime.eq_ignore_ascii_case("application/pdf") || lower.ends_with(".pdf") {
         "pdf"
     } else {
-        lower
-            .rsplit('.')
-            .next()
-            .unwrap_or("bin")
+        lower.rsplit('.').next().unwrap_or("bin")
     };
     let stem: String = lower
         .rsplit('/')
@@ -72,7 +69,10 @@ pub async fn extract_document_text(
         stem
     };
 
-    let directory = std::env::temp_dir().join(format!("odon-relay-{}", chrono::Utc::now().timestamp_millis()));
+    let directory = std::env::temp_dir().join(format!(
+        "odon-relay-{}",
+        chrono::Utc::now().timestamp_millis()
+    ));
     std::fs::create_dir_all(&directory).ok()?;
     let input = directory.join(format!("{stem}.{extension}"));
     let output = directory.join(format!("{stem}.txt"));

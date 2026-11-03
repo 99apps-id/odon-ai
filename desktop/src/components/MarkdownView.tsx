@@ -35,7 +35,7 @@ type ChartSpec = {
   series?: ChartSeries[];
 };
 
-const CHART_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+const CHART_COLORS = ['#65766b', '#9a8064', '#7d8175', '#b08d74', '#667b79', '#a29a80'];
 
 const ChartBlock: React.FC<{ spec: ChartSpec; dense?: boolean }> = ({ spec, dense = false }) => {
   const series =
@@ -520,17 +520,17 @@ function CodeBlock({
   };
 
   return (
-    <div className={`${dense ? 'my-1.5 rounded-xl' : 'my-3 rounded-2xl'} overflow-hidden border border-neutral-200/90 dark:border-neutral-800 bg-[#1e1e1e] text-neutral-100 shadow-2xs font-sans`}>
-      <div className={`flex items-center justify-between ${dense ? 'px-3 py-1.5' : 'px-4 py-2'} bg-[#252526] border-b border-neutral-800 text-xs font-mono text-neutral-400`}>
+    <div className={`${dense ? 'my-1.5 rounded-xl' : 'my-3 rounded-2xl'} overflow-hidden border border-[#d8d3c8] dark:border-[#50564f] bg-[#f4f1ea] dark:bg-[#303530] text-[#343a35] dark:text-[#e4e1d9] shadow-2xs font-sans`}>
+      <div className={`flex items-center justify-between ${dense ? 'px-3 py-1.5' : 'px-4 py-2'} bg-[#e9e5dc] dark:bg-[#3a403a] border-b border-[#d8d3c8] dark:border-[#50564f] text-xs font-mono text-[#6d716a] dark:text-[#c2c5bc]`}>
         <div className="flex items-center gap-2">
           {isTerminalLang ? (
             <Terminal className="w-3.5 h-3.5 text-emerald-400" />
           ) : isWebLang ? (
-            <Globe className="w-3.5 h-3.5 text-blue-400" />
+            <Globe className="w-3.5 h-3.5 text-[#65766b] dark:text-[#aebcaf]" />
           ) : (
-            <Code2 className="w-3.5 h-3.5 text-blue-400" />
+            <Code2 className="w-3.5 h-3.5 text-[#65766b] dark:text-[#aebcaf]" />
           )}
-          <span className="font-semibold text-neutral-300">{language || 'text'}</span>
+          <span className="font-semibold text-[#545b55] dark:text-[#d9d7cf]">{language || 'text'}</span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -548,7 +548,7 @@ function CodeBlock({
           {isWebLang && (
             <button
               onClick={handlePreview}
-              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 font-sans text-[11px] font-medium transition-colors border border-blue-500/30 cursor-pointer"
+              className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#dce2d9] hover:bg-[#d1d9ce] dark:bg-[#4a554b] dark:hover:bg-[#566257] text-[#46554a] dark:text-[#e0e8df] font-sans text-[11px] font-medium transition-colors border border-[#bdc8bc] dark:border-[#687369] cursor-pointer"
               title="Preview in Browser panel"
             >
               <ExternalLink className="w-3 h-3" />
@@ -558,14 +558,14 @@ function CodeBlock({
 
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white font-sans text-[11px] font-medium transition-colors cursor-pointer"
+            className="flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#dedad1] hover:bg-[#d2cdc2] dark:bg-[#4a4f49] dark:hover:bg-[#565c55] text-[#525750] dark:text-[#e4e1d9] font-sans text-[11px] font-medium transition-colors cursor-pointer"
           >
             {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         </div>
       </div>
-      <pre className={`${dense ? "p-2.5 text-[11px] leading-snug" : "p-3.5 text-[12.5px] leading-relaxed"} font-mono overflow-x-auto text-neutral-200 scrollbar-thin max-w-full break-words whitespace-pre-wrap`}>
+      <pre className={`${dense ? "p-2.5 text-[11px] leading-snug" : "p-3.5 text-[12.5px] leading-relaxed"} font-mono overflow-x-auto text-[#343a35] dark:text-[#e4e1d9] scrollbar-thin max-w-full break-words whitespace-pre-wrap`}>
         <code>{code}</code>
       </pre>
     </div>

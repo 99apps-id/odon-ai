@@ -514,12 +514,10 @@ fn config_key(config: &McpServerConfig) -> String {
 async fn reconnect(config: &McpServerConfig) -> Result<Arc<Mutex<McpClient>>> {
     let client = timeout(MCP_REQUEST_TIMEOUT, async {
         match config.transport.to_ascii_lowercase().as_str() {
-            "stdio" => StdioMcpClient::connect(config)
-                .await
-                .map(McpClient::Stdio),
-            "sse" | "http+sse" | "http_sse" => SseMcpClient::connect(config)
-                .await
-                .map(McpClient::Sse),
+            "stdio" => StdioMcpClient::connect(config).await.map(McpClient::Stdio),
+            "sse" | "http+sse" | "http_sse" => {
+                SseMcpClient::connect(config).await.map(McpClient::Sse)
+            }
             other => Err(OdonError::Tool {
                 tool: "mcp".to_string(),
                 message: format!(
@@ -551,9 +549,7 @@ async fn call_server(config: &McpServerConfig, method: &str, params: Value) -> R
             None => {
                 let candidate = reconnect(config).await?;
                 let mut pool = client_pool().write().await;
-                pool.entry(key.clone())
-                    .or_insert_with(|| candidate)
-                    .clone()
+                pool.entry(key.clone()).or_insert_with(|| candidate).clone()
             }
         }
     };
@@ -765,7 +761,10 @@ impl Tool for McpRemoveServerTool {
         }
         let mut servers = load_mcp_servers();
         let before = servers.len();
-        if servers.iter().all(|server| server.id != sid && !server.name.eq_ignore_ascii_case(sid)) {
+        if servers
+            .iter()
+            .all(|server| server.id != sid && !server.name.eq_ignore_ascii_case(sid))
+        {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),
                 message: format!("No MCP server matched '{sid}'"),

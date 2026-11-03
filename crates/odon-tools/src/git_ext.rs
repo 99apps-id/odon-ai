@@ -25,7 +25,11 @@ fn clip_output(raw: &[u8]) -> (String, bool) {
 }
 
 async fn run_git(workspace: &str, args: &[&str]) -> Result<(i32, String, String)> {
-    if args.first().map(|arg| arg.starts_with('-')).unwrap_or(false) {
+    if args
+        .first()
+        .map(|arg| arg.starts_with('-'))
+        .unwrap_or(false)
+    {
         return Err(OdonError::Tool {
             tool: "git_ext".to_string(),
             message: "git subcommand must not start with '-'".to_string(),
@@ -985,7 +989,10 @@ impl Tool for GitHubWorkflowLogsTool {
         if archive.len() > 500 {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),
-                message: format!("GitHub logs archive has too many entries: {}", archive.len()),
+                message: format!(
+                    "GitHub logs archive has too many entries: {}",
+                    archive.len()
+                ),
             });
         }
 

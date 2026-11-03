@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::adapter::{ChannelAdapter, IncomingChannelMessage, extract_document_text, is_extractable_document};
+use crate::adapter::{
+    extract_document_text, is_extractable_document, ChannelAdapter, IncomingChannelMessage,
+};
 
 /// Telegram Bot API rejects messages longer than 4096 UTF-16 code units.
 const TELEGRAM_MAX_MESSAGE: usize = 4000;

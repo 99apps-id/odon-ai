@@ -247,7 +247,14 @@ impl Tool for AuditSearchTool {
     }
 }
 fn redact_sensitive_values(value: &mut Value) {
-    const SENSITIVE: [&str; 6] = ["key", "token", "secret", "password", "authorization", "credential"];
+    const SENSITIVE: [&str; 6] = [
+        "key",
+        "token",
+        "secret",
+        "password",
+        "authorization",
+        "credential",
+    ];
     match value {
         Value::Object(map) => {
             for (name, item) in map.iter_mut() {
@@ -414,17 +421,16 @@ impl Tool for SessionGetTool {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(&ctx.session_id);
-        let storage = ctx
-            .storage
-            .as_ref()
-            .ok_or_else(|| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Storage engine unavailable".to_string(),
-            })?;
-        let session = storage.get_session(session_id).map_err(|e| OdonError::Tool {
+        let storage = ctx.storage.as_ref().ok_or_else(|| OdonError::Tool {
             tool: self.name().to_string(),
-            message: format!("Session not found: {e}"),
+            message: "Storage engine unavailable".to_string(),
         })?;
+        let session = storage
+            .get_session(session_id)
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Session not found: {e}"),
+            })?;
         Ok(serde_json::to_value(session).unwrap_or(Value::Null))
     }
 }
@@ -461,17 +467,16 @@ impl Tool for SessionMessagesTool {
             .and_then(Value::as_u64)
             .unwrap_or(50)
             .clamp(1, 500) as usize;
-        let storage = ctx
-            .storage
-            .as_ref()
-            .ok_or_else(|| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Storage engine unavailable".to_string(),
-            })?;
-        let mut messages = storage.list_messages(session_id).map_err(|e| OdonError::Tool {
+        let storage = ctx.storage.as_ref().ok_or_else(|| OdonError::Tool {
             tool: self.name().to_string(),
-            message: e.to_string(),
+            message: "Storage engine unavailable".to_string(),
         })?;
+        let mut messages = storage
+            .list_messages(session_id)
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         let total = messages.len();
         let start = messages.len().saturating_sub(limit);
         let selected: Vec<Value> = messages
@@ -510,10 +515,7 @@ impl Tool for SessionDeleteTool {
         RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let session_id = args
-            .get("session_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let session_id = args.get("session_id").and_then(Value::as_str).unwrap_or("");
         let confirmed = args
             .get("confirm")
             .and_then(Value::as_bool)
@@ -536,17 +538,16 @@ impl Tool for SessionDeleteTool {
                 message: "Set confirm=true to delete this session".to_string(),
             });
         }
-        let storage = ctx
-            .storage
-            .as_ref()
-            .ok_or_else(|| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Storage engine unavailable".to_string(),
-            })?;
-        let deleted = storage.delete_session(session_id).map_err(|e| OdonError::Tool {
+        let storage = ctx.storage.as_ref().ok_or_else(|| OdonError::Tool {
             tool: self.name().to_string(),
-            message: e.to_string(),
+            message: "Storage engine unavailable".to_string(),
         })?;
+        let deleted = storage
+            .delete_session(session_id)
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
         if !deleted {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),
@@ -789,11 +790,7 @@ pub(crate) async fn daemon_json(
     body: Option<Value>,
     tool_name: &str,
 ) -> Result<(u16, Value)> {
-    let url = format!(
-        "{}{}",
-        daemon_base_url().trim_end_matches('/'),
-        path
-    );
+    let url = format!("{}{}", daemon_base_url().trim_end_matches('/'), path);
     let mut request = reqwest::Client::new()
         .request(method, &url)
         .timeout(std::time::Duration::from_secs(10));
@@ -837,7 +834,13 @@ impl Tool for AutomationLogsTool {
             .and_then(Value::as_u64)
             .unwrap_or(25)
             .clamp(1, 100) as usize;
-        let (status, value) = daemon_json(reqwest::Method::GET, "/api/automations/logs", None, self.name()).await?;
+        let (status, value) = daemon_json(
+            reqwest::Method::GET,
+            "/api/automations/logs",
+            None,
+            self.name(),
+        )
+        .await?;
         let mut logs: Vec<Value> = value
             .as_array()
             .cloned()
@@ -953,8 +956,7 @@ impl Tool for AutomationDeleteTool {
     fn name(&self) -> &str {
         "automation_delete"
     }
-    fn description(&self) -> &str
-    {
+    fn description(&self) -> &str {
         "Delete an automation workflow by ID"
     }
     fn parameters_schema(&self) -> Value {
@@ -1046,12 +1048,12 @@ impl Tool for McpAddServerTool {
             .map(String::from);
         let url = args.get("url").and_then(|u| u.as_str()).map(String::from);
         if let Some(url) = &url {
-            crate::net_guard::validate_url(url).await.map_err(|error| {
-                OdonError::Tool {
+            crate::net_guard::validate_url(url)
+                .await
+                .map_err(|error| OdonError::Tool {
                     tool: self.name().to_string(),
                     message: format!("Invalid or disallowed MCP SSE URL '{url}': {error}"),
-                }
-            })?;
+                })?;
         }
         let server_args = args.get("args").and_then(|a| a.as_array()).map(|items| {
             items
@@ -1116,9 +1118,7 @@ impl Tool for McpListServersTool {
                     if let Some(env) = env.as_object_mut() {
                         *env = env
                             .iter()
-                            .map(|(key, _)| {
-                                (key.clone(), Value::String("[REDACTED]".to_string()))
-                            })
+                            .map(|(key, _)| (key.clone(), Value::String("[REDACTED]".to_string())))
                             .collect();
                     }
                 }

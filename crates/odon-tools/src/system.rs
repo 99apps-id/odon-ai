@@ -403,7 +403,9 @@ impl Tool for DiskUsageTool {
                     truncated = true;
                     break;
                 }
-                let Ok(metadata) = entry.metadata() else { continue };
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
                 if metadata.is_dir() {
                     stack.push(entry.path());
                 } else if metadata.is_file() {

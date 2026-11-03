@@ -129,14 +129,12 @@ impl Tool for ProviderTestTool {
                 message: e.to_string(),
             })?;
         let mut request = if model.is_some() {
-            client
-                .post(validated.clone())
-                .json(&json!({
-                    "model": model,
-                    "messages": [{ "role": "user", "content": "ping" }],
-                    "max_tokens": 1,
-                    "stream": false
-                }))
+            client.post(validated.clone()).json(&json!({
+                "model": model,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 1,
+                "stream": false
+            }))
         } else {
             client.get(validated.clone())
         };
@@ -238,10 +236,7 @@ impl Tool for ProviderDeleteTool {
         // fall back to direct storage for CLI-only execution contexts.
         let daemon_deleted = daemon_json(
             reqwest::Method::DELETE,
-            &format!(
-                "/api/providers/config/{}",
-                provider_id
-            ),
+            &format!("/api/providers/config/{}", provider_id),
             None,
             self.name(),
         )

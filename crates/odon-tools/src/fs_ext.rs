@@ -1138,7 +1138,9 @@ impl Tool for EditorOpenTool {
         let _ = resolve_path(&ctx.workspace_root, rel)?;
         Err(OdonError::Tool {
             tool: self.name().to_string(),
-            message: format!("Desktop editor open integration is not connected yet ({rel}:{line}:{col})"),
+            message: format!(
+                "Desktop editor open integration is not connected yet ({rel}:{line}:{col})"
+            ),
         })
     }
 }

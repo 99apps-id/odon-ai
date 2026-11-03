@@ -1325,7 +1325,9 @@ pub struct ProcessWaitTool;
 
 #[async_trait]
 impl Tool for ProcessWaitTool {
-    fn name(&self) -> &str { "process_wait" }
+    fn name(&self) -> &str {
+        "process_wait"
+    }
     fn description(&self) -> &str {
         "Wait for a background task to finish and return its final output, exit code, and duration"
     }
@@ -1339,17 +1341,26 @@ impl Tool for ProcessWaitTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
 
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let task_id = args.get("task_id").and_then(Value::as_str).unwrap_or("");
         if task_id.is_empty() {
-            return Err(OdonError::Tool { tool: self.name().to_string(), message: "task_id is required".to_string() });
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "task_id is required".to_string(),
+            });
         }
-        let timeout = args.get("timeout_seconds").and_then(Value::as_u64).unwrap_or(300);
+        let timeout = args
+            .get("timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(300);
         let tasks = background_tasks().lock().await;
-        let task = tasks.get(task_id).cloned().ok_or_else(|| {
-            OdonError::Tool { tool: self.name().to_string(), message: format!("Background task '{task_id}' not found") }
+        let task = tasks.get(task_id).cloned().ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Background task '{task_id}' not found"),
         })?;
         drop(tasks);
 

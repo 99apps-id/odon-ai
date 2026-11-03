@@ -53,11 +53,10 @@ fn env_value(name: &str) -> String {
 // environment variables deliberately win so operators can rotate them without
 // rebuilding. Like every installed OAuth public client, these values are
 // extractable from the binary and must not be treated as server-side secrets.
-const STAMPED_ANTIGRAVITY_CLIENT_ID: &str =
-    match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_ID") {
-        Some(value) => value,
-        None => "",
-    };
+const STAMPED_ANTIGRAVITY_CLIENT_ID: &str = match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_ID") {
+    Some(value) => value,
+    None => "",
+};
 const STAMPED_ANTIGRAVITY_CLIENT_SECRET: &str =
     match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_SECRET") {
         Some(value) => value,

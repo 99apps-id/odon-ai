@@ -605,13 +605,13 @@ impl Tool for SshExecTool {
                 tool: self.name().to_string(),
                 message: "Missing 'profile_id' parameter".to_string(),
             })?;
-        let command = args
-            .get("command")
-            .and_then(Value::as_str)
-            .ok_or_else(|| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Missing 'command' parameter".to_string(),
-            })?;
+        let command =
+            args.get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "Missing 'command' parameter".to_string(),
+                })?;
         let timeout_secs = args
             .get("timeout_secs")
             .and_then(Value::as_u64)
@@ -650,12 +650,14 @@ impl Tool for SshProfileTestTool {
                 tool: self.name().to_string(),
                 message: "Missing 'profile_id' parameter".to_string(),
             })?;
-        let mut result =
-            run_ssh_command(profile_id, "echo odon-ssh-ok", 15, self.name()).await?;
+        let mut result = run_ssh_command(profile_id, "echo odon-ssh-ok", 15, self.name()).await?;
         if let Some(object) = result.as_object_mut() {
             object.insert(
                 "authenticated".into(),
-                json!(object.get("success").and_then(Value::as_bool).unwrap_or(false)),
+                json!(object
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)),
             );
             object.remove("command");
         }

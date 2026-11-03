@@ -668,12 +668,10 @@ impl Tool for PortScanTool {
             .unwrap_or(&default_ports);
         let mut ports = Vec::new();
         for value in ports_arr {
-            let port = value
-                .as_u64()
-                .ok_or_else(|| OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: "Each port must be an integer".to_string(),
-                })?;
+            let port = value.as_u64().ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Each port must be an integer".to_string(),
+            })?;
             if !(1..=65535).contains(&port) {
                 return Err(OdonError::Tool {
                     tool: self.name().to_string(),
@@ -1025,17 +1023,27 @@ async fn wait_for_cdp_websocket(port: u16) -> Result<url::Url> {
         })?;
 
     for _ in 0..40 {
-        if client.get(&base).send().await.map(|r| r.status().is_success()).unwrap_or(false) {
+        if client
+            .get(&base)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(125)).await;
     }
 
     let targets_url = format!("{}/json/new?{}", base, urlencoding::encode("about:blank"));
-    let body = client.get(&targets_url).send().await.map_err(|e| OdonError::Tool {
-        tool: "browser_click".to_string(),
-        message: format!("Failed to create CDP target: {e}"),
-    })?;
+    let body = client
+        .get(&targets_url)
+        .send()
+        .await
+        .map_err(|e| OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: format!("Failed to create CDP target: {e}"),
+        })?;
     let target: serde_json::Value = body.json().await.map_err(|e| OdonError::Tool {
         tool: "browser_click".to_string(),
         message: format!("Invalid CDP target response: {e}"),
@@ -1176,7 +1184,9 @@ impl Tool for BrowserDownloadTool {
             .and_then(Value::as_u64)
             .unwrap_or(120);
 
-        let download_dir = std::path::Path::new(&ctx.workspace_root).join(".odon").join("downloads");
+        let download_dir = std::path::Path::new(&ctx.workspace_root)
+            .join(".odon")
+            .join("downloads");
         std::fs::create_dir_all(&download_dir).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("Failed to create download directory: {e}"),

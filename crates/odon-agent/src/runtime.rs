@@ -47,6 +47,7 @@ const MAX_PARALLEL_TOOLS: usize = 4;
 
 /// Step cap for a delegated subagent run.
 const SUBAGENT_MAX_ITERATIONS: usize = 25;
+const MAX_CONCURRENT_SUBAGENTS: usize = 4;
 
 fn env_usize(name: &str, default: usize, min: usize, max: usize) -> usize {
     std::env::var(name)
@@ -356,6 +357,7 @@ impl AgentRuntime {
     /// not delegate further), and `iteration_cap` overrides the configured
     /// step cap for bounded child runs.
     #[allow(clippy::too_many_arguments)]
+    #[async_recursion::async_recursion]
     async fn execute_turn_inner(
         &self,
         session_id: &str,
@@ -1031,7 +1033,7 @@ impl AgentRuntime {
             .and_then(|v| v.as_str())
             .filter(|v| !v.trim().is_empty())
             .map(str::trim);
-        let parent_model_override = self.resolve_model_for_session(parent_session_id, model);
+        let parent_model_override = self.resolve_model_for_session(parent_session_id);
 
         let child_ids: Vec<String> = (0..tasks.len())
             .map(|index| format!("sub-{}-{}", uuid::Uuid::new_v4().simple(), index))
@@ -1081,6 +1083,7 @@ impl AgentRuntime {
         }
 
         let mut join_set = JoinSet::new();
+        let subagent_slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SUBAGENTS));
         let storage = self.storage.clone();
         let approval = self.approval.clone();
         let audit = self.audit.clone();
@@ -1094,6 +1097,8 @@ impl AgentRuntime {
             let parent_session_id = parent_session_id.to_string();
             let fallback_workspace = self.workspace_root.clone();
             let child_runtime = self.child_runtime(self.workspace_root.clone());
+            child_runtime.set_max_turn_iterations(SUBAGENT_MAX_ITERATIONS);
+            let subagent_slot = Arc::clone(&subagent_slots);
             let provider_name = provider_override.map(|v| v.to_string());
             let model_override = requested_model
                 .or(parent_model_override.as_deref())
@@ -1131,6 +1136,9 @@ impl AgentRuntime {
                             storage.clone(),
                         );
                         let workspace_root = worktree_path.to_string_lossy().to_string();
+                        let _slot = subagent_slot.acquire_owned().await.map_err(|_| {
+                            OdonError::Internal("subagent concurrency gate closed".to_string())
+                        })?;
                         match Box::pin(child_runtime.execute_child_turn(
                             &child_session_id,
                             task.clone(),
@@ -1195,7 +1203,8 @@ impl AgentRuntime {
             if let Some((_, _, output, _)) = completed_reports.iter().find(|item| item.0 == index) {
                 report["status"] = serde_json::json!("completed");
                 report["output"] = serde_json::json!(output);
-            } else if let Some((_, _, error)) = completed_errors.iter().find(|item| item.0 == index) {
+            } else if let Some((_, _, error)) = completed_errors.iter().find(|item| item.0 == index)
+            {
                 report["error"] = serde_json::json!(error);
             }
             reports.push(report);
@@ -1256,7 +1265,7 @@ impl AgentRuntime {
             .map(|s| vec![s.to_string()])
     }
 
-    fn resolve_model_for_session(&self, session_id: &str, fallback: &str) -> Option<String> {
+    fn resolve_model_for_session(&self, session_id: &str) -> Option<String> {
         self.storage
             .list_sessions()
             .ok()
@@ -1301,7 +1310,10 @@ impl AgentRuntime {
         if let Ok(messages) = storage.list_messages(parent_session_id) {
             for message in messages.into_iter().rev() {
                 for attachment in message.content.attachments {
-                    if !collected.iter().any(|a| a.data_base64 == attachment.data_base64) {
+                    if !collected
+                        .iter()
+                        .any(|a| a.data_base64 == attachment.data_base64)
+                    {
                         collected.push(attachment);
                     }
                 }
@@ -1370,18 +1382,9 @@ impl AgentRuntime {
         }
     }
 
-    async fn finalize_child_workspace(
-        child_session_id: &str,
-        storage: Arc<StorageEngine>,
-    ) {
-        let _ = storage.delete_session(child_session_id);
+    async fn finalize_child_workspace(child_session_id: &str, storage: Arc<StorageEngine>) {
         let _ = tokio::process::Command::new("git")
-            .args([
-                "worktree",
-                "remove",
-                "--force",
-                child_session_id,
-            ])
+            .args(["worktree", "remove", "--force", child_session_id])
             .output()
             .await;
     }
@@ -1761,9 +1764,7 @@ mod tests {
         let runtime = AgentRuntime::new(
             storage.clone(),
             Arc::new(ToolRegistry::new()),
-            Arc::new(ApprovalEngine::new(
-                odon_security::SecurityPolicy::default(),
-            )),
+            Arc::new(ApprovalEngine::new(odon_security::SecurityPolicy::default())),
             Arc::new(AuditLogger::new()),
             event_tx,
             "/tmp".to_string(),

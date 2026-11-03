@@ -638,7 +638,7 @@ impl Tool for FsGlobTool {
                     continue;
                 }
 
-                                if let Ok(file_type) = entry.file_type().await {
+                if let Ok(file_type) = entry.file_type().await {
                     if file_type.is_dir() {
                         queue.push(path);
                     } else if file_type.is_file()

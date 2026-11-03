@@ -59,10 +59,7 @@ impl Tool for ShellExecTool {
             .and_then(Value::as_u64)
             .unwrap_or(120)
             .clamp(1, 900);
-        let shell = args
-            .get("shell")
-            .and_then(Value::as_str)
-            .unwrap_or("auto");
+        let shell = args.get("shell").and_then(Value::as_str).unwrap_or("auto");
         let cwd = match args.get("cwd").and_then(Value::as_str) {
             Some(relative) if !relative.trim().is_empty() => {
                 crate::workspace_path::resolve_existing(&ctx.workspace_root, relative)?

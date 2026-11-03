@@ -2,26 +2,33 @@ use crate::registry::{Tool, ToolContext};
 use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
-const INDEX_VERSION: u32 = 1;
+const INDEX_VERSION: u32 = 2;
 const MAX_FILE_BYTES: u64 = 512 * 1024;
 const MAX_INDEXED_FILES: usize = 20_000;
 const CHUNK_LINES: usize = 40;
 const CHUNK_OVERLAP: usize = 5;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct CodeIndex {
-    version: u32,
-    root: String,
-    generated_at: u64,
-    files: usize,
-    chunks: Vec<CodeChunk>,
+#[derive(Debug)]
+struct IndexedFile {
+    path: String,
+    modified_unix_ns: i64,
+    bytes: i64,
+}
+
+#[derive(Debug, Default)]
+struct IndexUpdate {
+    indexed_files: usize,
+    indexed_chunks: usize,
+    changed_files: usize,
+    removed_files: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,50 +98,22 @@ impl Tool for CodeIndexTool {
             );
         }
 
-        let mut chunks = Vec::new();
-        let mut indexed_files = 0usize;
-        for file in files {
-            let metadata = match fs::metadata(&file) {
-                Ok(metadata) if metadata.len() <= MAX_FILE_BYTES => metadata,
-                _ => continue,
-            };
-            if !metadata.is_file() {
-                continue;
-            }
-            let Ok(content) = fs::read_to_string(&file) else {
-                continue;
-            };
-            if content.contains('\0') {
-                continue;
-            }
-            let relative = file.strip_prefix(&workspace).unwrap_or(&file);
-            chunks.extend(chunk_source(&path_for_output(relative), &content));
-            indexed_files += 1;
-        }
-
-        let index = CodeIndex {
-            version: INDEX_VERSION,
-            root: path_for_output(root.strip_prefix(&workspace).unwrap_or(&root)),
-            generated_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            files: indexed_files,
-            chunks,
-        };
         let index_path = index_path(&workspace);
         if let Some(parent) = index_path.parent() {
             fs::create_dir_all(parent).map_err(|e| io_error(self.name(), e))?;
         }
-        let encoded = serde_json::to_vec(&index).map_err(|e| tool_message(self.name(), e))?;
-        fs::write(&index_path, encoded).map_err(|e| io_error(self.name(), e))?;
+        let mut connection = open_index(&index_path, self.name())?;
+        let root_name = path_for_output(root.strip_prefix(&workspace).unwrap_or(&root));
+        let update = update_index(&mut connection, &workspace, &root, &root_name, files)?;
 
         Ok(json!({
             "index": path_for_output(index_path.strip_prefix(&workspace).unwrap_or(&index_path)),
-            "root": index.root,
-            "files": index.files,
-            "chunks": index.chunks.len(),
-            "version": index.version
+            "root": root_name,
+            "files": update.indexed_files,
+            "chunks": update.indexed_chunks,
+            "changed_files": update.changed_files,
+            "removed_files": update.removed_files,
+            "version": INDEX_VERSION
         }))
     }
 }
@@ -187,39 +166,25 @@ impl Tool for CodeSearchTool {
             .map(str::to_lowercase);
 
         let index_path = index_path(&workspace);
-        let bytes = fs::read(&index_path).map_err(|_| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "code index not found; run code_index first".to_string(),
-        })?;
-        let index: CodeIndex =
-            serde_json::from_slice(&bytes).map_err(|e| tool_message(self.name(), e))?;
-        if index.version != INDEX_VERSION {
-            return tool_error(
-                self.name(),
-                "code index version is stale; run code_index again".to_string(),
-            );
+        if !index_path.is_file() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "code index not found; run code_index first".to_string(),
+            });
         }
-
-        let query_terms = unique_terms(query);
-        if query_terms.is_empty() {
-            return tool_error(self.name(), "query has no searchable terms".to_string());
-        }
-        let candidates = index
-            .chunks
-            .iter()
-            .filter(|chunk| {
-                path_filter
-                    .as_ref()
-                    .map(|filter| chunk.path.to_lowercase().contains(filter))
-                    .unwrap_or(true)
-            })
-            .collect::<Vec<_>>();
-        let results = rank_chunks(query, &query_terms, &candidates, max_results);
+        let connection = open_index(&index_path, self.name())?;
+        let (index_root, indexed_files, results) = search_index(
+            &connection,
+            query,
+            path_filter.as_deref(),
+            max_results,
+            self.name(),
+        )?;
 
         Ok(json!({
             "query": query,
-            "index_root": index.root,
-            "indexed_files": index.files,
+            "index_root": index_root,
+            "indexed_files": indexed_files,
             "matches": results.len(),
             "results": results
         }))
@@ -255,7 +220,263 @@ fn index_path(workspace: &Path) -> PathBuf {
     workspace
         .join(".odon")
         .join("cache")
-        .join("code-index.json")
+        .join("code-index.sqlite3")
+}
+
+fn database_error(tool: &str, error: rusqlite::Error) -> OdonError {
+    OdonError::Tool {
+        tool: tool.to_string(),
+        message: format!("code index database error: {error}"),
+    }
+}
+
+fn open_index(path: &Path, tool: &str) -> Result<Connection> {
+    let connection = Connection::open(path).map_err(|error| database_error(tool, error))?;
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             CREATE TABLE IF NOT EXISTS index_meta (
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS indexed_files (
+                 path TEXT PRIMARY KEY,
+                 modified_unix_ns INTEGER NOT NULL,
+                 bytes INTEGER NOT NULL
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks USING fts5(
+                 path UNINDEXED,
+                 start_line UNINDEXED,
+                 end_line UNINDEXED,
+                 scope,
+                 snippet,
+                 tokenize = 'unicode61 tokenchars _'
+             );",
+        )
+        .map_err(|error| database_error(tool, error))?;
+    Ok(connection)
+}
+
+fn file_metadata(path: &Path, relative: String) -> Option<IndexedFile> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let modified_unix_ns = metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos()
+        .min(i64::MAX as u128) as i64;
+    Some(IndexedFile {
+        path: relative,
+        modified_unix_ns,
+        bytes: metadata.len().min(i64::MAX as u64) as i64,
+    })
+}
+
+fn delete_file_chunks(transaction: &Transaction<'_>, path: &str, tool: &str) -> Result<()> {
+    transaction
+        .execute("DELETE FROM code_chunks WHERE path = ?1", params![path])
+        .map_err(|error| database_error(tool, error))?;
+    transaction
+        .execute("DELETE FROM indexed_files WHERE path = ?1", params![path])
+        .map_err(|error| database_error(tool, error))?;
+    Ok(())
+}
+
+fn update_index(
+    connection: &mut Connection,
+    workspace: &Path,
+    root: &Path,
+    root_name: &str,
+    files: Vec<PathBuf>,
+) -> Result<IndexUpdate> {
+    let tool = "code_index";
+    let transaction = connection
+        .transaction()
+        .map_err(|error| database_error(tool, error))?;
+    let previous_root: Option<String> = transaction
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'root'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| database_error(tool, error))?;
+    if previous_root
+        .as_deref()
+        .is_some_and(|value| value != root_name)
+    {
+        transaction
+            .execute_batch("DELETE FROM code_chunks; DELETE FROM indexed_files;")
+            .map_err(|error| database_error(tool, error))?;
+    }
+
+    let mut seen = HashSet::new();
+    let mut changed_files = 0usize;
+    for file in files {
+        let relative = path_for_output(file.strip_prefix(workspace).unwrap_or(&file));
+        let Some(indexed) = file_metadata(&file, relative.clone()) else {
+            continue;
+        };
+        seen.insert(relative.clone());
+        let unchanged = transaction
+            .query_row(
+                "SELECT modified_unix_ns = ?2 AND bytes = ?3 FROM indexed_files WHERE path = ?1",
+                params![&relative, indexed.modified_unix_ns, indexed.bytes],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()
+            .map_err(|error| database_error(tool, error))?
+            .unwrap_or(false);
+        if unchanged {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&file) else {
+            delete_file_chunks(&transaction, &relative, tool)?;
+            continue;
+        };
+        if content.contains('\0') {
+            continue;
+        }
+        delete_file_chunks(&transaction, &relative, tool)?;
+        for chunk in chunk_source(&relative, &content) {
+            transaction
+                .execute(
+                    "INSERT INTO code_chunks(path, start_line, end_line, scope, snippet)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        chunk.path,
+                        chunk.start_line as i64,
+                        chunk.end_line as i64,
+                        chunk.scope,
+                        chunk.content
+                    ],
+                )
+                .map_err(|error| database_error(tool, error))?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO indexed_files(path, modified_unix_ns, bytes) VALUES (?1, ?2, ?3)",
+                params![indexed.path, indexed.modified_unix_ns, indexed.bytes],
+            )
+            .map_err(|error| database_error(tool, error))?;
+        changed_files += 1;
+    }
+
+    let existing = {
+        let mut statement = transaction
+            .prepare("SELECT path FROM indexed_files")
+            .map_err(|error| database_error(tool, error))?;
+        let paths = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| database_error(tool, error))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| database_error(tool, error))?;
+        paths
+    };
+    let mut removed_files = 0usize;
+    for path in existing {
+        let absolute = workspace.join(Path::new(&path));
+        if !seen.contains(&path) || !absolute.starts_with(root) {
+            delete_file_chunks(&transaction, &path, tool)?;
+            removed_files += 1;
+        }
+    }
+    transaction
+        .execute(
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('version', ?1), ('root', ?2)",
+            params![INDEX_VERSION.to_string(), root_name],
+        )
+        .map_err(|error| database_error(tool, error))?;
+    let indexed_files = transaction
+        .query_row("SELECT COUNT(*) FROM indexed_files", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| database_error(tool, error))? as usize;
+    let indexed_chunks = transaction
+        .query_row("SELECT COUNT(*) FROM code_chunks", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| database_error(tool, error))? as usize;
+    transaction
+        .commit()
+        .map_err(|error| database_error(tool, error))?;
+    Ok(IndexUpdate {
+        indexed_files,
+        indexed_chunks,
+        changed_files,
+        removed_files,
+    })
+}
+
+fn fts_query(query: &str) -> String {
+    unique_terms(query)
+        .into_iter()
+        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+fn search_index(
+    connection: &Connection,
+    query: &str,
+    path_filter: Option<&str>,
+    limit: usize,
+    tool: &str,
+) -> Result<(String, usize, Vec<SearchResult>)> {
+    let match_query = fts_query(query);
+    if match_query.is_empty() {
+        return tool_error(tool, "query has no searchable terms".to_string());
+    }
+    let index_root = connection
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'root'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| database_error(tool, error))?
+        .ok_or_else(|| OdonError::Tool {
+            tool: tool.to_string(),
+            message: "code index is empty; run code_index first".to_string(),
+        })?;
+    let indexed_files = connection
+        .query_row("SELECT COUNT(*) FROM indexed_files", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| database_error(tool, error))? as usize;
+    let filter = path_filter.unwrap_or("").to_lowercase();
+    let pattern = format!("%{filter}%");
+    let mut statement = connection
+        .prepare(
+            "SELECT path, start_line, end_line, scope, snippet,
+                    -bm25(code_chunks, 0.0, 0.0, 0.0, 0.8, 1.0) AS score
+             FROM code_chunks
+             WHERE code_chunks MATCH ?1
+               AND (?2 = '' OR lower(path) LIKE ?3)
+             ORDER BY bm25(code_chunks, 0.0, 0.0, 0.0, 0.8, 1.0)
+             LIMIT ?4",
+        )
+        .map_err(|error| database_error(tool, error))?;
+    let results = statement
+        .query_map(params![match_query, filter, pattern, limit as i64], |row| {
+            Ok(SearchResult {
+                path: row.get(0)?,
+                start_line: row.get::<_, i64>(1)? as usize,
+                end_line: row.get::<_, i64>(2)? as usize,
+                scope: row.get(3)?,
+                snippet: row.get(4)?,
+                score: row.get(5)?,
+            })
+        })
+        .map_err(|error| database_error(tool, error))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|error| database_error(tool, error))?;
+    Ok((index_root, indexed_files, results))
 }
 
 fn collect_source_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
@@ -431,85 +652,6 @@ fn tokenize(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn rank_chunks(
-    query: &str,
-    query_terms: &[String],
-    chunks: &[&CodeChunk],
-    limit: usize,
-) -> Vec<SearchResult> {
-    if chunks.is_empty() {
-        return Vec::new();
-    }
-    let documents = chunks
-        .iter()
-        .map(|chunk| tokenize(&format!("{} {}", chunk.path, chunk.content)))
-        .collect::<Vec<_>>();
-    let average_length =
-        documents.iter().map(Vec::len).sum::<usize>() as f64 / documents.len() as f64;
-    let mut document_frequency = HashMap::<&str, usize>::new();
-    for term in query_terms {
-        document_frequency.insert(
-            term,
-            documents
-                .iter()
-                .filter(|tokens| tokens.contains(term))
-                .count(),
-        );
-    }
-
-    let lowered_query = query.to_lowercase();
-    let mut scored = chunks
-        .iter()
-        .zip(documents.iter())
-        .filter_map(|(chunk, tokens)| {
-            let mut frequencies = HashMap::<&str, usize>::new();
-            for token in tokens {
-                *frequencies.entry(token).or_default() += 1;
-            }
-            let mut score = 0.0f64;
-            for term in query_terms {
-                let frequency = *frequencies.get(term.as_str()).unwrap_or(&0) as f64;
-                if frequency == 0.0 {
-                    continue;
-                }
-                let df = *document_frequency.get(term.as_str()).unwrap_or(&0) as f64;
-                let idf = (((chunks.len() as f64 - df + 0.5) / (df + 0.5)) + 1.0).ln();
-                let normalization = frequency
-                    + 1.2 * (1.0 - 0.75 + 0.75 * tokens.len() as f64 / average_length.max(1.0));
-                score += idf * (frequency * 2.2) / normalization;
-            }
-            let lowered_content = chunk.content.to_lowercase();
-            let lowered_path = chunk.path.to_lowercase();
-            if lowered_content.contains(&lowered_query) {
-                score += 8.0;
-            }
-            if lowered_path.contains(&lowered_query) {
-                score += 6.0;
-            }
-            score += query_terms
-                .iter()
-                .filter(|term| lowered_path.contains(term.as_str()))
-                .count() as f64
-                * 1.5;
-            (score > 0.0).then(|| SearchResult {
-                path: chunk.path.clone(),
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-                score: (score * 1000.0).round() / 1000.0,
-                scope: chunk.scope.clone(),
-                snippet: chunk.content.chars().take(4000).collect(),
-            })
-        })
-        .collect::<Vec<_>>();
-    scored.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    scored.truncate(limit);
-    scored
-}
-
 fn path_for_output(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -528,16 +670,10 @@ fn io_error(tool: &str, error: std::io::Error) -> OdonError {
     }
 }
 
-fn tool_message(tool: &str, error: impl std::fmt::Display) -> OdonError {
-    OdonError::Tool {
-        tool: tool.to_string(),
-        message: error.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
 
     #[test]
     fn chunks_preserve_line_ranges_and_scope() {
@@ -551,24 +687,45 @@ mod tests {
     }
 
     #[test]
-    fn exact_and_path_matches_rank_first() {
-        let exact = CodeChunk {
-            path: "src/session.rs".into(),
-            start_line: 1,
-            end_line: 1,
-            scope: None,
-            content: "fn switch_session() {}".into(),
-        };
-        let loose = CodeChunk {
-            path: "src/other.rs".into(),
-            start_line: 1,
-            end_line: 1,
-            scope: None,
-            content: "session state and switch logic".into(),
-        };
-        let terms = unique_terms("switch_session");
-        let results = rank_chunks("switch_session", &terms, &[&loose, &exact], 10);
-        assert_eq!(results[0].path, "src/session.rs");
+    fn fts_query_preserves_symbols_as_searchable_terms() {
+        assert_eq!(fts_query("switch_session"), "\"switch_session\"*");
+        assert_eq!(
+            fts_query("spawn child-agent"),
+            "\"spawn\"* OR \"child\"* OR \"agent\"*"
+        );
+    }
+
+    #[test]
+    fn sqlite_index_updates_and_removes_files_incrementally() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("odon-fts-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("session_pool.rs");
+        fs::write(&source, "pub fn spawn_child() { /* session pool */ }").unwrap();
+        let database = root.join("index.sqlite3");
+        let mut connection = open_index(&database, "test").unwrap();
+
+        let first = update_index(&mut connection, &root, &root, ".", vec![source.clone()]).unwrap();
+        assert_eq!(first.changed_files, 1);
+        let (_, _, matches) = search_index(&connection, "spawn child", None, 10, "test").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, "session_pool.rs");
+
+        let unchanged =
+            update_index(&mut connection, &root, &root, ".", vec![source.clone()]).unwrap();
+        assert_eq!(unchanged.changed_files, 0);
+
+        fs::remove_file(&source).unwrap();
+        let removed = update_index(&mut connection, &root, &root, ".", vec![]).unwrap();
+        assert_eq!(removed.removed_files, 1);
+        let (_, _, matches) = search_index(&connection, "spawn", None, 10, "test").unwrap();
+        assert!(matches.is_empty());
+
+        drop(connection);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

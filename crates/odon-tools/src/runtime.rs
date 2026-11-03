@@ -9,7 +9,9 @@ pub struct DevServerStatusTool;
 
 #[async_trait]
 impl Tool for DevServerStatusTool {
-    fn name(&self) -> &str { "dev_server_status" }
+    fn name(&self) -> &str {
+        "dev_server_status"
+    }
     fn description(&self) -> &str {
         "Check whether candidate dev server ports are open and responding"
     }
@@ -22,13 +24,27 @@ impl Tool for DevServerStatusTool {
             }
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
 
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let host = args.get("host").and_then(Value::as_str).unwrap_or("127.0.0.1");
-        let ports = args.get("ports").and_then(Value::as_array).map(|items| {
-            items.iter().filter_map(|item| item.as_u64()).filter(|port| *port > 0 && *port <= 65535).map(|port| port as u16).collect::<Vec<_>>()
-        }).unwrap_or_else(|| vec![3000, 5173, 8080, 8000, 4000, 4200, 5000, 8888, 9000]);
+        let host = args
+            .get("host")
+            .and_then(Value::as_str)
+            .unwrap_or("127.0.0.1");
+        let ports = args
+            .get("ports")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_u64())
+                    .filter(|port| *port > 0 && *port <= 65535)
+                    .map(|port| port as u16)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![3000, 5173, 8080, 8000, 4000, 4200, 5000, 8888, 9000]);
 
         let mut results = Vec::new();
         for port in ports {
@@ -43,17 +59,24 @@ pub struct BrowserStatusTool;
 
 #[async_trait]
 impl Tool for BrowserStatusTool {
-    fn name(&self) -> &str { "browser_status" }
+    fn name(&self) -> &str {
+        "browser_status"
+    }
     fn description(&self) -> &str {
         "Report available browser automation capabilities on this host"
     }
     fn parameters_schema(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
 
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let has_chrome = has_executable("chrome") || has_executable("google-chrome") || has_executable("chromium") || has_executable("chromium-browser");
+        let has_chrome = has_executable("chrome")
+            || has_executable("google-chrome")
+            || has_executable("chromium")
+            || has_executable("chromium-browser");
         let has_edge = has_executable("msedge");
         let (live_sessions, persisted_sessions) =
             crate::browser_session::session_status_counts(&ctx.workspace_root).await;
@@ -70,9 +93,23 @@ impl Tool for BrowserStatusTool {
 }
 
 fn is_port_open(host: &str, port: u16) -> bool {
-    TcpStream::connect_timeout(&std::net::SocketAddr::new(host.parse().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)), port), std::time::Duration::from_millis(200)).is_ok()
+    TcpStream::connect_timeout(
+        &std::net::SocketAddr::new(
+            host.parse()
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            port,
+        ),
+        std::time::Duration::from_millis(200),
+    )
+    .is_ok()
 }
 
 fn has_executable(name: &str) -> bool {
-    std::process::Command::new(name).arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+    std::process::Command::new(name)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }

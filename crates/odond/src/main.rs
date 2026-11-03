@@ -964,9 +964,7 @@ fn build_oauth_provider(
             headers.insert("x-app", reqwest::header::HeaderValue::from_static("cli"));
             headers.insert(
                 reqwest::header::USER_AGENT,
-                reqwest::header::HeaderValue::from_static(
-                    "claude-cli/2.1.280 (external, sdk-cli)",
-                ),
+                reqwest::header::HeaderValue::from_static("claude-cli/2.1.280 (external, sdk-cli)"),
             );
             Some(Arc::new(
                 AnthropicProvider::with_bearer_auth(
@@ -1318,7 +1316,10 @@ fn workspace_artifact_path(state: &AppState, candidate: &str) -> Option<PathBuf>
     }
 }
 
-async fn relay_artifact_file(state: &AppState, artifact_id: &str) -> Option<(String, String, Vec<u8>)> {
+async fn relay_artifact_file(
+    state: &AppState,
+    artifact_id: &str,
+) -> Option<(String, String, Vec<u8>)> {
     let artifact = state.storage.get_artifact(artifact_id).ok()?;
     match artifact.payload {
         ArtifactPayload::Image {
@@ -1352,7 +1353,10 @@ async fn relay_artifact_file(state: &AppState, artifact_id: &str) -> Option<(Str
     }
 }
 
-async fn collect_relay_attachments(state: &AppState, turn: &Message) -> Vec<(String, String, Vec<u8>)> {
+async fn collect_relay_attachments(
+    state: &AppState,
+    turn: &Message,
+) -> Vec<(String, String, Vec<u8>)> {
     let mut files = Vec::new();
     for attachment in turn.content.attachments.iter() {
         if let Ok(bytes) = base64::Engine::decode(
@@ -1388,7 +1392,13 @@ async fn send_relay_attachments(
                 match relay {
                     Some(relay) => {
                         relay
-                            .send_relay_file(sender, file_name, mime_type, bytes.clone(), Some(caption))
+                            .send_relay_file(
+                                sender,
+                                file_name,
+                                mime_type,
+                                bytes.clone(),
+                                Some(caption),
+                            )
                             .await
                     }
                     None => Ok(()),
@@ -1399,12 +1409,20 @@ async fn send_relay_attachments(
                 match cloud {
                     Some(cloud) => {
                         cloud
-                            .send_relay_file(sender, file_name, mime_type, bytes.clone(), Some(caption))
+                            .send_relay_file(
+                                sender,
+                                file_name,
+                                mime_type,
+                                bytes.clone(),
+                                Some(caption),
+                            )
                             .await
                     }
                     None => {
-                        let data =
-                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+                        let data = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            bytes,
+                        );
                         state
                             .whatsapp_bridge
                             .send_media(sender, file_name, mime_type, &data, Some(caption))
@@ -1473,10 +1491,7 @@ fn format_pending_approvals(requests: &[odon_security::ApprovalRequest]) -> Stri
     for request in requests {
         lines.push(format!(
             "- `{}` `{}` (Tier {})\n  {}",
-            request.id,
-            request.tool_name,
-            request.risk_tier as u8,
-            request.description
+            request.id, request.tool_name, request.risk_tier as u8, request.description
         ));
     }
     lines.push("Use `/approve <id-prefix>` or `/deny <id-prefix>`.".to_string());
@@ -1496,9 +1511,7 @@ async fn resolve_relay_approval(
         .filter(|request| request.id.starts_with(id_prefix))
         .collect();
     match matches.len() {
-        0 => format!(
-            "No matching pending approval for `{id_prefix}`. Use /approvals."
-        ),
+        0 => format!("No matching pending approval for `{id_prefix}`. Use /approvals."),
         1 => {
             let request = matches[0];
             let decision = if approved {
@@ -1508,14 +1521,15 @@ async fn resolve_relay_approval(
                     reason: "Rejected from relay".to_string(),
                 }
             };
-            let resolved = state
-                .approval
-                .submit_decision(&request.id, decision)
-                .await;
+            let resolved = state.approval.submit_decision(&request.id, decision).await;
             if resolved {
                 format!(
                     "{} approval `{}` for `{}`.",
-                    if approved { "✅ Approved" } else { "❌ Denied" },
+                    if approved {
+                        "✅ Approved"
+                    } else {
+                        "❌ Denied"
+                    },
                     request.id,
                     request.tool_name
                 )
@@ -1535,16 +1549,11 @@ async fn relay_models_text(state: &AppState, session_id: &str) -> String {
     )];
     let configs = state.storage.list_provider_configs().unwrap_or_default();
     for config in configs {
-        let models =
-            serde_json::from_str::<Vec<String>>(&config.models_json).unwrap_or_default();
+        let models = serde_json::from_str::<Vec<String>>(&config.models_json).unwrap_or_default();
         if models.is_empty() {
             continue;
         }
-        lines.push(format!(
-            "- `{}`: {}",
-            config.provider_id,
-            models.join(", ")
-        ));
+        lines.push(format!("- `{}`: {}", config.provider_id, models.join(", ")));
     }
     lines.push("Use `/model provider::model-id` to switch this relay session.".to_string());
     let _ = session_id;
@@ -1554,8 +1563,12 @@ async fn relay_models_text(state: &AppState, session_id: &str) -> String {
 async fn relay_status_text(state: &AppState, session_id: &str) -> String {
     let active = state.active_turns.read().await.contains_key(session_id);
     let pending = state.approval.list_pending().await.len();
-    let telegram = state.telegram_online.load(std::sync::atomic::Ordering::SeqCst);
-    let whatsapp = state.whatsapp_online.load(std::sync::atomic::Ordering::SeqCst);
+    let telegram = state
+        .telegram_online
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let whatsapp = state
+        .whatsapp_online
+        .load(std::sync::atomic::Ordering::SeqCst);
     format!(
         "✅ ODON online\nSession: `{session_id}`\nActive turn: {}\nPending approvals: {pending}\nTelegram: {}\nWhatsApp: {}",
         if active { "running" } else { "idle" },
@@ -1594,8 +1607,7 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             .unwrap_or_default();
 
         let reply = match command.as_str() {
-            "/start" | "/help" => {
-                "🤖 *ODON relay commands*\n\n\
+            "/start" | "/help" => "🤖 *ODON relay commands*\n\n\
                  /new — new session\n\
                  /models — list configured models\n\
                  /model provider::model — switch model\n\
@@ -1605,8 +1617,7 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                  /approve <id-prefix> — approve\n\
                  /deny <id-prefix> — deny\n\
                  /status — relay status"
-                    .to_string()
-            }
+                .to_string(),
             "/new" | "/reset" => {
                 let model = state.relay_model.read().await.clone();
                 let session = Session::new(
@@ -1766,7 +1777,8 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             (text, Vec::new())
         }
     };
-    if let Err(error) = send_relay_text(&state, &message.channel, &message.sender_id, &reply).await {
+    if let Err(error) = send_relay_text(&state, &message.channel, &message.sender_id, &reply).await
+    {
         tracing::error!("Failed to deliver {} reply: {error}", message.channel);
     }
     if !attachments.is_empty() {
@@ -2231,7 +2243,8 @@ async fn main() -> anyhow::Result<()> {
                             let text = format!(
                                 "🔒 *Approval required*\n\nID: `{approval_id}`\nTool: `{tool_name}`\nRisk: Tier {risk_tier}\n\n{description}\n\nReply:\n/approve {approval_id}\n/deny {approval_id}"
                             );
-                            let _ = send_relay_text(&approval_state, &channel, &sender, &text).await;
+                            let _ =
+                                send_relay_text(&approval_state, &channel, &sender, &text).await;
                         }
                     }
                 });
@@ -2297,10 +2310,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .route("/api/workspaces/browse", get(browse_workspaces))
                 .route("/api/artifacts/{id}", get(get_artifact))
-                .route(
-                    "/api/artifacts/{id}/versions",
-                    get(list_artifact_versions),
-                )
+                .route("/api/artifacts/{id}/versions", get(list_artifact_versions))
                 .route(
                     "/api/artifacts/{id}/versions/{version}",
                     get(get_artifact_version),
@@ -3666,17 +3676,30 @@ struct ArtifactExportQuery {
 fn artifact_export_file_name(title: &str, extension: &str) -> String {
     let safe: String = title
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') { ch } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim()
         .replace(' ', "-")
         .trim_matches('-')
         .to_string();
-    let base = if safe.is_empty() { "artifact".to_string() } else { safe };
+    let base = if safe.is_empty() {
+        "artifact".to_string()
+    } else {
+        safe
+    };
     format!("{base}.{extension}")
 }
 
-fn artifact_export_content(artifact: &odon_core::Artifact, format: &str) -> Option<(String, String)> {
+fn artifact_export_content(
+    artifact: &odon_core::Artifact,
+    format: &str,
+) -> Option<(String, String)> {
     match format {
         "json" => Some((
             serde_json::to_string_pretty(artifact).ok()?,
@@ -3725,7 +3748,9 @@ async fn export_artifact(
         return (
             StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "application/json")],
-            json!({ "error": "Artifact not found" }).to_string().into_bytes(),
+            json!({ "error": "Artifact not found" })
+                .to_string()
+                .into_bytes(),
         )
             .into_response();
     };
@@ -4569,11 +4594,7 @@ async fn ws_terminal_handler(
             std::path::Path::new(&state.workspace_root).join(candidate)
         };
         if let Err(reason) = ensure_allowed_path(&state, &abs).await {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": reason })),
-            )
-                .into_response();
+            return (StatusCode::FORBIDDEN, Json(json!({ "error": reason }))).into_response();
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -5324,7 +5345,10 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
         .unwrap_or_default();
 
     let is_html = content_type.to_ascii_lowercase().contains("text/html")
-        || body.trim_start().to_ascii_lowercase().starts_with("<!doctype html")
+        || body
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("<!doctype html")
         || body.trim_start().to_ascii_lowercase().starts_with("<html");
     let preview_html = if is_html {
         inject_preview_base(&body, &final_url)

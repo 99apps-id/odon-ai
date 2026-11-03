@@ -1,5 +1,7 @@
 use crate::registry::{Tool, ToolContext};
-use crate::shell_ext::{background_tasks, BackgroundTask, MAX_BACKGROUND_BUFFER, RUNNING_EXIT_CODE};
+use crate::shell_ext::{
+    background_tasks, BackgroundTask, MAX_BACKGROUND_BUFFER, RUNNING_EXIT_CODE,
+};
 use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
@@ -12,7 +14,9 @@ pub struct DevServerStartTool;
 
 #[async_trait]
 impl Tool for DevServerStartTool {
-    fn name(&self) -> &str { "dev_server_start" }
+    fn name(&self) -> &str {
+        "dev_server_start"
+    }
     fn description(&self) -> &str {
         "Start a dev server command in the background and return a task id you can use with dev_server_logs and dev_server_stop"
     }
@@ -26,7 +30,9 @@ impl Tool for DevServerStartTool {
             "required": ["command"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
 
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let cmd_str = args.get("command").and_then(|c| c.as_str()).unwrap_or("");
@@ -143,7 +149,9 @@ pub struct DevServerStopTool;
 
 #[async_trait]
 impl Tool for DevServerStopTool {
-    fn name(&self) -> &str { "dev_server_stop" }
+    fn name(&self) -> &str {
+        "dev_server_stop"
+    }
     fn description(&self) -> &str {
         "Stop a running dev server by task id"
     }
@@ -156,13 +164,18 @@ impl Tool for DevServerStopTool {
             "required": ["task_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier2SystemMutating }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier2SystemMutating
+    }
 
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let task_id = args.get("task_id").and_then(|value| value.as_str()).ok_or_else(|| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Missing 'task_id' argument".to_string(),
-        })?;
+        let task_id = args
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'task_id' argument".to_string(),
+            })?;
 
         let tasks = background_tasks().lock().await;
         let task = tasks.get(task_id).cloned().ok_or_else(|| OdonError::Tool {
@@ -174,10 +187,13 @@ impl Tool for DevServerStopTool {
         let mut child_guard = task.child.lock().await;
         if let Some(mut child) = child_guard.take() {
             let killed = child.kill().await.is_ok();
-            task.exit_code.store(if killed { 0 } else { -1 }, Ordering::SeqCst);
+            task.exit_code
+                .store(if killed { 0 } else { -1 }, Ordering::SeqCst);
             Ok(json!({ "task_id": task_id, "pid": task.pid, "killed": killed }))
         } else {
-            Ok(json!({ "task_id": task_id, "pid": task.pid, "killed": false, "reason": "already exited" }))
+            Ok(
+                json!({ "task_id": task_id, "pid": task.pid, "killed": false, "reason": "already exited" }),
+            )
         }
     }
 }
@@ -186,7 +202,9 @@ pub struct DevServerLogsTool;
 
 #[async_trait]
 impl Tool for DevServerLogsTool {
-    fn name(&self) -> &str { "dev_server_logs" }
+    fn name(&self) -> &str {
+        "dev_server_logs"
+    }
     fn description(&self) -> &str {
         "Read the latest stdout/stderr logs from a running dev server task"
     }
@@ -201,13 +219,18 @@ impl Tool for DevServerLogsTool {
             "required": ["task_id"]
         })
     }
-    fn risk_tier(&self) -> RiskTier { RiskTier::Tier0ReadOnly }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier0ReadOnly
+    }
 
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
-        let task_id = args.get("task_id").and_then(|value| value.as_str()).ok_or_else(|| OdonError::Tool {
-            tool: self.name().to_string(),
-            message: "Missing 'task_id' argument".to_string(),
-        })?;
+        let task_id = args
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'task_id' argument".to_string(),
+            })?;
 
         let tasks = background_tasks().lock().await;
         let task = tasks.get(task_id).cloned().ok_or_else(|| OdonError::Tool {
@@ -216,13 +239,30 @@ impl Tool for DevServerLogsTool {
         })?;
         drop(tasks);
 
-        let stdout = task.stdout.lock().map(|guard| guard.clone()).unwrap_or_default();
-        let stderr = task.stderr.lock().map(|guard| guard.clone()).unwrap_or_default();
+        let stdout = task
+            .stdout
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        let stderr = task
+            .stderr
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
         let exit_code = task.exit_code.load(Ordering::SeqCst);
         let finished = exit_code != RUNNING_EXIT_CODE;
 
-        let tail = args.get("tail").and_then(|value| value.as_u64()).unwrap_or(8000) as usize;
-        let truncate = |text: String| if text.len() > tail { text[text.len() - tail..].to_string() } else { text };
+        let tail = args
+            .get("tail")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(8000) as usize;
+        let truncate = |text: String| {
+            if text.len() > tail {
+                text[text.len() - tail..].to_string()
+            } else {
+                text
+            }
+        };
 
         Ok(json!({
             "task_id": task_id,

@@ -149,9 +149,7 @@ fn binary_on_path(binary: &str) -> bool {
     // their standard install directories. Diagnostics must use the same
     // capability check or the desktop hides a working browser tool.
     let executable = match binary {
-        "chrome" | "google-chrome" | "chromium" => {
-            Some(("Google", "Chrome", "chrome.exe"))
-        }
+        "chrome" | "google-chrome" | "chromium" => Some(("Google", "Chrome", "chrome.exe")),
         "msedge" | "microsoft-edge" => Some(("Microsoft", "Edge", "msedge.exe")),
         _ => None,
     };
@@ -206,7 +204,8 @@ impl ToolRegistry {
             "websearch_news" | "search_news" | "news_search" | "news" => {
                 "web_search_news".to_string()
             }
-            "websearch_code" | "search_code" | "code_search" => "web_search_code".to_string(),
+            "websearch_code" | "search_code" => "web_search_code".to_string(),
+            "codesearch" | "code_search" => "code_search".to_string(),
             "fetch" | "http_get" | "curl" | "browse" => "web_fetch".to_string(),
             "readfile" | "read" | "fs_read" => "read_file".to_string(),
             "writefile" | "write" | "fs_write" => "write_file".to_string(),
@@ -286,7 +285,11 @@ impl ToolRegistry {
 
     /// Complete registry, including compatibility and host-gated tools.
     pub fn all_schemas(&self) -> Vec<ToolSchema> {
-        let mut schemas = self.tools.values().map(Self::schema_for).collect::<Vec<_>>();
+        let mut schemas = self
+            .tools
+            .values()
+            .map(Self::schema_for)
+            .collect::<Vec<_>>();
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
         schemas
     }

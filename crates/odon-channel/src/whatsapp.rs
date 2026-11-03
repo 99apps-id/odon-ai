@@ -14,7 +14,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::adapter::{ChannelAdapter, IncomingChannelMessage, extract_document_text, is_extractable_document};
+use crate::adapter::{
+    extract_document_text, is_extractable_document, ChannelAdapter, IncomingChannelMessage,
+};
 
 const MAX_MESSAGE: usize = 3500;
 const MAX_DOWNLOAD_BYTES: usize = 20 * 1024 * 1024;
@@ -232,12 +234,14 @@ impl WhatsAppChannel {
         mime_type: &str,
         bytes: Vec<u8>,
     ) -> Result<String> {
-        let token = self.access_token.as_ref().ok_or_else(|| {
-            OdonError::Channel("WhatsApp relay is not configured".to_string())
-        })?;
-        let phone_id = self.phone_number_id.as_ref().ok_or_else(|| {
-            OdonError::Channel("WhatsApp relay is not configured".to_string())
-        })?;
+        let token = self
+            .access_token
+            .as_ref()
+            .ok_or_else(|| OdonError::Channel("WhatsApp relay is not configured".to_string()))?;
+        let phone_id = self
+            .phone_number_id
+            .as_ref()
+            .ok_or_else(|| OdonError::Channel("WhatsApp relay is not configured".to_string()))?;
         let part = reqwest::multipart::Part::bytes(bytes)
             .file_name(file_name.to_string())
             .mime_str(mime_type)
@@ -280,12 +284,14 @@ impl WhatsAppChannel {
         media_id: &str,
         caption: Option<&str>,
     ) -> Result<()> {
-        let token = self.access_token.as_ref().ok_or_else(|| {
-            OdonError::Channel("WhatsApp relay is not configured".to_string())
-        })?;
-        let phone_id = self.phone_number_id.as_ref().ok_or_else(|| {
-            OdonError::Channel("WhatsApp relay is not configured".to_string())
-        })?;
+        let token = self
+            .access_token
+            .as_ref()
+            .ok_or_else(|| OdonError::Channel("WhatsApp relay is not configured".to_string()))?;
+        let phone_id = self
+            .phone_number_id
+            .as_ref()
+            .ok_or_else(|| OdonError::Channel("WhatsApp relay is not configured".to_string()))?;
         let recipient = clean_recipient(to);
         let kind = if mime_type.starts_with("image/") {
             "image"

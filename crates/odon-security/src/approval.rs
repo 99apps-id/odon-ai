@@ -454,9 +454,9 @@ impl ApprovalEngine {
                     &entry.request.parameters,
                 )),
                 // "Allow all" sticks for every tool in one workspace scope.
-                ApprovalDecision::ApprovedAll => Some(Self::wildcard_policy_key(
-                    &entry.request.parameters,
-                )),
+                ApprovalDecision::ApprovedAll => {
+                    Some(Self::wildcard_policy_key(&entry.request.parameters))
+                }
                 _ => None,
             };
             if let Some(key) = grant_key {
@@ -675,19 +675,14 @@ mod tests {
         ));
         engine.policy_path = tmp.join("approval-policies.json");
         engine.audit_path = tmp.join("approval-audit.jsonl");
-        engine.always_allowed =
-            Arc::new(RwLock::new(std::collections::HashSet::new()));
+        engine.always_allowed = Arc::new(RwLock::new(std::collections::HashSet::new()));
         (engine.with_events(tx), rx)
     }
 
-    async fn next_requested_id(
-        rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
-    ) -> String {
+    async fn next_requested_id(rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> String {
         loop {
             match rx.recv().await.unwrap() {
-                AgentEvent::ApprovalRequested { approval_id, .. } => {
-                    return approval_id
-                }
+                AgentEvent::ApprovalRequested { approval_id, .. } => return approval_id,
                 _ => continue,
             }
         }
@@ -711,9 +706,11 @@ mod tests {
             })
         };
         let id = next_requested_id(&mut rx).await;
-        assert!(engine
-            .submit_decision(&id, ApprovalDecision::ApprovedAlways)
-            .await);
+        assert!(
+            engine
+                .submit_decision(&id, ApprovalDecision::ApprovedAlways)
+                .await
+        );
         assert!(matches!(
             first.await.unwrap().unwrap(),
             ApprovalDecision::ApprovedAlways
@@ -733,7 +730,11 @@ mod tests {
 
         // The same tool in a different scope still prompts, proven by the
         // granted key being scope-bound.
-        assert!(engine.get_always_allowed().await.iter().any(|key| key == "shell_exec|C:/work"));
+        assert!(engine
+            .get_always_allowed()
+            .await
+            .iter()
+            .any(|key| key == "shell_exec|C:/work"));
     }
 
     #[tokio::test]
@@ -754,9 +755,11 @@ mod tests {
             })
         };
         let id = next_requested_id(&mut rx).await;
-        assert!(engine
-            .submit_decision(&id, ApprovalDecision::ApprovedAll)
-            .await);
+        assert!(
+            engine
+                .submit_decision(&id, ApprovalDecision::ApprovedAll)
+                .await
+        );
         // The current request itself resolves as a plain approval.
         assert!(matches!(
             first.await.unwrap().unwrap(),
@@ -795,9 +798,6 @@ mod tests {
             ApprovalEngine::exact_policy_key("shell_exec", &a),
             ApprovalEngine::exact_policy_key("shell_exec", &b),
         );
-        assert_eq!(
-            ApprovalEngine::wildcard_policy_key(&a),
-            "*".to_string()
-        );
+        assert_eq!(ApprovalEngine::wildcard_policy_key(&a), "*".to_string());
     }
 }

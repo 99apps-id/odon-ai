@@ -5,8 +5,16 @@ use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc, time::Duration};
-use tokio::{process::{Child, Command}, sync::Mutex};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    process::{Child, Command},
+    sync::Mutex,
+};
 
 // ── Data ────────────────────────────────────────────────────────────────────
 
@@ -83,8 +91,11 @@ async fn load_persisted_sessions(workspace_root: &str) {
 fn save_meta(workspace_root: &str, meta: &Meta) -> Result<()> {
     let dir = session_dir(workspace_root, &meta.session_id);
     std::fs::create_dir_all(&dir).map_err(|e| err(e.to_string()))?;
-    std::fs::write(dir.join(METADATA_FILE), serde_json::to_vec_pretty(meta).unwrap())
-        .map_err(|e| err(e.to_string()))
+    std::fs::write(
+        dir.join(METADATA_FILE),
+        serde_json::to_vec_pretty(meta).unwrap(),
+    )
+    .map_err(|e| err(e.to_string()))
 }
 
 /// Return the persisted `Meta` for `session_id` if present on disk, without
@@ -98,7 +109,10 @@ fn find_persisted_meta(workspace_root: &str, session_id: &str) -> Result<Meta> {
 // ── Utilities ───────────────────────────────────────────────────────────────
 
 fn err(msg: impl Into<String>) -> OdonError {
-    OdonError::Tool { tool: "browser_session".into(), message: msg.into() }
+    OdonError::Tool {
+        tool: "browser_session".into(),
+        message: msg.into(),
+    }
 }
 
 fn sid() -> String {
@@ -108,7 +122,9 @@ fn sid() -> String {
 fn validate_session_id(id: &str) -> Result<&str> {
     if id.is_empty()
         || id.len() > 96
-        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     {
         return Err(err(
             "session_id must contain only ASCII letters, numbers, '_' or '-' and be at most 96 characters",
@@ -150,9 +166,12 @@ async fn port() -> Result<u16> {
 }
 
 async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> {
-    let live = live().lock().await.get(id).cloned().ok_or_else(|| {
-        err(format!("session '{id}' is not live; resume it first"))
-    })?;
+    let live = live()
+        .lock()
+        .await
+        .get(id)
+        .cloned()
+        .ok_or_else(|| err(format!("session '{id}' is not live; resume it first")))?;
     let p = live.lock().await.meta.port;
     let ts: Vec<Value> = reqwest::get(format!("http://127.0.0.1:{p}/json"))
         .await
@@ -206,7 +225,10 @@ async fn evaluate_js(id: &str, expression: &str) -> Result<Value> {
             .unwrap_or("browser evaluation failed");
         return Err(err(text.to_string()));
     }
-    Ok(response.pointer("/result/result").cloned().unwrap_or(Value::Null))
+    Ok(response
+        .pointer("/result/result")
+        .cloned()
+        .unwrap_or(Value::Null))
 }
 
 fn visible_expression(selector: &str) -> String {
@@ -222,11 +244,7 @@ async fn wait_visible(id: &str, selector: &str, timeout_ms: u64) -> Result<bool>
     let started = std::time::Instant::now();
     while started.elapsed().as_millis() < timeout_ms as u128 {
         let value = evaluate_js(id, &expression).await?;
-        if value
-            .get("value")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        if value.get("value").and_then(Value::as_bool).unwrap_or(false) {
             return Ok(true);
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -271,7 +289,10 @@ impl Tool for BrowserSessionCreateTool {
         let root = session_dir(&ctx.workspace_root, &id);
         std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
         let p = port().await?;
-        let url = a.get("url").and_then(Value::as_str).unwrap_or("about:blank");
+        let url = a
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or("about:blank");
         let mut c = Command::new(browser()?);
         c.args([
             "--headless=new",
@@ -295,10 +316,13 @@ impl Tool for BrowserSessionCreateTool {
         };
         // Persist metadata so the session survives a process restart.
         save_meta(&ctx.workspace_root, &m)?;
-        live()
-            .lock()
-            .await
-            .insert(id.clone(), Arc::new(Mutex::new(Live { meta: m.clone(), child })));
+        live().lock().await.insert(
+            id.clone(),
+            Arc::new(Mutex::new(Live {
+                meta: m.clone(),
+                child,
+            })),
+        );
         Ok(json!(m))
     }
 }
@@ -390,10 +414,13 @@ impl Tool for BrowserSessionResumeTool {
         n.last_used_at = now;
         // Overwrite the metadata file so the new port/pid is durable.
         save_meta(&ctx.workspace_root, &n)?;
-        live()
-            .lock()
-            .await
-            .insert(id.into(), Arc::new(Mutex::new(Live { meta: n.clone(), child })));
+        live().lock().await.insert(
+            id.into(),
+            Arc::new(Mutex::new(Live {
+                meta: n.clone(),
+                child,
+            })),
+        );
         Ok(json!(n))
     }
 }
@@ -584,8 +611,8 @@ impl Tool for BrowserSessionTextTool {
             .pointer("/result/result/value")
             .and_then(Value::as_str)
             .unwrap_or("{}");
-        let parsed: Value =
-            serde_json::from_str(raw).map_err(|e| err(format!("failed to parse page data: {e}")))?;
+        let parsed: Value = serde_json::from_str(raw)
+            .map_err(|e| err(format!("failed to parse page data: {e}")))?;
         Ok(parsed)
     }
 }
@@ -617,10 +644,7 @@ impl Tool for BrowserSessionTypeTool {
             .get("selector")
             .and_then(Value::as_str)
             .ok_or_else(|| err("selector is required"))?;
-        let text = args
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let text = args.get("text").and_then(Value::as_str).unwrap_or("");
         let js = format!(
             "(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');if(e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement){{e.focus();e.value={};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));}}else{{e.focus();e.textContent={};e.dispatchEvent(new InputEvent('input',{{bubbles:true}}));}}return true}})()",
             serde_json::to_string(selector).unwrap(),
@@ -934,7 +958,9 @@ mod tests {
     fn load_persisted_sessions_handles_missing_directory() {
         // Should not panic when the sessions directory does not exist yet.
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(load_persisted_sessions("/nonexistent/path/that/does/not/exist"));
+        rt.block_on(load_persisted_sessions(
+            "/nonexistent/path/that/does/not/exist",
+        ));
         // PERSISTED store should be empty.
         let map = tokio::runtime::Runtime::new()
             .unwrap()

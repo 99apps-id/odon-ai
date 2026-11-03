@@ -40,7 +40,10 @@ fn clip_output(raw: &[u8]) -> (String, bool) {
     if raw.len() <= GIT_OUTPUT_LIMIT {
         (String::from_utf8_lossy(raw).to_string(), false)
     } else {
-        (String::from_utf8_lossy(&raw[..GIT_OUTPUT_LIMIT]).to_string(), true)
+        (
+            String::from_utf8_lossy(&raw[..GIT_OUTPUT_LIMIT]).to_string(),
+            true,
+        )
     }
 }
 
@@ -55,16 +58,22 @@ fn valid_git_ref(value: &str) -> bool {
 
 async fn run_git(ctx: &ToolContext, tool_name: &str, args: &[String]) -> Result<GitOutput> {
     let started = std::time::Instant::now();
-    let output = timeout(GIT_TIMEOUT, Command::new("git").args(args).current_dir(&ctx.workspace_root).output())
-        .await
-        .map_err(|_| OdonError::Tool {
-            tool: tool_name.to_string(),
-            message: "git command timed out after 30 seconds".to_string(),
-        })?
-        .map_err(|e| OdonError::Tool {
-            tool: tool_name.to_string(),
-            message: format!("Failed to run git: {e}"),
-        })?;
+    let output = timeout(
+        GIT_TIMEOUT,
+        Command::new("git")
+            .args(args)
+            .current_dir(&ctx.workspace_root)
+            .output(),
+    )
+    .await
+    .map_err(|_| OdonError::Tool {
+        tool: tool_name.to_string(),
+        message: "git command timed out after 30 seconds".to_string(),
+    })?
+    .map_err(|e| OdonError::Tool {
+        tool: tool_name.to_string(),
+        message: format!("Failed to run git: {e}"),
+    })?;
     let (stdout, stdout_truncated) = clip_output(&output.stdout);
     let (stderr, stderr_truncated) = clip_output(&output.stderr);
     Ok(GitOutput {
@@ -98,7 +107,11 @@ impl Tool for GitStatusTool {
     }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
         let output = run_git(ctx, self.name(), &["status".into(), "--short".into()]).await?;
-        let status = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let status = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         Ok(output.into_json(json!({ "status": status })))
     }
 }
@@ -134,7 +147,11 @@ impl Tool for GitDiffTool {
             args.push("--cached".into());
         }
         let output = run_git(ctx, self.name(), &args).await?;
-        let diff = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let diff = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         Ok(output.into_json(json!({ "diff": diff })))
     }
 }
@@ -191,7 +208,11 @@ impl Tool for GitCommitTool {
             &["commit".into(), "-m".into(), msg.to_string()],
         )
         .await?;
-        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let text = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         Ok(output.into_json(json!({ "output": text })))
     }
 }
@@ -218,14 +239,22 @@ impl Tool for GitLogTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10).clamp(1, 100);
+        let limit = args
+            .get("limit")
+            .and_then(|l| l.as_u64())
+            .unwrap_or(10)
+            .clamp(1, 100);
         let output = run_git(
             ctx,
             self.name(),
             &["log".into(), format!("-n{limit}"), "--oneline".into()],
         )
         .await?;
-        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let text = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         let commits: Vec<String> = text.lines().map(|s| s.to_string()).collect();
         Ok(output.into_json(json!({
             "commits_count": commits.len(),
@@ -266,14 +295,14 @@ impl Tool for GitBranchTool {
             let output = run_git(
                 ctx,
                 self.name(),
-                &[
-                    "checkout".into(),
-                    "-b".into(),
-                    new_branch.to_string(),
-                ],
+                &["checkout".into(), "-b".into(), new_branch.to_string()],
             )
             .await?;
-            let message = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+            let message = if output.success {
+                output.stdout.clone()
+            } else {
+                output.stderr.clone()
+            };
             return Ok(output.into_json(json!({
                 "action": "create",
                 "branch": new_branch,
@@ -282,7 +311,11 @@ impl Tool for GitBranchTool {
         }
 
         let output = run_git(ctx, self.name(), &["branch".into(), "-a".into()]).await?;
-        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let text = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         let branches: Vec<String> = text.lines().map(|s| s.trim().to_string()).collect();
         Ok(output.into_json(json!({
             "action": "list",
@@ -372,7 +405,11 @@ impl Tool for GitCheckoutTool {
             });
         }
         let output = run_git(ctx, self.name(), &["checkout".into(), target.into()]).await?;
-        let message = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let message = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         Ok(output.into_json(json!({ "target": target, "message": message })))
     }
 }
@@ -415,7 +452,11 @@ impl Tool for GitShowTool {
             &["show".into(), "--stat".into(), object.into()],
         )
         .await?;
-        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let text = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         Ok(output.into_json(json!({ "object": object, "output": text })))
     }
 }
@@ -454,7 +495,11 @@ impl Tool for GitStashTool {
             git_args.push(msg.to_string());
         }
         let output = run_git(ctx, self.name(), &git_args).await?;
-        let text = if output.success { output.stdout.clone() } else { output.stderr.clone() };
+        let text = if output.success {
+            output.stdout.clone()
+        } else {
+            output.stderr.clone()
+        };
         Ok(output.into_json(json!({ "output": text })))
     }
 }
