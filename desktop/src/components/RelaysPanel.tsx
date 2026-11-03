@@ -186,7 +186,7 @@ export const RelaysPanel: React.FC = () => {
 
         <div className="p-4 space-y-3">
           {telegramError && (
-            <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300 text-[11px] flex items-start gap-1.5">
+            <div className="p-2.5 rounded-lg bg-clay-50 dark:bg-clay-950/40 border border-clay-200 dark:border-clay-800/60 text-clay-700 dark:text-clay-300 text-[11px] flex items-start gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>{telegramError}</span>
             </div>
@@ -209,7 +209,7 @@ export const RelaysPanel: React.FC = () => {
                 onChange={(event) => setTelegramToken(event.target.value)}
                 placeholder={
                   telegram?.token_masked
-                    ? `Saved: ${telegram.token_masked} — paste a new token to replace`
+                    ? `Saved: ${telegram.token_masked} â€” paste a new token to replace`
                     : '123456789:ABCdef...'
                 }
                 className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500"
@@ -292,7 +292,7 @@ export const RelaysPanel: React.FC = () => {
 
         <div className="p-4 space-y-3">
           {(waError || whatsapp?.error) && (
-            <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300 text-[11px] flex items-start gap-1.5">
+            <div className="p-2.5 rounded-lg bg-clay-50 dark:bg-clay-950/40 border border-clay-200 dark:border-clay-800/60 text-clay-700 dark:text-clay-300 text-[11px] flex items-start gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>{waError || whatsapp?.error}</span>
             </div>
@@ -354,7 +354,7 @@ export const RelaysPanel: React.FC = () => {
                     className="w-52 h-52 rounded-xl bg-white p-2 border border-neutral-200"
                   />
                   <p className="text-[10px] text-neutral-500 text-center mt-2">
-                    WhatsApp → Settings → Linked devices → Link a device.
+                    WhatsApp â†’ Settings â†’ Linked devices â†’ Link a device.
                   </p>
                 </>
               ) : whatsapp?.pairing_code ? (
@@ -366,7 +366,7 @@ export const RelaysPanel: React.FC = () => {
                     {whatsapp.pairing_code}
                   </div>
                   <p className="text-[10px] text-neutral-500 text-center mt-3 max-w-[220px]">
-                    Open WhatsApp → Linked devices → Link with phone number, then enter this
+                    Open WhatsApp â†’ Linked devices â†’ Link with phone number, then enter this
                     code.
                   </p>
                 </>
@@ -413,7 +413,7 @@ export const RelaysPanel: React.FC = () => {
               <button
                 onClick={logoutWhatsApp}
                 disabled={waBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-300 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-clay-200 dark:border-clay-800 hover:bg-clay-50 dark:hover:bg-clay-950/40 text-clay-600 dark:text-clay-300 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 Logout

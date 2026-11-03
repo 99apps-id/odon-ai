@@ -273,7 +273,7 @@ export const McpView: React.FC = () => {
                         type="button"
                         onClick={() => handleDelete(server.id)}
                         title="Delete server"
-                        className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                        className="p-1.5 rounded-lg text-neutral-400 hover:text-clay-500 hover:bg-clay-50 dark:hover:bg-clay-950/40 transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

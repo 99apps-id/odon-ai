@@ -110,7 +110,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
           <div
             className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
               isDangerous || isOutsideWorkspace
-                ? 'bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400'
+                ? 'bg-clay-100 text-clay-600 dark:bg-clay-950/60 dark:text-clay-400'
                 : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400'
             }`}
           >
@@ -133,7 +133,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               <span
                 className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${
                   isDangerous || isOutsideWorkspace
-                    ? 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60'
+                    ? 'bg-clay-50 text-clay-700 border border-clay-200 dark:bg-clay-950/40 dark:text-clay-300 dark:border-clay-800/60'
                     : 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60'
                 }`}
               >
@@ -193,8 +193,8 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
         )}
 
         {isDangerous && (
-          <div className="flex items-center gap-2 text-[11px] text-rose-800 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg px-3 py-2">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
+          <div className="flex items-center gap-2 text-[11px] text-clay-800 dark:text-clay-300 bg-clay-50 dark:bg-clay-950/30 border border-clay-200 dark:border-clay-900/50 rounded-lg px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-clay-600" />
             <span>
               This tool can modify the system, delete files, or run a
               subshell.
@@ -264,21 +264,21 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               setShowDenyFeedback(true);
               requestAnimationFrame(() => feedbackRef.current?.focus());
             }}
-            className="flex w-full items-center justify-between gap-3 rounded-lg border border-rose-200 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-left text-xs font-medium text-rose-700 dark:text-rose-300 transition-colors hover:bg-rose-100 dark:hover:bg-rose-900/40 cursor-pointer"
+            className="flex w-full items-center justify-between gap-3 rounded-lg border border-clay-200 dark:border-clay-800/60 bg-clay-50 dark:bg-clay-950/30 px-3 py-2 text-left text-xs font-medium text-clay-700 dark:text-clay-300 transition-colors hover:bg-clay-100 dark:hover:bg-clay-900/40 cursor-pointer"
           >
             <span className="inline-flex items-center gap-2">
               <XCircle className="w-3.5 h-3.5" />
               No, tell the agent what to do instead
             </span>
-            <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-rose-200 dark:border-rose-800 bg-white/60 dark:bg-rose-950/40 px-1 font-mono text-[10px] text-rose-500">
+            <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-clay-200 dark:border-clay-800 bg-white/60 dark:bg-clay-950/40 px-1 font-mono text-[10px] text-clay-500">
               4
             </kbd>
           </button>
         ) : (
-          <div className="rounded-lg border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-950/20 p-3 space-y-2">
+          <div className="rounded-lg border border-clay-200 dark:border-clay-800/60 bg-clay-50/60 dark:bg-clay-950/20 p-3 space-y-2">
             <label
               htmlFor="approval-deny-feedback"
-              className="block text-[11px] font-medium text-rose-800 dark:text-rose-200"
+              className="block text-[11px] font-medium text-clay-800 dark:text-clay-200"
             >
               What should the agent do instead? (optional)
             </label>
@@ -288,8 +288,8 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               value={feedback}
               onChange={(event) => setFeedback(event.target.value)}
               rows={2}
-              placeholder="e.g. Don't delete that file — run git status first instead."
-              className="w-full rounded-lg border border-rose-200 dark:border-rose-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-rose-300 dark:focus:ring-rose-700"
+              placeholder="e.g. Don't delete that file â€” run git status first instead."
+              className="w-full rounded-lg border border-clay-200 dark:border-clay-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-clay-300 dark:focus:ring-clay-700"
             />
             <div className="flex items-center justify-end gap-2">
               <button
@@ -302,7 +302,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               <button
                 type="button"
                 onClick={submitDeny}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-500 rounded-lg cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-clay-600 hover:bg-clay-500 rounded-lg cursor-pointer"
               >
                 <XCircle className="w-3.5 h-3.5" />
                 Reject
@@ -312,8 +312,8 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
         )}
 
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 pt-0.5">
-          Press <kbd className={kbdClass}>1</kbd>–<kbd className={kbdClass}>4</kbd>{' '}
-          to choose. “Don&apos;t ask again” still shows this card for other
+          Press <kbd className={kbdClass}>1</kbd>â€“<kbd className={kbdClass}>4</kbd>{' '}
+          to choose. â€œDon&apos;t ask againâ€ still shows this card for other
           tools or other folders.
         </p>
       </div>

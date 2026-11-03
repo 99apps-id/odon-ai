@@ -284,12 +284,12 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                         )}
                       </div>
                       <div className="text-[11.5px] text-neutral-500 flex items-center justify-between">
-                        <span>{imgData.width} × {imgData.height}</span>
+                        <span>{imgData.width} Ã— {imgData.height}</span>
                         <span>Model: {imgData.model}</span>
                       </div>
                       {imgData.file_path && (
                         <div className="text-[11px] font-mono text-neutral-500 bg-neutral-100 dark:bg-neutral-800/80 p-2 rounded-lg truncate border border-neutral-200/60 dark:border-neutral-700/60" title={imgData.file_path}>
-                          📁 {imgData.file_path}
+                          ðŸ“ {imgData.file_path}
                         </div>
                       )}
                       <div className="flex items-center gap-2 pt-1">
@@ -349,7 +349,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
               Live entries from the agent's SQLite memory. These are the facts and preferences it recalls across sessions.
             </p>
             {memoryLoading ? (
-              <div className="text-center py-8 text-neutral-400 text-[12px]">Loading memories…</div>
+              <div className="text-center py-8 text-neutral-400 text-[12px]">Loading memoriesâ€¦</div>
             ) : memories.length === 0 ? (
               <div className="text-center py-8 text-neutral-400 text-[12px]">
                 No long-term memories yet. Ask the agent to remember something, or use the memory_store tool.
@@ -368,7 +368,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                           type="button"
                           onClick={() => handleForgetMemory(memory.key)}
                           title="Forget this memory"
-                          className="p-0.5 rounded text-neutral-400 hover:text-rose-500"
+                          className="p-0.5 rounded text-neutral-400 hover:text-clay-500"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -397,7 +397,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
               </h4>
             </div>
             <p className="text-[12px] text-neutral-500 leading-relaxed">
-              Live status from the daemon. Configure tokens, allowlists, and QR pairing in Settings → Relays.
+              Live status from the daemon. Configure tokens, allowlists, and QR pairing in Settings â†’ Relays.
             </p>
             <div className="space-y-2 pt-2">
               {[
@@ -419,15 +419,15 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                   active: !!relayStatus?.relays?.telegram,
                   desc: relayStatus?.relays?.telegram
                     ? 'Connected and polling for messages'
-                    : 'Not connected — configure the bot token in Settings → Relays',
+                    : 'Not connected â€” configure the bot token in Settings â†’ Relays',
                 },
                 {
                   name: 'WhatsApp Relay',
                   port: 'Web bridge / Cloud API',
                   active: !!relayStatus?.relays?.whatsapp,
                   desc: relayStatus?.relays?.whatsapp
-                    ? 'Connected — QR/pairing session or Cloud API webhook is live'
-                    : 'Not connected — pair a device or configure Cloud API in Settings → Relays',
+                    ? 'Connected â€” QR/pairing session or Cloud API webhook is live'
+                    : 'Not connected â€” pair a device or configure Cloud API in Settings â†’ Relays',
                 },
               ].map((relay, index) => (
                 <div key={index} className="p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 space-y-1">

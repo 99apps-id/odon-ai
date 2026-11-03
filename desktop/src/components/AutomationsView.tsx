@@ -271,7 +271,7 @@ export const AutomationsView: React.FC = () => {
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                           job.last_status === 'success'
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
-                            : 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300'
+                            : 'bg-clay-100 text-clay-800 dark:bg-clay-950/80 dark:text-clay-300'
                         }`}>
                           {job.last_status}
                         </span>
@@ -316,7 +316,7 @@ export const AutomationsView: React.FC = () => {
                       type="button"
                       onClick={() => handleDelete(job.id)}
                       title="Delete automation"
-                      className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-clay-500 hover:bg-clay-50 dark:hover:bg-clay-950/40 transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -369,7 +369,7 @@ export const AutomationsView: React.FC = () => {
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                           log.status === 'success'
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
-                            : 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300'
+                            : 'bg-clay-100 text-clay-800 dark:bg-clay-950/80 dark:text-clay-300'
                         }`}>
                           {log.status}
                         </span>
@@ -387,7 +387,7 @@ export const AutomationsView: React.FC = () => {
                           </div>
                         )}
                         {log.error && (
-                          <div className="text-[11px] text-rose-600 dark:text-rose-400 whitespace-pre-wrap">
+                          <div className="text-[11px] text-clay-600 dark:text-clay-400 whitespace-pre-wrap">
                             {log.error}
                           </div>
                         )}

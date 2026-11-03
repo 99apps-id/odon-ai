@@ -100,7 +100,7 @@ export const ArtifactVersionsModal: React.FC<ArtifactVersionsModalProps> = ({
 
         <div className="flex-1 overflow-y-auto p-5 space-y-2">
           {error && (
-            <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+            <div className="p-2.5 rounded-xl bg-clay-50 border border-clay-200 text-clay-700 text-xs">
               {error}
             </div>
           )}

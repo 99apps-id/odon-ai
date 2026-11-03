@@ -1,5 +1,89 @@
 @import "tailwindcss";
 
+/* The desktop shell is a light-only surface: the window chrome, canvases and
+ * preview panels all assume a light background. Tailwind's `dark:` variant
+ * defaults to `prefers-color-scheme`, which meant every view with a `dark:`
+ * class silently flipped to near-white text on a dark OS setting while the
+ * layout stayed light. Pinning the variant to an explicit `.dark` root that
+ * nothing applies keeps every surface consistent, and a real dark theme later
+ * only has to add that class to <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Palette
+ *
+ * Identity lives here, not in the markup: the views already use the stock
+ * Tailwind ramp (`neutral` for surfaces and text, `blue` for the accent), so
+ * redefining the ramp retints the whole app without editing hundreds of class
+ * names. The neutral ramp is warmed toward clay so surfaces read like paper
+ * rather than a clinical cool grey, and every text step below was measured
+ * against both #ffffff cards and the #faf8f5 page:
+ *
+ *   neutral-400 #787063  4.89:1 on white / 4.61:1 on sand  (was 2.52:1)
+ *   neutral-500 #635c51  6.60:1 / 6.23:1
+ *   neutral-600 #4c463d  9.33:1 / 8.80:1
+ *   neutral-900 #221f1c 16.40:1 / 15.47:1
+ *
+ * neutral-400 is deliberately the darkest step that still passes 4.5:1 on the
+ * page background; it is used for secondary metadata and cannot be lighter. */
+@theme {
+  --color-neutral-50: #faf8f5;
+  --color-neutral-100: #f4f1ec;
+  --color-neutral-200: #e8e3db;
+  --color-neutral-300: #d6cfc3;
+  --color-neutral-400: #787063;
+  --color-neutral-500: #635c51;
+  --color-neutral-600: #4c463d;
+  --color-neutral-700: #3a352e;
+  --color-neutral-800: #2b2721;
+  --color-neutral-900: #221f1c;
+
+  /* Sand: warm neutral surfaces and quiet fills. */
+  --color-sand-50: #faf8f5;
+  --color-sand-100: #f2ede4;
+  --color-sand-200: #e5dccd;
+  --color-sand-300: #d2c4ae;
+  --color-sand-400: #b7a68c;
+
+  /* Clay: muted terracotta for emphasis and destructive affordances. It
+   * replaces saturated rose/red so warnings read as ink on paper. */
+  --color-clay-50: #faf6f2;
+  --color-clay-100: #f3e9e1;
+  --color-clay-200: #e6d5c7;
+  --color-clay-300: #d5b9a3;
+  --color-clay-400: #bd9480;
+  --color-clay-500: #a8775f;
+  --color-clay-600: #8d5f49;
+  --color-clay-700: #744c3b;
+  --color-clay-800: #5d3d30;
+  --color-clay-900: #4a3127;
+  --color-clay-950: #33211a;
+
+  --color-ink: #221f1c;
+
+  /* Accent: the stock `blue` ramp is the electric product-blue every AI tool
+   * ships with. This ramp keeps the hue semantics (blue = interactive) but
+   * desaturates it into a slate ink, so primary buttons and links stop
+   * competing with the message. Measured: blue-600 #3f5b70 is 7.14:1 on white
+   * and 7.14:1 for a white label on top of it. */
+  --color-blue-50: #f2f5f7;
+  --color-blue-100: #e4ebf0;
+  --color-blue-200: #c9d7e1;
+  --color-blue-300: #a3bacb;
+  --color-blue-400: #7495ad;
+  --color-blue-500: #557a95;
+  --color-blue-600: #3f5b70;
+  --color-blue-700: #34495a;
+  --color-blue-800: #2b3c49;
+  --color-blue-900: #23303a;
+  --color-blue-950: #17212a;
+
+  /* Status text was failing WCAG as body-size text: emerald-600 measured
+   * 3.77:1 and amber-600 3.19:1 on white. Only the two failing steps are
+   * corrected; the rest of each ramp is untouched. */
+  --color-emerald-600: #047857;
+  --color-amber-600: #b45309;
+}
+
 @layer base {
   body {
     margin: 0;
@@ -7,5 +91,12 @@
     overflow: hidden;
     height: 100vh;
     width: 100vw;
+    background-color: var(--color-sand-50);
+    color: var(--color-ink);
+  }
+
+  ::selection {
+    background-color: var(--color-clay-100);
+    color: var(--color-clay-900);
   }
 }

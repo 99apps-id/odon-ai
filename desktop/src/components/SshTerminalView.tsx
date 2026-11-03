@@ -210,9 +210,9 @@ export const SshTerminalView: React.FC = () => {
 
   return (
     <div className="flex-1 flex overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs">
-      {/* ───────────────────────────────────────────────────────────
+      {/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           LEFT: HOST / SERVERS SIDEBAR
-      ─────────────────────────────────────────────────────────── */}
+      â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="w-72 shrink-0 border-r border-neutral-200 flex flex-col bg-neutral-50/50">
         <div className="p-3 border-b border-neutral-200 flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-bold text-xs text-neutral-800">
@@ -276,7 +276,7 @@ export const SshTerminalView: React.FC = () => {
 
                   <button
                     onClick={(e) => handleDeleteProfile(p.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-rose-600 rounded transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-clay-600 rounded transition-opacity"
                     title="Delete profile"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -288,9 +288,9 @@ export const SshTerminalView: React.FC = () => {
         </div>
       </div>
 
-      {/* ───────────────────────────────────────────────────────────
+      {/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           RIGHT: NATIVE FULL COMMAND TERMINAL PANE
-      ─────────────────────────────────────────────────────────── */}
+      â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="flex-1 flex flex-col overflow-hidden bg-neutral-900">
         {/* Terminal Header */}
         <div className="px-4 py-2 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between shrink-0">
@@ -304,14 +304,14 @@ export const SshTerminalView: React.FC = () => {
                 {selectedProfile.alias}
               </span>
             )}
-            <span className="text-[10px] text-neutral-400 font-mono hidden md:inline">• Full Command Interactive Terminal</span>
+            <span className="text-[10px] text-neutral-400 font-mono hidden md:inline">â€¢ Full Command Interactive Terminal</span>
           </div>
 
           <div className="flex items-center gap-2">
             {isConnected ? (
               <button
                 onClick={handleDisconnect}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 text-xs font-semibold cursor-pointer transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-clay-600/20 hover:bg-clay-600/30 text-clay-300 border border-clay-500/30 text-xs font-semibold cursor-pointer transition-colors"
               >
                 <WifiOff className="w-3.5 h-3.5" />
                 <span>Disconnect</span>
@@ -369,9 +369,9 @@ export const SshTerminalView: React.FC = () => {
         </div>
       </div>
 
-      {/* ───────────────────────────────────────────────────────────
+      {/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           ADD SSH PROFILE MODAL WITH CERTIFICATE / KEY IMPORT
-      ─────────────────────────────────────────────────────────── */}
+      â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-200/70 backdrop-blur-2xs">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-neutral-200 p-5 space-y-4">
@@ -431,9 +431,9 @@ export const SshTerminalView: React.FC = () => {
                 />
               </div>
 
-              {/* ───────────────────────────────────────────
+              {/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   CERTIFICATE / PRIVATE KEY IMPORT & PASTE SECTION
-              ─────────────────────────────────────────── */}
+              â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
               <div className="p-3 rounded-xl bg-blue-50/40 border border-blue-200/80 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 font-semibold text-neutral-800">
@@ -441,7 +441,7 @@ export const SshTerminalView: React.FC = () => {
                     <span>SSH Key & Certificate</span>
                   </div>
                   <span className="text-[10px] text-blue-700 bg-blue-100/70 font-mono px-2 py-0.5 rounded-md">
-                    .pem • .key • id_rsa • raw
+                    .pem â€¢ .key â€¢ id_rsa â€¢ raw
                   </span>
                 </div>
 
@@ -525,7 +525,7 @@ export const SshTerminalView: React.FC = () => {
                             setImportedCertName(null);
                             setNewKeyPath('');
                           }}
-                          className="text-neutral-400 hover:text-rose-600 p-0.5 cursor-pointer"
+                          className="text-neutral-400 hover:text-clay-600 p-0.5 cursor-pointer"
                           title="Delete file"
                         >
                           <X className="w-3 h-3" />
@@ -555,7 +555,7 @@ export const SshTerminalView: React.FC = () => {
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] text-neutral-500 font-mono">
-                        {pastedKey.length > 0 ? `${pastedKey.length} characters • ${pastedKey.split('\n').length} lines` : 'No key pasted yet'}
+                        {pastedKey.length > 0 ? `${pastedKey.length} characters â€¢ ${pastedKey.split('\n').length} lines` : 'No key pasted yet'}
                       </span>
 
                       <button

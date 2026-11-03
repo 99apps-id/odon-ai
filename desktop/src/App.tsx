@@ -1338,7 +1338,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
   }));
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f4f5f8] text-neutral-800 font-sans">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-sand-50 text-neutral-800 font-sans">
       {/* Hidden File Picker */}
       <input
         type="file"
@@ -1352,7 +1352,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       {/* ─────────────────────────────────────────────────────────────
           1. WINDOW TITLE BAR (DESKTOP CHROME)
       ───────────────────────────────────────────────────────────── */}
-      <header className="h-8 shrink-0 flex items-center justify-between px-3 text-xs text-neutral-600 bg-[#f4f5f8]">
+      <header className="h-8 shrink-0 flex items-center justify-between px-3 text-xs text-neutral-600 bg-sand-50">
         {/* Left: App Logo & Name + Backend Status */}
         <div className="flex items-center gap-2">
           <button
@@ -1434,7 +1434,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('chat'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'chat'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1445,7 +1445,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('code'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'code'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1456,7 +1456,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('terminal'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'terminal'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1467,7 +1467,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('ssh'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'ssh'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1478,7 +1478,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('github'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'github'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1489,7 +1489,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('automations'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'automations'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1500,7 +1500,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => { setActiveNav('mcp'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'mcp'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1511,7 +1511,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => setActiveNav('create')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'create'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1522,7 +1522,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => setActiveNav('documents')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'documents'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1533,7 +1533,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => setActiveNav('files')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${(activeNav === 'files' || activeNav === 'explorer')
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -1544,7 +1544,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => setActiveNav('agents')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'agents'
-                    ? 'bg-[#e9f2ff] text-blue-600 font-semibold shadow-2xs'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
                     : 'text-neutral-700 hover:bg-neutral-100/70'
                   }`}
               >
@@ -2176,7 +2176,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       </button>
                       <button
                         onClick={() => removeSteerCard(card.id)}
-                        className="p-0.5 text-amber-500 hover:text-rose-600 cursor-pointer shrink-0"
+                        className="p-0.5 text-neutral-400 hover:text-clay-700 cursor-pointer shrink-0"
                         title="Remove steer"
                       >
                         <X className="w-3 h-3" />
@@ -2272,7 +2272,10 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
                 {/* Right Tools */}
                 <div className="flex items-center gap-2">
-                  {/* Execution Mode Selector */}
+                  {/* Execution Mode Selector: quiet segmented control, the
+                      pattern ChatGPT/Codex use. No accent fill and no AI
+                      gradient — the active mode is white on a sand track, so
+                      the control never competes with the message itself. */}
                   <div className="flex items-center gap-0.5 p-0.5 bg-neutral-100/80 rounded-lg">
                     {[
                       { key: 'chat', label: 'Chat', Icon: MessageSquare },
@@ -2286,13 +2289,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                           key={m.key}
                           onClick={() => setExecutionMode(m.key as any)}
                           title={m.label}
-                          className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium transition-all ${
+                          aria-pressed={active}
+                          className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium transition-colors ${
                             active
-                              ? 'bg-white text-neutral-900 shadow-2xs'
-                              : 'text-neutral-500 hover:text-neutral-700'
+                              ? 'bg-white text-neutral-900'
+                              : 'text-neutral-500 hover:text-neutral-800'
                           }`}
                         >
-                          <m.Icon className={`w-3 h-3 ${active ? 'text-neutral-900' : 'text-neutral-500'}`} />
+                          <m.Icon className="w-3 h-3" />
                           <span className="hidden sm:inline">{m.label}</span>
                         </button>
                       );
@@ -3340,7 +3344,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       ) : (
                         <button
                           onClick={() => removeAllowedWorkspace(path)}
-                          className="p-1 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-md shrink-0 cursor-pointer"
+                          className="p-1 text-neutral-400 hover:text-clay-700 hover:bg-clay-50 rounded-md shrink-0 cursor-pointer"
                           title="Remove from allowlist"
                         >
                           <Trash2 className="w-3 h-3" />
@@ -3445,7 +3449,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               </div>
 
               {workspaceError && (
-                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-700 flex items-start gap-1.5">
+                <div className="p-2.5 rounded-lg bg-clay-50 border border-clay-200 text-[11px] text-clay-700 flex items-start gap-1.5">
                   <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                   <span className="break-words">{workspaceError}</span>
                 </div>

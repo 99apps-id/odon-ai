@@ -113,7 +113,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               <h2 className="text-base font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
                 <span>Security Approval & Audit Center</span>
                 {pendingApproval && (
-                  <span className="text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 px-2.5 py-0.5 rounded-full animate-pulse border border-rose-300/60">
+                  <span className="text-[11px] font-semibold bg-clay-100 text-clay-700 dark:bg-clay-950/80 dark:text-clay-300 px-2.5 py-0.5 rounded-full animate-pulse border border-clay-300/60">
                     1 Action Requires Review
                   </span>
                 )}
@@ -145,7 +145,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
             >
               <span>Pending Review</span>
               {pendingApproval && (
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                <span className="w-2 h-2 rounded-full bg-clay-500 animate-ping" />
               )}
             </button>
             <button
@@ -193,7 +193,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                       <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
                         {pendingApproval.toolName}
                       </span>
-                      <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-300/60">
+                      <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-clay-100 text-clay-700 dark:bg-clay-950 dark:text-clay-300 border border-clay-300/60">
                         {pendingApproval.risk}
                       </span>
                     </div>
@@ -207,16 +207,16 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                   </div>
 
                   {showDenyReason && (
-                    <div className="rounded-xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-950/20 p-3 space-y-2">
-                      <label className="block text-[11px] font-medium text-rose-800 dark:text-rose-200">
+                    <div className="rounded-xl border border-clay-200 dark:border-clay-800/60 bg-clay-50/60 dark:bg-clay-950/20 p-3 space-y-2">
+                      <label className="block text-[11px] font-medium text-clay-800 dark:text-clay-200">
                         What should the agent do instead? (optional)
                       </label>
                       <textarea
                         value={denyReason}
                         onChange={(e) => setDenyReason(e.target.value)}
                         rows={2}
-                        placeholder="e.g. Don't delete that file — run git status first instead."
-                        className="w-full rounded-lg border border-rose-200 dark:border-rose-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-rose-300 dark:focus:ring-rose-700"
+                        placeholder="e.g. Don't delete that file â€” run git status first instead."
+                        className="w-full rounded-lg border border-clay-200 dark:border-clay-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-clay-300 dark:focus:ring-clay-700"
                       />
                       <div className="flex items-center justify-end gap-2">
                         <button
@@ -229,7 +229,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                         <button
                           type="button"
                           onClick={() => onDecideApproval('deny', denyReason.trim() || undefined)}
-                          className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 transition-colors"
+                          className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-clay-600 hover:bg-clay-500 transition-colors"
                         >
                           Reject
                         </button>
@@ -241,7 +241,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setShowDenyReason(true)}
-                      className="px-4 py-2 rounded-xl text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-100/60 dark:hover:bg-rose-950/50 transition-colors"
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-clay-700 dark:text-clay-400 hover:bg-clay-100/60 dark:hover:bg-clay-950/50 transition-colors"
                     >
                       <XCircle className="w-3.5 h-3.5 inline mr-1" />
                       Deny Action
@@ -306,7 +306,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                           log.decision.includes('approved')
                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300'
-                            : 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300'
+                            : 'bg-clay-100 text-clay-700 dark:bg-clay-950/80 dark:text-clay-300'
                         }`}>
                           {log.decision}
                         </span>
@@ -364,7 +364,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                       <button
                         onClick={() => handleRevokePolicy(pol)}
                         title="Revoke allowed rule"
-                        className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                        className="p-1 rounded-lg text-clay-500 hover:bg-clay-50 dark:hover:bg-clay-950/40 transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
