@@ -630,7 +630,8 @@ impl WhatsAppBridge {
             else {
                 return false;
             };
-            let Some(pid) = String::from_utf8_lossy(&output.stdout)
+            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+            let Some(pid) = stdout
                 .lines()
                 .next()
                 .map(str::trim)
@@ -1215,6 +1216,26 @@ async fn run_automation_job(state: AppState, job: AutomationJob) {
         }
         save_automation_logs_to_disk(&logs);
     }
+}
+
+/// Candidate locations for the built web UI (`desktop/dist`), in
+/// priority order: the ODON_DESKTOP_DIST override, the dev tree under
+/// the working directory, and the layouts an installed bundle uses
+/// (next to the binary, and the macOS Resources sibling directory).
+fn desktop_dist_candidates(
+    env_dist: Option<&str>,
+    exe_dir: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(custom) = env_dist.filter(|value| !value.trim().is_empty()) {
+        candidates.push(std::path::PathBuf::from(custom));
+    }
+    candidates.push(std::path::PathBuf::from("desktop/dist"));
+    if let Some(dir) = exe_dir {
+        candidates.push(dir.join("desktop/dist"));
+        candidates.push(dir.join("../Resources/desktop/dist"));
+    }
+    candidates
 }
 
 fn relay_mime_for_path(path: &std::path::Path) -> &'static str {
@@ -2371,9 +2392,25 @@ async fn main() -> anyhow::Result<()> {
                     axum::routing::delete(delete_skill_item),
                 );
 
-            let dist_path = std::path::Path::new("desktop/dist");
-            if dist_path.exists() {
-                info!("Serving static desktop web application from desktop/dist");
+            // The web UI ships in three layouts: the dev tree
+            // (desktop/dist under the working directory), an explicit
+            // ODON_DESKTOP_DIST override, and next to the daemon binary
+            // in installed bundles (including the macOS Resources
+            // sibling of the sidecar). First existing candidate wins.
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()));
+            let dist_path = desktop_dist_candidates(
+                std::env::var("ODON_DESKTOP_DIST").ok().as_deref(),
+                exe_dir.as_deref(),
+            )
+            .into_iter()
+            .find(|candidate| candidate.exists());
+            if let Some(dist_path) = dist_path {
+                info!(
+                    "Serving static desktop web application from {}",
+                    dist_path.display()
+                );
                 app = app.fallback_service(ServeDir::new(dist_path));
             }
 
@@ -6732,6 +6769,25 @@ mod tests {
         );
         assert!(parse_last_run("2 hours ago").is_some());
         assert!(parse_last_run("Yesterday at 08:00 AM").is_some());
+    }
+
+    #[test]
+    fn desktop_dist_candidates_cover_dev_override_and_bundle_layouts() {
+        let exe_dir = std::path::Path::new("/opt/odon/bin");
+        let candidates = desktop_dist_candidates(Some("/custom/dist"), Some(exe_dir));
+        assert_eq!(candidates[0], std::path::PathBuf::from("/custom/dist"));
+        assert_eq!(candidates[1], std::path::PathBuf::from("desktop/dist"));
+        assert_eq!(
+            candidates[2],
+            std::path::PathBuf::from("/opt/odon/bin/desktop/dist")
+        );
+        assert_eq!(
+            candidates[3],
+            std::path::PathBuf::from("/opt/odon/bin/../Resources/desktop/dist")
+        );
+        // A blank override is ignored rather than shadowing the dev path.
+        let candidates = desktop_dist_candidates(Some("  "), None);
+        assert_eq!(candidates[0], std::path::PathBuf::from("desktop/dist"));
     }
 
     #[test]

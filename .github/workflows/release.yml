@@ -1,0 +1,108 @@
+name: Release
+
+# Builds the ODON desktop application (Tauri shell + odond sidecar) for
+# Linux and macOS and publishes the installers to a GitHub Release.
+#
+# Publish: push a version tag, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+# Remember to bump the version in desktop/package.json,
+# desktop/src-tauri/tauri.conf.json, and the workspace Cargo.toml first.
+# A manual run (workflow_dispatch) only builds and stores the bundles as
+# workflow artifacts; it never creates a release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux (x86_64)
+            os: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - label: macOS (Apple Silicon)
+            os: macos-14
+            rust-target: aarch64-apple-darwin
+            bundles: dmg
+          - label: macOS (Intel)
+            os: macos-13
+            rust-target: x86_64-apple-darwin
+            bundles: dmg
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file \
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev patchelf
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache Rust builds
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            desktop/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      # The desktop shell spawns this exact binary as its daemon sidecar;
+      # tauri.conf.json's externalBin points at the staged copy.
+      - name: Stage the odond sidecar
+        run: bash scripts/stage-sidecar.sh "${{ matrix.rust-target }}"
+
+      - name: Build the desktop bundles
+        working-directory: desktop
+        run: pnpm tauri build --target "${{ matrix.rust-target }}" --bundles "${{ matrix.bundles }}"
+
+      - name: Upload bundles as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: odon-${{ matrix.rust-target }}
+          path: |
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/deb/*.deb
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Publish bundles to the GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/deb/*.deb
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
+          fail_on_unmatched_files: true

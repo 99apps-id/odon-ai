@@ -14,6 +14,10 @@ pub enum AgentState {
     GeneratingArtifact,
     Completed,
     Failed,
+    /// The turn hit its configured step cap with work still in flight.
+    /// Everything so far is persisted, and a follow-up message resumes
+    /// the same session from that history.
+    Paused,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -36,3 +36,10 @@ mcp-servers.json
 .commandcode/
 scripts/whatsapp-bridge/node_modules/
 scripts/whatsapp-bridge/auth/
+
+# Tauri sidecar staging (built binaries are copied here by the release
+# workflow and by scripts/stage-sidecar.sh; only the placeholder is kept)
+/desktop/src-tauri/binaries/*
+!/desktop/src-tauri/binaries/.gitkeep
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/

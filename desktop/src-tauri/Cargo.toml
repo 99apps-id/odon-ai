@@ -1,0 +1,27 @@
+[package]
+name = "odon-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "ODON desktop shell: a Tauri window over the odond sidecar daemon."
+license = "Apache-2.0"
+
+# This crate is intentionally not part of the root workspace: building it
+# needs the platform webview development libraries, which headless and
+# server builds of the daemon should never require. The root workspace
+# excludes it (see the workspace `exclude` in /Cargo.toml).
+
+[lib]
+name = "odon_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"

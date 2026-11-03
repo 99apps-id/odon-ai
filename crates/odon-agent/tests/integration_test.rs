@@ -612,3 +612,207 @@ async fn test_priority_steer_interrupts_running_turn() {
     }
     assert!(saw_applied, "SteerApplied event must be emitted");
 }
+
+/// Provider that delegates with run_subagent whenever the user asks, runs
+/// the child task itself, and reports the tool output afterwards. It pins
+/// the whole delegation seam: the nested turn, the child session, and the
+/// tool result coming back into the parent step.
+struct DelegatingProvider;
+
+#[async_trait]
+impl ModelProvider for DelegatingProvider {
+    fn provider_name(&self) -> &str {
+        "delegating"
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        let last_user = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == odon_core::MessageRole::User)
+            .map(|m| m.content.text.clone())
+            .unwrap_or_default();
+        let tool_output = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == odon_core::MessageRole::Tool)
+            .map(|m| m.content.text.clone());
+        if let Some(output) = tool_output {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta(format!("Parent received: {output}")))
+                .await;
+        } else if last_user.contains("please delegate") {
+            let _ = event_sender
+                .send(StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some("call_delegate_1".to_string()),
+                    name: Some("run_subagent".to_string()),
+                    arguments_delta: Some("{\"task\":\"child task\"}".to_string()),
+                })
+                .await;
+        } else if last_user == "child task" {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta("child report".to_string()))
+                .await;
+        } else {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta("nothing to do".to_string()))
+                .await;
+        }
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_run_subagent_delegates_and_returns_the_child_report() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    runtime
+        .register_provider("default", Arc::new(DelegatingProvider), true)
+        .await;
+
+    let session = Session::new("Delegation", SessionMode::General, "delegating-model");
+    storage.save_session(&session).unwrap();
+
+    let result = runtime
+        .execute_turn(
+            &session.id,
+            "please delegate this work",
+            Some("delegating-model"),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.content.text.contains("child report"),
+        "parent must receive the child report, got: {}",
+        result.content.text
+    );
+    // The child ran on its own sub- session with the task persisted.
+    let sessions = storage.list_sessions().unwrap();
+    let child = sessions
+        .iter()
+        .find(|s| s.id.starts_with("sub-"))
+        .expect("a child session must exist");
+    let child_messages = storage.list_messages(&child.id).unwrap();
+    assert!(
+        child_messages
+            .iter()
+            .any(|m| m.content.text.contains("child report")),
+        "the child session must hold the child turn"
+    );
+}
+
+/// Provider that calls two independent registry tools in one step. The
+/// runtime must execute both (bounded-parallel path) and persist two
+/// tool results before the final answer.
+struct ParallelToolsProvider;
+
+#[async_trait]
+impl ModelProvider for ParallelToolsProvider {
+    fn provider_name(&self) -> &str {
+        "parallel-tools"
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        let tool_results = request
+            .messages
+            .iter()
+            .filter(|m| m.role == odon_core::MessageRole::Tool)
+            .count();
+        if tool_results >= 2 {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta("both tools done".to_string()))
+                .await;
+        } else if tool_results == 0 {
+            for (index, name, arguments) in
+                [(0, "fs_list", "{\"path\":\".\"}"), (1, "system_info", "{}")]
+            {
+                let _ = event_sender
+                    .send(StreamEvent::ToolCallDelta {
+                        index,
+                        id: Some(format!("call_parallel_{index}")),
+                        name: Some(name.to_string()),
+                        arguments_delta: Some(arguments.to_string()),
+                    })
+                    .await;
+            }
+        }
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_parallel_tool_calls_in_one_step_all_execute() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    runtime
+        .register_provider("default", Arc::new(ParallelToolsProvider), true)
+        .await;
+
+    let session = Session::new("Parallel", SessionMode::General, "parallel-model");
+    storage.save_session(&session).unwrap();
+
+    let result = runtime
+        .execute_turn(
+            &session.id,
+            "list and inspect",
+            Some("parallel-model"),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.content.text.contains("both tools done"),
+        "got: {}",
+        result.content.text
+    );
+    let tool_messages = storage
+        .list_messages(&session.id)
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.role == odon_core::MessageRole::Tool)
+        .count();
+    assert_eq!(
+        tool_messages, 2,
+        "both calls in the step must persist results"
+    );
+}

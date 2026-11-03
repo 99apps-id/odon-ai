@@ -1,4 +1,7 @@
 [workspace]
+# The Tauri desktop shell is built separately (it needs platform webview
+# libraries); see desktop/src-tauri and .github/workflows/release.yml.
+exclude = ["desktop/src-tauri"]
 members = [
     "crates/odon-core",
     "crates/odon-security",
