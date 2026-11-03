@@ -2136,7 +2136,12 @@ async fn main() -> anyhow::Result<()> {
             let storage = Arc::new(StorageEngine::default_storage()?);
 
             // 2. Event Bus (created first so approvals can publish on it)
-            let (event_tx, _event_rx) = create_event_bus(512);
+            // Headroom for a burst of token/tool events. A web search or fetch result
+    // can make the UI stall while it parses and renders, and a 512-slot ring
+    // overflowed during that window: the SSE subscriber lagged and the events
+    // it missed could include the turn's terminal event, leaving the UI stuck
+    // in "running" with a healthy backend.
+    let (event_tx, _event_rx) = create_event_bus(8192);
 
             // 3. Security & Policy
             let policy = SecurityPolicy::default();
@@ -5945,8 +5950,16 @@ async fn sse_events(
                         yield Ok(Event::default().data(data));
                     }
                 }
-                // A slow client missed events: keep streaming instead of dropping it.
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                // A slow client missed events. Skipping silently used to hide the
+                // reason a turn appeared to hang, so log the gap; the enlarged bus
+                // above makes reaching this branch rare.
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!(
+                        missed,
+                        "SSE subscriber lagged and dropped events; client may need to resync"
+                    );
+                    continue;
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
