@@ -354,16 +354,6 @@ impl ApprovalEngine {
         let policy_key = Self::policy_key(tool_name, parameters);
         let exact_key = Self::exact_policy_key(tool_name, parameters);
         let wildcard_key = Self::wildcard_policy_key(parameters);
-        {
-            let allowed = self.always_allowed.read().await;
-            if allowed.contains(&policy_key)
-                || allowed.contains(&exact_key)
-                || allowed.contains(&wildcard_key)
-            {
-                return Ok(ApprovalDecision::Approved);
-            }
-        }
-
         let policy = self.policy.read().await;
 
         // In locked mode, all mutating calls rejected
@@ -381,6 +371,19 @@ impl ApprovalEngine {
         // Autonomous mode auto-approves Tier 1
         if policy.mode == ExecutionMode::Autonomous && risk == RiskTier::Tier1WorkspaceMutating {
             return Ok(ApprovalDecision::Approved);
+        }
+
+        // `always_allowed` may only skip the interactive prompt for tools that
+        // are already permitted by mode/tier enforcement above. This prevents
+        // an `ApprovedAll` wildcard from bypassing execution-mode restrictions.
+        {
+            let allowed = self.always_allowed.read().await;
+            if allowed.contains(&policy_key)
+                || allowed.contains(&exact_key)
+                || allowed.contains(&wildcard_key)
+            {
+                return Ok(ApprovalDecision::Approved);
+            }
         }
 
         // Otherwise requires interactive approval (Tier 2 in Autonomous, or Tier 1 & 2 in Supervised)
@@ -799,5 +802,22 @@ mod tests {
             ApprovalEngine::exact_policy_key("shell_exec", &b),
         );
         assert_eq!(ApprovalEngine::wildcard_policy_key(&a), "*".to_string());
+    }
+
+    #[tokio::test]
+    async fn approved_all_does_not_bypass_locked_mode() {
+        let policy = SecurityPolicy {
+            mode: ExecutionMode::Locked,
+            ..SecurityPolicy::default()
+        };
+        let engine = ApprovalEngine::new(policy);
+        let _ = engine
+            .submit_decision("shell_exec", ApprovalDecision::ApprovedAll)
+            .await;
+        let decision = engine
+            .evaluate_and_request("s1", "shell_exec", &serde_json::json!({}), "bash")
+            .await
+            .unwrap();
+        assert!(matches!(decision, ApprovalDecision::Rejected { .. }));
     }
 }
