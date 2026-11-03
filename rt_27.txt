@@ -1,0 +1,40 @@
+                            "child_count".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(child_count)),
+                        );
+                    }
+                    session.metadata = Some(child_meta);
+                } else {
+                    session.metadata = Some(serde_json::json!({
+                        "parent_session": parent_session_id,
+                        "parent_model": model,
+                        "child_index": index,
+                        "child_count": child_count,
+                    }));
+                }
+            }
+            let _ = self.storage.save_session(&session);
+        }
+
+        let mut join_set = JoinSet::new();
+        let subagent_slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SUBAGENTS));
+        let storage = self.storage.clone();
+        let approval = self.approval.clone();
+        let audit = self.audit.clone();
+
+        for (index, child_session_id) in child_ids.iter().cloned().enumerate() {
+            let task = tasks[index].clone();
+            let storage = storage.clone();
+            let approval = approval.clone();
+            let _audit = audit.clone();
+            let cancellation_child = cancellation.child_token();
+            let parent_session_id = parent_session_id.to_string();
+            let fallback_workspace = self.workspace_root.clone();
+            let child_runtime = self.child_runtime(self.workspace_root.clone());
+            child_runtime.set_max_turn_iterations(SUBAGENT_MAX_ITERATIONS);
+            let subagent_slot = Arc::clone(&subagent_slots);
+            let provider_name = provider_override.map(|v| v.to_string());
+            let model_override = requested_model
+                .or(parent_model_override.as_deref())
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| model.to_string());
+

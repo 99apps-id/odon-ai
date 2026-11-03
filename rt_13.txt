@@ -1,0 +1,40 @@
+                    .map(str::to_string),
+            };
+
+            let (stream_tx, mut stream_rx) = mpsc::channel::<StreamEvent>(128);
+            let prov_clone = provider.clone();
+            let iteration_cancel = cancellation.child_token();
+            let cancel_clone = iteration_cancel.clone();
+
+            let prov_task = tokio::spawn(async move {
+                prov_clone
+                    .stream_chat(chat_req, stream_tx, cancel_clone)
+                    .await
+            });
+
+            let mut step_text = String::new();
+            let mut step_thought = String::new();
+            let mut tool_accumulator: HashMap<usize, AccumulatedToolCall> = HashMap::new();
+            let mut stream_error = None;
+
+            // Process stream deltas. A priority steer cancels only this
+            // iteration's stream so the new guidance can be applied promptly.
+            let mut steer_interrupted = false;
+            loop {
+                let evt = if let Some(queue) = &steer {
+                    tokio::select! {
+                        evt = stream_rx.recv() => evt,
+                        _ = queue.wait_priority() => {
+                            iteration_cancel.cancel();
+                            steer_interrupted = true;
+                            None
+                        }
+                    }
+                } else {
+                    stream_rx.recv().await
+                };
+                let Some(evt) = evt else {
+                    break;
+                };
+                match evt {
+                    StreamEvent::TextDelta(delta) => {

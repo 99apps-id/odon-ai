@@ -1,0 +1,80 @@
+            ));
+            history.push(message(
+                MessageRole::Assistant,
+                &format!("answer {i} {}", "a".repeat(200)),
+            ));
+            history.push(message(
+                MessageRole::Tool,
+                &format!("output {i} {}", "o".repeat(200)),
+            ));
+        }
+        let out = compact_history(history, 2_000);
+        let total: usize = out.iter().map(message_estimated_tokens).sum();
+        assert!(total <= 2_600, "total {total}");
+        assert!(
+            out.iter()
+                .any(|m| m.content.text.contains("Context compacted")),
+            "the elision must be marked"
+        );
+        // After the kept head and the marker, no message may be a tool
+        // result whose declaring assistant message was elided.
+        let marker = out
+            .iter()
+            .position(|m| m.content.text.contains("Context compacted"))
+            .expect("marker present");
+        if let Some(first_tail) = out.get(marker + 1) {
+            assert_ne!(first_tail.role, MessageRole::Tool);
+        }
+    }
+
+    #[test]
+    fn harness_teaches_the_todo_workflow_and_surfaces_the_stored_plan() {
+        let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+        let (event_tx, _rx) = odon_core::events::create_event_bus(16);
+        let runtime = AgentRuntime::new(
+            storage.clone(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ApprovalEngine::new(odon_security::SecurityPolicy::default())),
+            Arc::new(AuditLogger::new()),
+            event_tx,
+            "/tmp".to_string(),
+        );
+
+        let harness = runtime.build_system_harness("/tmp");
+        assert!(
+            harness.contains("todo_write"),
+            "the harness must teach the todo workflow for large tasks"
+        );
+        assert!(
+            runtime.session_plan_harness("missing").is_empty(),
+            "no stored plan, no plan section"
+        );
+
+        let mut session = Session::new("t", SessionMode::General, "m");
+        session.id = "s-plan".to_string();
+        storage.save_session(&session).unwrap();
+        storage
+            .set_todos(
+                "s-plan",
+                &serde_json::json!([
+                    {"title": "Inspect the repo", "status": "completed"},
+                    {"title": "Implement the fix", "status": "in_progress"},
+                    {"title": "Run the tests", "status": "pending"},
+                ]),
+            )
+            .unwrap();
+        let plan = runtime.session_plan_harness("s-plan");
+        assert!(plan.contains("[x] Inspect the repo"), "{plan}");
+        assert!(plan.contains("[>] Implement the fix"), "{plan}");
+        assert!(plan.contains("[ ] Run the tests"), "{plan}");
+    }
+
+    #[test]
+    fn tool_selection_caps_the_inline_schemas_and_offers_search() {
+        let defs: Vec<ToolDefinition> = (0..300)
+            .map(|i| ToolDefinition {
+                name: format!("tool_{i}"),
+                description: "d".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            })
+            .collect();

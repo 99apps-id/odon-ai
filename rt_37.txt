@@ -1,0 +1,40 @@
+
+/// Truncates a string to at most `max` characters, on a char boundary.
+fn truncate_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// Rough token estimate (one token per four characters), good enough for
+/// a budget check that only decides when to compact.
+fn estimate_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(4)
+}
+
+fn message_estimated_tokens(message: &Message) -> usize {
+    let mut total = estimate_tokens(&message.content.text);
+    if let Some(thought) = &message.content.thought {
+        total += estimate_tokens(thought);
+    }
+    for call in &message.content.tool_calls {
+        total += estimate_tokens(&call.arguments.to_string());
+        if let Some(output) = &call.output {
+            total += estimate_tokens(&output.to_string());
+        }
+    }
+    total
+}
+
+/// Largest tool output kept whole through compaction, in characters.
+const COMPACT_TOOL_OUTPUT_CHARS: usize = 4_000;
+
+fn trim_long_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max_chars * 3 / 4).collect();
+    let tail: String = {
+        let skipped = text.chars().count().saturating_sub(max_chars / 4);
+        text.chars().skip(skipped).collect()
+    };
+    format!(
+        "{head}\n... [{} characters trimmed by context compaction] ...\n{tail}",

@@ -1,0 +1,40 @@
+                                call_id: call.call_id,
+                                name: call.name,
+                                args: call.args,
+                                output,
+                                is_error,
+                            }
+                        });
+                    }
+                    loop {
+                        tokio::select! {
+                            _ = cancellation.cancelled() => {
+                                join_set.abort_all();
+                                break;
+                            }
+                            joined = join_set.join_next() => match joined {
+                                Some(Ok(done)) => executed.push(done),
+                                Some(Err(_)) => {}
+                                None => break,
+                            }
+                        }
+                    }
+                    // Calls that never finished (a Stop aborted them)
+                    // still owe the model a result, or the history the
+                    // next step replays is invalid.
+                    for meta in &registry_meta {
+                        if !executed.iter().any(|done| done.index == meta.index) {
+                            executed.push(ExecutedCall {
+                                index: meta.index,
+                                call_id: meta.call_id.clone(),
+                                name: meta.name.clone(),
+                                args: meta.args.clone(),
+                                output: serde_json::json!({
+                                    "error": "Tool execution cancelled by user"
+                                }),
+                                is_error: true,
+                            });
+                        }
+                    }
+                }
+            }

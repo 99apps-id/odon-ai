@@ -1,0 +1,40 @@
+
+        if child_count > 1 {
+            (
+                serde_json::json!({
+                    "subagents": reports,
+                    "child_count": child_count,
+                    "provider": provider_display,
+                    "model": model_display,
+                }),
+                overall_error.is_some(),
+            )
+        } else {
+            let report = reports.into_iter().next().unwrap_or_default();
+            (
+                serde_json::json!({
+                    "subagent_session": report.get("session").cloned().unwrap_or_default(),
+                    "output": report.get("output").cloned().unwrap_or_default(),
+                    "status": report.get("status").cloned().unwrap_or_default(),
+                    "error": report.get("error").cloned().unwrap_or_default(),
+                    "provider": provider_display,
+                    "model": model_display,
+                }),
+                overall_error.is_some(),
+            )
+        }
+    }
+
+    fn parse_subagent_tasks(args: &serde_json::Value) -> Option<Vec<String>> {
+        let tasks = args
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|arr| !arr.is_empty());
+        if tasks.is_some() {
+            return tasks.map(|v| v.into_iter().map(|s| s.to_string()).collect());
+        }

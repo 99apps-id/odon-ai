@@ -1,0 +1,80 @@
+            state: AgentState::Thinking,
+        });
+
+        // 3. Resolve provider and wire model independently. Model selections use
+        // `provider::model`, preventing a display/model id from being mistaken for
+        // a provider registry key.
+        let (provider_override, requested_model) = model_override
+            .and_then(|value| value.split_once("::"))
+            .map(|(provider, model)| (Some(provider), model))
+            .unwrap_or((None, model_override.unwrap_or("odon-auto")));
+        let provider = match self.get_provider(provider_override).await {
+            Some(p) => {
+                if p.provider_name() == "odon-simulated" && requested_model != "odon-simulated" {
+                    return Err(OdonError::Provider {
+                        provider: provider_override.unwrap_or("default").to_string(),
+                        message: "Mock provider is disabled. Please configure your API key in Settings (BYOK) or sign in with GitHub Copilot / Antigravity to chat with real AI models.".to_string(),
+                    });
+                }
+                p
+            }
+            None => {
+                return Err(OdonError::Provider {
+                    provider: provider_override.unwrap_or("default").to_string(),
+                    message: format!(
+                        "Provider '{}' is not configured or missing an API key. Please open Settings and configure your credentials to enable real AI responses.",
+                        provider_override.unwrap_or("default")
+                    ),
+                });
+            }
+        };
+
+        // 4. Build Tools list
+        let tool_schemas = self.tools.schemas();
+        let tool_defs: Vec<ToolDefinition> = tool_schemas
+            .into_iter()
+            .map(|s| ToolDefinition {
+                name: s.name,
+                description: s.description,
+                parameters: s.parameters,
+            })
+            .collect();
+
+        let workspace_root = self.session_workspace(session_id);
+        let system_harness = self.build_system_harness(&workspace_root);
+        let plan = self.session_plan_harness(session_id);
+        let system_harness = if plan.is_empty() {
+            system_harness
+        } else {
+            format!("{system_harness}\n{plan}")
+        };
+        let system_harness = match extra_system_prompt {
+            Some(extra) if !extra.trim().is_empty() => format!(
+                "{system_harness}\n\n## Operator Persona & Custom Instructions\n{}",
+                extra.trim()
+            ),
+            _ => system_harness,
+        };
+        let mut active_artifacts = Vec::new();
+        let mut total_accumulated_text = String::new();
+        let mut total_accumulated_thought = String::new();
+
+        // Tool schemas for this turn: the registry catalogue, capped at
+        // MAX_INLINE_TOOL_SCHEMAS. Past the cap a core set goes inline
+        // with `find_tools`, and the model loads the rest on demand; the
+        // runtime's own tools (find_tools, run_subagent) ride along.
+        let subagent_enabled = depth == 0;
+        let mut active_tools = initial_active_tools(&tool_defs, subagent_enabled);
+
+        let max_turn_iterations = iteration_cap
+            .unwrap_or_else(|| self.max_turn_iterations())
+            .max(1);
+        let mut current_iteration = 0;
+        let mut hit_step_cap = false;
+
+        // 5. Multi-Step Agentic Loop (ReAct / Tool-Use Loop)
+        while current_iteration < max_turn_iterations {
+            current_iteration += 1;
+
+            if cancellation.is_cancelled() {
+                let _ = self.event_tx.send(AgentEvent::StateChanged {

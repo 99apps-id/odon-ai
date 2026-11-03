@@ -1,0 +1,40 @@
+        )
+        .await
+    }
+
+    /// Execute a turn with optional mid-turn steering. Steers are injected as
+    /// user messages at the next agent-loop checkpoint; priority steers also
+    /// interrupt the current provider stream so the new guidance is applied
+    /// immediately.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_turn_controlled(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+        steer: Option<SteerQueue>,
+        extra_system_prompt: Option<&str>,
+    ) -> Result<Message> {
+        self.execute_turn_inner(
+            session_id,
+            user_prompt,
+            attachments,
+            model_override,
+            effort,
+            cancellation,
+            steer,
+            extra_system_prompt,
+            0,
+            None,
+        )
+        .await
+    }
+
+    /// The turn loop. `depth` counts subagent nesting (a delegated run may
+    /// not delegate further), and `iteration_cap` overrides the configured
+    /// step cap for bounded child runs.
+    #[allow(clippy::too_many_arguments)]
+    #[async_recursion::async_recursion]

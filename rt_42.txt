@@ -1,0 +1,40 @@
+    if registry_defs.len() <= registry_budget {
+        active.extend(registry_defs.iter().cloned());
+    } else {
+        let mut picked: Vec<ToolDefinition> = Vec::new();
+        for name in CORE_TOOL_NAMES {
+            if let Some(def) = registry_defs.iter().find(|def| &def.name == name) {
+                if !picked.iter().any(|tool| &tool.name == name) {
+                    picked.push(def.clone());
+                }
+            }
+        }
+        for def in registry_defs {
+            if picked.len() >= registry_budget {
+                break;
+            }
+            if !picked.iter().any(|tool| tool.name == def.name) {
+                picked.push(def.clone());
+            }
+        }
+        picked.truncate(registry_budget);
+        active.extend(picked);
+    }
+    if needs_search {
+        active.push(find_tools_definition());
+    }
+    active
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(role: MessageRole, text: &str) -> Message {
+        let session = "s1";
+        match role {
+            MessageRole::User => Message::new_user(session, text.to_string()),
+            MessageRole::Assistant => Message::new_assistant(session, text.to_string(), None, None),
+            MessageRole::System => {
+                let mut msg = Message::new_user(session, text.to_string());
+                msg.role = MessageRole::System;

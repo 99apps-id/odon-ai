@@ -37,6 +37,7 @@ pub struct OpenAiCompatibleProvider {
     client: reqwest::Client,
     base_url: String,
     api_key: std::sync::Mutex<(String, std::time::Instant)>,
+    refresh_lock: tokio::sync::Mutex<()>,
     provider_label: String,
     copilot_responses_models: std::sync::Mutex<HashSet<String>>,
     copilot_models_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<CopilotModelInfo>)>>,
@@ -90,6 +91,7 @@ impl OpenAiCompatibleProvider {
             client,
             base_url: normalize_base_url(&base_url.into()),
             api_key: std::sync::Mutex::new((api_key.into(), std::time::Instant::now())),
+            refresh_lock: tokio::sync::Mutex::new(()),
             provider_label: label.unwrap_or("openai-compatible").to_string(),
             copilot_responses_models: std::sync::Mutex::new(HashSet::new()),
             copilot_models_cache: tokio::sync::Mutex::new(None),
@@ -100,16 +102,28 @@ impl OpenAiCompatibleProvider {
 
     /// Returns a usable bearer token, refreshing the Copilot session token when stale.
     async fn current_token(&self) -> String {
-        let (token, age) = {
-            let g = self.api_key.lock().unwrap();
-            (g.0.clone(), g.1.elapsed())
+        let stale = |age: std::time::Duration| {
+            self.provider_label == "github-copilot" && age > COPILOT_TOKEN_MAX_AGE
         };
-        if self.provider_label == "github-copilot" && age > COPILOT_TOKEN_MAX_AGE {
-            if let Some(fresh) = crate::host_creds::discover_github_copilot().await {
-                let mut g = self.api_key.lock().unwrap();
-                *g = (fresh.access_token.clone(), std::time::Instant::now());
-                return fresh.access_token;
-            }
+        let read = || {
+            let guard = self.api_key.lock().unwrap_or_else(|e| e.into_inner());
+            (guard.0.clone(), guard.1.elapsed())
+        };
+        let (token, age) = read();
+        if !stale(age) {
+            return token;
+        }
+        // Serialise refreshes. Copilot session tokens rotate, so two concurrent
+        // refreshes race and the loser can cache a token that is already dead.
+        let _refresh = self.refresh_lock.lock().await;
+        let (token, age) = read();
+        if !stale(age) {
+            return token;
+        }
+        if let Some(fresh) = crate::host_creds::discover_github_copilot().await {
+            let mut guard = self.api_key.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = (fresh.access_token.clone(), std::time::Instant::now());
+            return fresh.access_token;
         }
         token
     }

@@ -1,0 +1,40 @@
+            });
+        }
+    }
+
+    async fn collect_parent_attachments(
+        storage: Arc<StorageEngine>,
+        parent_session_id: &str,
+    ) -> Vec<MessageAttachment> {
+        let mut collected: Vec<MessageAttachment> = Vec::new();
+        if let Ok(messages) = storage.list_messages(parent_session_id) {
+            for message in messages.into_iter().rev() {
+                for attachment in message.content.attachments {
+                    if !collected
+                        .iter()
+                        .any(|a| a.data_base64 == attachment.data_base64)
+                    {
+                        collected.push(attachment);
+                    }
+                }
+                if collected.len() >= 12 {
+                    break;
+                }
+            }
+        }
+        collected
+    }
+
+    async fn prepare_child_workspace(
+        parent_session_id: &str,
+        child_session_id: &str,
+        storage: Arc<StorageEngine>,
+        fallback_workspace: &str,
+    ) -> std::result::Result<PathBuf, String> {
+        let parent_session = storage
+            .get_session(parent_session_id)
+            .map_err(|_| "parent session not found".to_string())?;
+        let workspace = parent_session
+            .workspace_root
+            .clone()
+            .filter(|root| !root.trim().is_empty())

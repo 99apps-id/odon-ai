@@ -15,7 +15,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::adapter::{
-    extract_document_text, is_extractable_document, ChannelAdapter, IncomingChannelMessage,
+    extract_document_text, is_extractable_document, read_body_capped, ChannelAdapter,
+    IncomingChannelMessage,
 };
 
 const MAX_MESSAGE: usize = 3500;
@@ -192,6 +193,16 @@ impl WhatsAppChannel {
         if recipient.is_empty() {
             return Err(OdonError::Channel(format!(
                 "Invalid WhatsApp recipient: {to}"
+            )));
+        }
+        // The allowlist gates who may command the agent, so honour it outbound
+        // too: otherwise any caller that reaches this point can message
+        // arbitrary numbers even when WHATSAPP_ALLOWED_NUMBERS is configured.
+        if !self.allowed_numbers.is_empty()
+            && !self.allowed_numbers.iter().any(|n| n == &recipient)
+        {
+            return Err(OdonError::Channel(format!(
+                "WhatsApp recipient {recipient} is not in WHATSAPP_ALLOWED_NUMBERS"
             )));
         }
 
@@ -378,11 +389,16 @@ impl WhatsAppChannel {
             warn!("WhatsApp media download failed: HTTP {}", resp.status());
             return None;
         }
-        let bytes = resp.bytes().await.ok()?.to_vec();
-        if bytes.len() > MAX_DOWNLOAD_BYTES {
-            warn!("WhatsApp media exceeds size limit: {} bytes", bytes.len());
-            return None;
-        }
+        let bytes = match read_body_capped(resp, MAX_DOWNLOAD_BYTES).await {
+            Some(bytes) => bytes,
+            None => {
+                warn!(
+                    "WhatsApp media download rejected: failed or larger than {} bytes",
+                    MAX_DOWNLOAD_BYTES
+                );
+                return None;
+            }
+        };
         Some((bytes, mime))
     }
 

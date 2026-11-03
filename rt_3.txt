@@ -1,0 +1,40 @@
+
+    /// Sets the context budget in estimated tokens (clamped at 8000+).
+    pub fn set_context_budget_tokens(&self, value: usize) {
+        self.context_budget_tokens
+            .store(value.max(8_000), Ordering::Relaxed);
+    }
+
+    pub fn storage(&self) -> Arc<StorageEngine> {
+        self.storage.clone()
+    }
+
+    pub fn tools(&self) -> Arc<ToolRegistry> {
+        self.tools.clone()
+    }
+
+    pub fn approval(&self) -> Arc<ApprovalEngine> {
+        self.approval.clone()
+    }
+
+    pub fn event_sender(&self) -> broadcast::Sender<AgentEvent> {
+        self.event_tx.clone()
+    }
+
+    pub async fn register_provider(
+        &self,
+        name: impl Into<String>,
+        provider: Arc<dyn ModelProvider>,
+        as_default: bool,
+    ) {
+        let name_str = name.into();
+        let mut providers = self.providers.write().await;
+        providers.insert(name_str.clone(), provider);
+        if as_default {
+            let mut def = self.default_provider.write().await;
+            *def = name_str;
+        }
+    }
+
+    pub async fn unregister_provider(&self, name: &str) {
+        let mut providers = self.providers.write().await;

@@ -1,0 +1,40 @@
+            .unwrap_or_else(|| fallback_workspace.to_string());
+        if workspace.is_empty() {
+            return Err("workspace is not configured".to_string());
+        }
+        let root = PathBuf::from(&workspace);
+        if !root.join(".git").exists() {
+            return Ok(root);
+        }
+        let worktree = root.join(".odon").join("worktrees").join(child_session_id);
+        tokio::fs::create_dir_all(&worktree)
+            .await
+            .map_err(|e| format!("failed to create worktree dir: {e}"))?;
+        let output = tokio::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                worktree.to_string_lossy().as_ref(),
+                "HEAD",
+            ])
+            .current_dir(&root)
+            .output()
+            .await
+            .map_err(|e| format!("failed to spawn git: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git worktree add failed: {stderr}"));
+        }
+        Ok(worktree)
+    }
+
+    fn update_child_workspace(
+        child_session_id: &str,
+        worktree: Option<String>,
+        storage: Arc<StorageEngine>,
+    ) {
+        if let Some(path) = worktree {
+            if let Ok(mut session) = storage.get_session(child_session_id) {
+                session.workspace_root = Some(path);
+                let _ = storage.save_session(&session);

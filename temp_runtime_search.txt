@@ -1,0 +1,133 @@
+19: use crate::steer::SteerQueue;
+63:     approval: Arc<ApprovalEngine>,
+77:         approval: Arc<ApprovalEngine>,
+85:             approval,
+136:     pub fn approval(&self) -> Arc<ApprovalEngine> {
+137:         self.approval.clone()
+276:         cancellation: CancellationToken,
+278:         self.execute_turn_with_effort(session_id, user_prompt, model_override, None, cancellation)
+288:         cancellation: CancellationToken,
+296:             cancellation,
+310:         cancellation: CancellationToken,
+318:             cancellation,
+325:     /// Execute a turn with optional mid-turn steering. Steers are injected as
+326:     /// user messages at the next agent-loop checkpoint; priority steers also
+337:         cancellation: CancellationToken,
+338:         steer: Option<SteerQueue>,
+347:             cancellation,
+348:             steer,
+356:     /// The turn loop. `depth` counts subagent nesting (a delegated run may
+368:         cancellation: CancellationToken,
+369:         steer: Option<SteerQueue>,
+371:         depth: u32,
+466:         let subagent_enabled = depth == 0;
+479:             if cancellation.is_cancelled() {
+487:             // Inject any steers that arrived since the previous checkpoint.
+488:             if let Some(queue) = &steer {
+490:                     let steer_message = Message::new_user_with_attachments(
+495:                     let _ = self.storage.save_message(&steer_message);
+498:                         steer_id: message.id,
+526:             let iteration_cancel = cancellation.child_token();
+527:             let cancel_clone = iteration_cancel.clone();
+529:             let prov_task = tokio::spawn(async move {
+531:                     .stream_chat(chat_req, stream_tx, cancel_clone)
+540:             // Process stream deltas. A priority steer cancels only this
+542:             let mut steer_interrupted = false;
+544:                 let evt = if let Some(queue) = &steer {
+548:                             iteration_cancel.cancel();
+549:                             steer_interrupted = true;
+606:             // Drop the receiver so a cancelled provider never blocks on a full
+634:             if steer_interrupted {
+635:                 // Preempted by a priority steer: skip this partial step and let
+641:             // If a steer is waiting, run another iteration so it is not lost.
+643:                 let pending_steer = steer
+647:                 if pending_steer && current_iteration < max_turn_iterations {
+684:                 if let Some(tool_call) = tool_accumulator.get(&idx) {
+685:                     let call_id = if tool_call.id.is_empty() {
+686:                         format!("call_{}_{}", tool_call.name, uuid::Uuid::new_v4().simple())
+688:                         tool_call.id.clone()
+693:                     match serde_json::from_str::<serde_json::Value>(&tool_call.arguments) {
+697:                             name: tool_call.name.clone(),
+703:                             name: tool_call.name.clone(),
+742:                                 depth,
+743:                                 cancellation.clone(),
+761:                 if cancellation.is_cancelled() {
+769:                                 "error": "Tool execution cancelled by user"
+782:                             approval_engine: self.approval.clone(),
+787:                         join_set.spawn(async move {
+811:                             _ = cancellation.cancelled() => {
+833:                                     "error": "Tool execution cancelled by user"
+870:                     requires_approval: false,
+876:                 // tool_calls message.
+883:             // Persist the assistant step with its tool_calls FIRST so history order
+884:             // (assistant tool_calls, then tool results) is valid for every provider.
+895:             intermediate_assistant.content.tool_calls = executed_tools_info;
+900:                 if let Some(info) = tool_msg.content.tool_calls.first_mut() {
+1014:     /// child's steps go through the same approval gates; only its final
+1021:         depth: u32,
+1022:         cancellation: CancellationToken,
+1024:         if depth >= 2 {
+1056:         for (index, child_session_id) in child_ids.iter().cloned().enumerate() {
+1062:             session.id = child_session_id.clone();
+1101:         let approval = self.approval.clone();
+1104:         for (index, child_session_id) in child_ids.iter().cloned().enumerate() {
+1107:             let approval = approval.clone();
+1109:             let cancellation_child = cancellation.child_token();
+1121:             join_set.spawn(async move {
+1123:                     &approval,
+1124:                     &child_session_id,
+1130:                 let worktree = AgentRuntime::prepare_child_workspace(
+1132:                     &child_session_id,
+1144:                 let result = match worktree {
+1145:                     Ok(worktree_path) => {
+1147:                             &child_session_id,
+1148:                             Some(worktree_path.to_string_lossy().to_string()),
+1151:                         let workspace_root = worktree_path.to_string_lossy().to_string();
+1157:                                     child_session_id,
+1163:                             &child_session_id,
+1168:                             cancellation_child,
+1169:                             depth + 1,
+1182:                     &approval,
+1183:                     &child_session_id,
+1189:                 let _ = AgentRuntime::finalize_child_workspace(&child_session_id, storage.clone())
+1192:                 (index, child_session_id, result)
+1201:                 Ok((index, child_session_id, Ok(output))) => {
+1202:                     completed_reports.push((index, child_session_id, output, None::<String>));
+1204:                 Ok((index, child_session_id, Err(error))) => {
+1205:                     completed_errors.push((index, child_session_id, error));
+1303:         approval: &Arc<ApprovalEngine>,
+1304:         child_session_id: &str,
+1309:         if let Some(tx) = approval.event_sender().as_ref() {
+1311:                 session_id: child_session_id.to_string(),
+1315:                 session_id: child_session_id.to_string(),
+1350:         child_session_id: &str,
+1369:         let worktree = root.join(".odon").join("worktrees").join(child_session_id);
+1370:         tokio::fs::create_dir_all(&worktree)
+1372:             .map_err(|e| format!("failed to create worktree dir: {e}"))?;
+1375:                 "worktree",
+1378:                 worktree.to_string_lossy().as_ref(),
+1381:             .current_dir(&root)
+1384:             .map_err(|e| format!("failed to spawn git: {e}"))?;
+1387:             return Err(format!("git worktree add failed: {stderr}"));
+1389:         Ok(worktree)
+1393:         child_session_id: &str,
+1394:         worktree: Option<String>,
+1397:         if let Some(path) = worktree {
+1398:             if let Ok(mut session) = storage.get_session(child_session_id) {
+1405:     async fn finalize_child_workspace(child_session_id: &str, _storage: Arc<StorageEngine>) {
+1407:             .args(["worktree", "remove", "--force", child_session_id])
+1413:     /// storage, tools, providers and approval gates. The child session is
+1420:         child_session_id: &str,
+1425:         cancellation: CancellationToken,
+1426:         depth: u32,
+1429:         if self.storage.get_session(child_session_id).is_err() {
+1435:             child.id = child_session_id.to_string();
+1447:             child_session_id,
+1452:             cancellation,
+1455:             depth,
+1462:     /// collaborator with the parent (storage, tools, providers, approval,
+1468:             approval: self.approval.clone(),
+1498:     for call in &message.content.tool_calls {
+1547:             for call in &mut message.content.tool_calls {
+1565:     // tool_calls: its tool results would fall into the elided window,
+1568:     while head_len > 0 && !messages[head_len - 1].content.tool_calls.is_empty() {

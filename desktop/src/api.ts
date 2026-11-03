@@ -190,6 +190,26 @@ export const api = {
     }
   },
 
+  /**
+   * Turns a raw browser network failure into a message that names the cause.
+   * `window.fetch` rejects with a bare `TypeError: Failed to fetch` when the
+   * daemon is not listening, which reads like an application error and hides
+   * the only action that helps: start odond.
+   */
+  describeError(error: unknown, fallback: string): string {
+    const raw =
+      error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+    const text = raw.trim();
+    const looksLikeNetworkFailure =
+      error instanceof TypeError ||
+      /failed to fetch|networkerror|load failed|err_connection_refused|connection refused/i.test(
+        text,
+      );
+    if (!looksLikeNetworkFailure) return text || fallback;
+    const base = this.getBaseUrl() || 'this origin';
+    return `Cannot reach the ODON daemon at ${base}. Start it with \`odond serve\` (the desktop app launches it automatically), then retry.`;
+  },
+
   /** fetch wrapper that only attaches ODON_API_TOKEN to the configured daemon origin. */
   async fetchApi(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const token = this.getApiToken();
@@ -457,6 +477,7 @@ export const api = {
     attachments?: Array<{ name: string; mime_type: string; data_base64: string }>,
     customInstructions?: string,
     planMode?: boolean,
+    mode?: string,
   ): Promise<Message> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/messages`, {
       method: 'POST',
@@ -467,6 +488,7 @@ export const api = {
         effort,
         custom_instructions: customInstructions,
         plan_mode: planMode,
+        mode,
         attachments: attachments || [],
       }),
     });

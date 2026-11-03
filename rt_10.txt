@@ -1,0 +1,40 @@
+            state: AgentState::Thinking,
+        });
+
+        // 3. Resolve provider and wire model independently. Model selections use
+        // `provider::model`, preventing a display/model id from being mistaken for
+        // a provider registry key.
+        let (provider_override, requested_model) = model_override
+            .and_then(|value| value.split_once("::"))
+            .map(|(provider, model)| (Some(provider), model))
+            .unwrap_or((None, model_override.unwrap_or("odon-auto")));
+        let provider = match self.get_provider(provider_override).await {
+            Some(p) => {
+                if p.provider_name() == "odon-simulated" && requested_model != "odon-simulated" {
+                    return Err(OdonError::Provider {
+                        provider: provider_override.unwrap_or("default").to_string(),
+                        message: "Mock provider is disabled. Please configure your API key in Settings (BYOK) or sign in with GitHub Copilot / Antigravity to chat with real AI models.".to_string(),
+                    });
+                }
+                p
+            }
+            None => {
+                return Err(OdonError::Provider {
+                    provider: provider_override.unwrap_or("default").to_string(),
+                    message: format!(
+                        "Provider '{}' is not configured or missing an API key. Please open Settings and configure your credentials to enable real AI responses.",
+                        provider_override.unwrap_or("default")
+                    ),
+                });
+            }
+        };
+
+        // 4. Build Tools list
+        let tool_schemas = self.tools.schemas();
+        let tool_defs: Vec<ToolDefinition> = tool_schemas
+            .into_iter()
+            .map(|s| ToolDefinition {
+                name: s.name,
+                description: s.description,
+                parameters: s.parameters,
+            })

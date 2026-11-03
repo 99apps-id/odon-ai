@@ -10,7 +10,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::adapter::{
-    extract_document_text, is_extractable_document, ChannelAdapter, IncomingChannelMessage,
+    extract_document_text, is_extractable_document, read_body_capped, ChannelAdapter,
+    IncomingChannelMessage,
 };
 
 /// Telegram Bot API rejects messages longer than 4096 UTF-16 code units.
@@ -352,12 +353,16 @@ impl TelegramRelay {
             warn!("Telegram file download failed: HTTP {}", resp.status());
             return None;
         }
-        let bytes = resp.bytes().await.ok()?;
-        if bytes.len() > MAX_DOWNLOAD_BYTES {
-            warn!("Telegram file is too large: {} bytes", bytes.len());
-            return None;
+        match read_body_capped(resp, MAX_DOWNLOAD_BYTES).await {
+            Some(bytes) => Some(bytes),
+            None => {
+                warn!(
+                    "Telegram file download rejected: failed or larger than {} bytes",
+                    MAX_DOWNLOAD_BYTES
+                );
+                None
+            }
         }
-        Some(bytes.to_vec())
     }
 
     async fn collect_attachments(

@@ -402,7 +402,7 @@ pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(
             }
             if tokio::time::Instant::now() >= deadline {
                 last = format!("browser did not expose its debugging port ({p})");
-                let _ = child.kill();
+                let _ = child.kill().await;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;

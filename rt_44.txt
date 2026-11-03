@@ -1,0 +1,40 @@
+            ));
+            history.push(message(
+                MessageRole::Assistant,
+                &format!("answer {i} {}", "a".repeat(200)),
+            ));
+            history.push(message(
+                MessageRole::Tool,
+                &format!("output {i} {}", "o".repeat(200)),
+            ));
+        }
+        let out = compact_history(history, 2_000);
+        let total: usize = out.iter().map(message_estimated_tokens).sum();
+        assert!(total <= 2_600, "total {total}");
+        assert!(
+            out.iter()
+                .any(|m| m.content.text.contains("Context compacted")),
+            "the elision must be marked"
+        );
+        // After the kept head and the marker, no message may be a tool
+        // result whose declaring assistant message was elided.
+        let marker = out
+            .iter()
+            .position(|m| m.content.text.contains("Context compacted"))
+            .expect("marker present");
+        if let Some(first_tail) = out.get(marker + 1) {
+            assert_ne!(first_tail.role, MessageRole::Tool);
+        }
+    }
+
+    #[test]
+    fn harness_teaches_the_todo_workflow_and_surfaces_the_stored_plan() {
+        let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+        let (event_tx, _rx) = odon_core::events::create_event_bus(16);
+        let runtime = AgentRuntime::new(
+            storage.clone(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ApprovalEngine::new(odon_security::SecurityPolicy::default())),
+            Arc::new(AuditLogger::new()),
+            event_tx,
+            "/tmp".to_string(),

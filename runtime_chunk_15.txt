@@ -1,0 +1,80 @@
+                Ok((index, child_session_id, Ok(output))) => {
+                    completed_reports.push((index, child_session_id, output, None::<String>));
+                }
+                Ok((index, child_session_id, Err(error))) => {
+                    completed_errors.push((index, child_session_id, error));
+                }
+                Err(join_error) => {
+                    completed_errors.push((0, format!("join-error-{}", 0), join_error.to_string()));
+                }
+            }
+        }
+
+        completed_reports.sort_by_key(|item| item.0);
+        completed_errors.sort_by_key(|item| item.0);
+
+        let mut reports = Vec::with_capacity(child_count);
+        for index in 0..child_count {
+            let mut report = serde_json::json!({
+                "session": child_ids.get(index).cloned().unwrap_or_default(),
+                "status": "failed",
+                "output": "",
+            });
+            if let Some((_, _, output, _)) = completed_reports.iter().find(|item| item.0 == index) {
+                report["status"] = serde_json::json!("completed");
+                report["output"] = serde_json::json!(output);
+            } else if let Some((_, _, error)) = completed_errors.iter().find(|item| item.0 == index)
+            {
+                report["error"] = serde_json::json!(error);
+            }
+            reports.push(report);
+        }
+
+        let overall_error = completed_errors.first().map(|item| item.2.clone());
+
+        let provider_display = provider_override
+            .or(parent_model_override.as_deref())
+            .unwrap_or(model);
+        let model_display = requested_model
+            .or(parent_model_override.as_deref())
+            .unwrap_or(model);
+
+        if child_count > 1 {
+            (
+                serde_json::json!({
+                    "subagents": reports,
+                    "child_count": child_count,
+                    "provider": provider_display,
+                    "model": model_display,
+                }),
+                overall_error.is_some(),
+            )
+        } else {
+            let report = reports.into_iter().next().unwrap_or_default();
+            (
+                serde_json::json!({
+                    "subagent_session": report.get("session").cloned().unwrap_or_default(),
+                    "output": report.get("output").cloned().unwrap_or_default(),
+                    "status": report.get("status").cloned().unwrap_or_default(),
+                    "error": report.get("error").cloned().unwrap_or_default(),
+                    "provider": provider_display,
+                    "model": model_display,
+                }),
+                overall_error.is_some(),
+            )
+        }
+    }
+
+    fn parse_subagent_tasks(args: &serde_json::Value) -> Option<Vec<String>> {
+        let tasks = args
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|arr| !arr.is_empty());
+        if tasks.is_some() {
+            return tasks.map(|v| v.into_iter().map(|s| s.to_string()).collect());
+        }

@@ -1,0 +1,40 @@
+    /// Build context harness with OS, time, workspace status, memories, and tools
+    pub fn build_system_harness(&self, workspace_root: &str) -> String {
+        let now = chrono::Utc::now().to_rfc3339();
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+
+        let memories = self.storage.list_memories(None).unwrap_or_default();
+        let mut memories_text = String::new();
+        if !memories.is_empty() {
+            memories_text.push_str("\n### Known User Preferences & Project Memory:\n");
+            for m in memories.iter().take(10) {
+                memories_text.push_str(&format!("- [{}] {}: {}\n", m.category, m.key, m.value));
+            }
+        }
+
+        format!(
+            "You are ODON (Open Digital Orchestration Network), an advanced universal AI assistant and autonomous orchestrator.\n\
+             \n\
+             ### Environment Harness:\n\
+             - Current Timestamp: {}\n\
+             - Host Platform: {} ({})\n\
+             - Workspace Directory: {}\n\
+             {}\n\
+             ### Persona & Behavior Guidelines:\n\
+             1. Natural, fluid conversational responses styled like modern ChatGPT, Muse AI, and Codex.\n\
+             2. Do NOT output bureaucratic turn counters or terminal loop spam (e.g. 'Turn 1/30').\n\
+             3. Formulate well-structured answers using clean Markdown with headers, bullet points, and code blocks.\n\
+             4. When creating code, documents (PRDs, specs), or images, invoke the dedicated artifact tools (artifact_create_code, artifact_create_document, artifact_create_image) so they appear as first-class visual components.\n\
+             5. When asked to inspect, read, search, or edit files, execute the corresponding filesystem or git tools directly.\\n\
+             6. For any task with three or more distinct steps, plan before acting: write the steps with todo_write (exactly one in_progress at a time), start each step by marking it in_progress, and mark it completed as soon as it is done. Keep the plan current instead of narrating progress only in prose, and do not finish while plan items remain open unless you say why.",
+            now, os, arch, workspace_root, memories_text
+        )
+    }
+
+    /// Renders the session's stored todo plan for the system harness.
+    /// The plan is the agent's own working memory for a large task: by
+    /// showing it back at the start of every turn (and after compaction,
+    /// since the harness is rebuilt per step), the model resumes the
+    /// plan instead of relying on having read it earlier. Empty when no
+    /// plan exists yet.

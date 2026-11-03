@@ -1,0 +1,40 @@
+                    "parameters": tool.parameters,
+                })
+            })
+            .collect();
+        active.extend(matches);
+        serde_json::json!({
+            "tools": loaded,
+            "note": "These tools are now registered for this turn; call them by name in your next step. If none match, reformulate the query.",
+        })
+    }
+
+    /// Executes one `run_subagent` call: a bounded nested turn on a
+    /// child session with the same providers, tools and workspace. The
+    /// child's steps go through the same approval gates; only its final
+    /// message comes back as the tool result.
+    async fn execute_subagent(
+        &self,
+        parent_session_id: &str,
+        args: &serde_json::Value,
+        model: &str,
+        depth: u32,
+        cancellation: CancellationToken,
+    ) -> (serde_json::Value, bool) {
+        if depth >= 2 {
+            return (
+                serde_json::json!({ "error": "run_subagent cannot be nested" }),
+                true,
+            );
+        }
+        let tasks = match Self::parse_subagent_tasks(args) {
+            Some(tasks) => tasks,
+            None => {
+                return (
+                    serde_json::json!({ "error": "run_subagent needs 'task' or 'tasks[]'" }),
+                    true,
+                );
+            }
+        };
+        let provider_override = args
+            .get("provider")

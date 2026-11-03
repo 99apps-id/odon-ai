@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageSquare,
   Code2,
+  AlertCircle,
   Image as ImageIcon,
   FileText,
   Folder,
@@ -68,6 +69,7 @@ import { McpView } from './components/McpView';
 import { PromptStartersGrid } from './components/PromptStartersGrid';
 import { ArtifactVersionsModal } from './components/ArtifactVersionsModal';
 import { api, WorkspaceInfo, WorkspaceBrowseResult } from './api';
+import { isDesktopShell, pickFolder } from './lib/desktop';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
 // The composer exposes exactly four modes. Values outside this set are never
@@ -904,13 +906,27 @@ export default function App() {
       if (result.current) setWorkspaceInput(result.current);
       if (result.error) setWorkspaceError(result.error);
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Failed to open folder');
+      setWorkspaceError(api.describeError(err, 'Failed to open folder'));
     } finally {
       setWorkspaceBusy(false);
     }
   };
 
   const openWorkspacePicker = async () => {
+    // In the desktop shell prefer the OS chooser: it reaches drives the
+    // server-side browse list cannot enumerate. Dismissing it still leaves
+    // the in-app browser available, so the fallback is never a dead end.
+    if (isDesktopShell()) {
+      try {
+        const picked = await pickFolder();
+        if (picked) {
+          await applyWorkspace(picked);
+          return;
+        }
+      } catch (err: any) {
+        setWorkspaceError(api.describeError(err, 'Failed to open the folder picker'));
+      }
+    }
     setWorkspaceModalOpen(true);
     await loadWorkspaceBrowse(activeWorkspace || workspaces.default || undefined);
   };
@@ -937,7 +953,7 @@ export default function App() {
       setWorkspaceModalOpen(false);
       loadSessions();
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Failed to select workspace');
+      setWorkspaceError(api.describeError(err, 'Failed to select workspace'));
     } finally {
       setWorkspaceBusy(false);
     }
@@ -959,7 +975,7 @@ export default function App() {
       setWorkspaceModalOpen(false);
       loadSessions();
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Failed to add folder');
+      setWorkspaceError(api.describeError(err, 'Failed to add folder'));
     } finally {
       setWorkspaceBusy(false);
     }
@@ -976,7 +992,7 @@ export default function App() {
         if (currentSessionId) await api.setSessionWorkspace(currentSessionId, null);
       }
     } catch (err: any) {
-      setWorkspaceError(err?.message || 'Failed to remove workspace');
+      setWorkspaceError(api.describeError(err, 'Failed to remove workspace'));
     } finally {
       setWorkspaceBusy(false);
     }
@@ -1183,6 +1199,7 @@ export default function App() {
           outgoingAttachments,
           extraInstructions,
           planMode,
+          executionMode,
         );
 
         const assistantMsg: ChatMessage = {
@@ -1420,6 +1437,28 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-sand-50 text-neutral-800 font-sans">
+      {/* Daemon offline banner: the whole local surface (state, tools,
+          chats) depends on it, so say so instead of failing per action. */}
+      {!daemonOnline && (
+        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11.5px] bg-clay-100 text-clay-900 border-b border-clay-300">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1 truncate">
+            Daemon offline. Local state, tools, and chat history are unavailable.{' '}
+            {isDesktopShell()
+              ? 'Restart it from Settings → System.'
+              : 'Start `odond serve` on 127.0.0.1:4096.'}
+          </span>
+          <button
+            onClick={() => {
+              void checkDaemonStatus();
+            }}
+            className="px-2 py-0.5 rounded-md bg-[#3f5b70] text-white font-semibold hover:bg-[#33495a] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Hidden File Picker */}
       <input
         type="file"
@@ -2845,6 +2884,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
         onSelectProvider={handleSelectProvider}
         currentModel={selectedModel}
         onSelectModel={handleSelectModel}
+        onDaemonRestarted={() => {
+          void checkDaemonStatus();
+        }}
       />
 
       {/* ─────────────────────────────────────────────────────────────

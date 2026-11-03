@@ -34,6 +34,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, OAuthAccountInfo, OAuthLoginResponse, SshProfile, SkillItemInfo } from '../api';
+import { isDesktopShell, restartDaemon } from '../lib/desktop';
 
 /** Presentation for the /api/health probe shown beside the API token field. */
 const AUTH_PROBE_PILLS = {
@@ -90,6 +91,8 @@ interface SettingsModalProps {
   onSelectProvider?: (providerId: string) => void;
   currentModel?: string;
   onSelectModel?: (modelId: string) => void;
+  /** Called after a successful daemon restart so the host can re-probe. */
+  onDaemonRestarted?: () => void;
 }
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
@@ -127,6 +130,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSelectProvider,
   currentModel,
   onSelectModel,
+  onDaemonRestarted,
 }) => {
   type SettingsTab =
     | 'providers'
@@ -206,6 +210,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const authPill = AUTH_PROBE_PILLS[authProbeKey];
   const authHint = AUTH_PROBE_HINTS[authProbeKey](apiToken.trim());
   const [daemonConnected, setDaemonConnected] = useState<boolean | null>(null);
+  /** Result line from the last restart attempt, shown under the status card. */
+  const [daemonAction, setDaemonAction] = useState<string | null>(null);
+  const [daemonRestarting, setDaemonRestarting] = useState(false);
+
+  /**
+   * Restarts the daemon through the desktop shell. The shell refuses when
+   * the answering daemon was started outside the app, so this never kills
+   * a process the window does not own.
+   */
+  const restartDaemonNow = async () => {
+    if (daemonRestarting) return;
+    setDaemonRestarting(true);
+    setDaemonAction(null);
+    try {
+      const report = await restartDaemon();
+      setDaemonAction(report);
+      await api
+        .getStatus()
+        .then(() => setDaemonConnected(true))
+        .catch(() => setDaemonConnected(false));
+      onDaemonRestarted?.();
+    } catch (err: any) {
+      setDaemonAction(api.describeError(err, 'Could not restart the daemon'));
+      setDaemonConnected(false);
+    } finally {
+      setDaemonRestarting(false);
+    }
+  };
 
   // OAuth Accounts State
   const [oauthAccounts, setOauthAccounts] = useState<Record<string, OAuthAccountInfo>>({});
@@ -2189,6 +2221,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <p className="text-[12px] text-neutral-500">
                 The headless daemon (`odond serve`) provides SQLite state persistence, interactive shell sessions, agent tool dispatch, and live SSE event distribution.
               </p>
+              <div className="flex items-center gap-2">
+                {isDesktopShell() ? (
+                  <button
+                    onClick={restartDaemonNow}
+                    disabled={daemonRestarting}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#3f5b70] text-white text-[11.5px] font-semibold hover:bg-[#33495a] disabled:opacity-50 inline-flex items-center gap-1.5"
+                    title="Stop the daemon this app started and launch a fresh one"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    {daemonRestarting ? 'Restarting...' : 'Restart daemon'}
+                  </button>
+                ) : (
+                  <span className="text-[11.5px] text-neutral-500">
+                    Restart is available in the desktop app; here start `odond serve` yourself.
+                  </span>
+                )}
+              </div>
+              {daemonAction && (
+                <p className="text-[11.5px] font-mono text-neutral-600 dark:text-neutral-400 break-words">
+                  {daemonAction}
+                </p>
+              )}
             </div>
 
             {/* Daemon URL override */}

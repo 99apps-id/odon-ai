@@ -1,0 +1,40 @@
+    ) -> Self {
+        Self {
+            storage,
+            tools,
+            approval,
+            audit,
+            providers: Arc::new(RwLock::new(HashMap::new())),
+            default_provider: Arc::new(RwLock::new("default".to_string())),
+            event_tx,
+            workspace_root,
+            max_turn_iterations: AtomicUsize::new(env_usize(
+                "ODON_MAX_TURN_ITERATIONS",
+                DEFAULT_MAX_TURN_ITERATIONS,
+                1,
+                10_000,
+            )),
+            context_budget_tokens: AtomicUsize::new(env_usize(
+                "ODON_CONTEXT_BUDGET_TOKENS",
+                DEFAULT_CONTEXT_BUDGET_TOKENS,
+                8_000,
+                10_000_000,
+            )),
+        }
+    }
+
+    /// The per-turn step cap currently in force.
+    pub fn max_turn_iterations(&self) -> usize {
+        self.max_turn_iterations.load(Ordering::Relaxed)
+    }
+
+    /// Sets the per-turn step cap (clamped to 1..=10000).
+    pub fn set_max_turn_iterations(&self, value: usize) {
+        self.max_turn_iterations
+            .store(value.clamp(1, 10_000), Ordering::Relaxed);
+    }
+
+    /// The context budget in estimated tokens currently in force.
+    pub fn context_budget_tokens(&self) -> usize {
+        self.context_budget_tokens.load(Ordering::Relaxed)
+    }

@@ -353,6 +353,37 @@ impl AgentRuntime {
         .await
     }
 
+    /// Same as [`execute_turn_controlled`] but lets the caller bound this turn's
+    /// step budget. The composer's execution mode uses it: an Agent turn may run
+    /// longer than a plain Chat turn.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_turn_with_cap(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+        steer: Option<SteerQueue>,
+        extra_system_prompt: Option<&str>,
+        iteration_cap: Option<usize>,
+    ) -> Result<Message> {
+        self.execute_turn_inner(
+            session_id,
+            user_prompt,
+            attachments,
+            model_override,
+            effort,
+            cancellation,
+            steer,
+            extra_system_prompt,
+            0,
+            iteration_cap,
+        )
+        .await
+    }
+
     /// The turn loop. `depth` counts subagent nesting (a delegated run may
     /// not delegate further), and `iteration_cap` overrides the configured
     /// step cap for bounded child runs.

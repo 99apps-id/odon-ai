@@ -1,0 +1,80 @@
+            // If a steer is waiting, run another iteration so it is not lost.
+            if tool_accumulator.is_empty() {
+                let pending_steer = steer
+                    .as_ref()
+                    .map(|queue| queue.has_pending())
+                    .unwrap_or(false);
+                if pending_steer && current_iteration < max_turn_iterations {
+                    continue;
+                }
+                break;
+            }
+
+            // Execute Tools. The runtime's own tools (find_tools,
+            // run_subagent) run inline; registry tools run with bounded
+            // parallelism, because the calls in one step are independent
+            // by protocol. Every result is collected before anything is
+            // persisted, so history order never depends on finish order.
+            let _ = self.event_tx.send(AgentEvent::StateChanged {
+                session_id: session_id.to_string(),
+                state: AgentState::ExecutingTool,
+            });
+
+            #[derive(Clone)]
+            struct PendingCall {
+                index: usize,
+                call_id: String,
+                name: String,
+                args: serde_json::Value,
+            }
+            struct ExecutedCall {
+                index: usize,
+                call_id: String,
+                name: String,
+                args: serde_json::Value,
+                output: serde_json::Value,
+                is_error: bool,
+            }
+
+            let mut sorted_indices: Vec<_> = tool_accumulator.keys().cloned().collect();
+            sorted_indices.sort_unstable();
+            let mut pending: Vec<PendingCall> = Vec::new();
+            let mut executed: Vec<ExecutedCall> = Vec::new();
+            for idx in sorted_indices {
+                if let Some(tool_call) = tool_accumulator.get(&idx) {
+                    let call_id = if tool_call.id.is_empty() {
+                        format!("call_{}_{}", tool_call.name, uuid::Uuid::new_v4().simple())
+                    } else {
+                        tool_call.id.clone()
+                    };
+                    // Do not silently substitute `{}` for malformed streamed
+                    // arguments: surface the parse failure to the model as a
+                    // tool error instead of executing with empty defaults.
+                    match serde_json::from_str::<serde_json::Value>(&tool_call.arguments) {
+                        Ok(args_val) => pending.push(PendingCall {
+                            index: idx,
+                            call_id,
+                            name: tool_call.name.clone(),
+                            args: args_val,
+                        }),
+                        Err(e) => executed.push(ExecutedCall {
+                            index: idx,
+                            call_id,
+                            name: tool_call.name.clone(),
+                            args: serde_json::Value::Null,
+                            output: serde_json::json!({
+                                "error": format!("tool arguments were not valid JSON: {e}")
+                            }),
+                            is_error: true,
+                        }),
+                    }
+                }
+            }
+            for call in &pending {
+                let _ = self.event_tx.send(AgentEvent::ToolCallStarted {
+                    session_id: session_id.to_string(),
+                    call_id: call.call_id.clone(),
+                    tool_name: call.name.clone(),
+                    arguments: call.args.clone(),
+                });
+            }

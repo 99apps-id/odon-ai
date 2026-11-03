@@ -1,0 +1,40 @@
+
+    pub async fn execute_turn_with_effort(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<Message> {
+        self.execute_turn_with_attachments(
+            session_id,
+            user_prompt,
+            Vec::new(),
+            model_override,
+            effort,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Execute a turn with binary attachments (images / PDFs) that providers
+    /// render as native multimodal content.
+    pub async fn execute_turn_with_attachments(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+    ) -> Result<Message> {
+        self.execute_turn_controlled(
+            session_id,
+            user_prompt,
+            attachments,
+            model_override,
+            effort,
+            cancellation,
+            None,
+            None,

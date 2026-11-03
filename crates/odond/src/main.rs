@@ -3273,6 +3273,65 @@ struct SendMessageRequest {
     plan_mode: Option<bool>,
     #[serde(default)]
     attachments: Vec<AttachmentInput>,
+    /// Composer execution mode: `chat`, `auto`, `agent` or `plan`.
+    #[serde(default)]
+    mode: Option<String>,
+}
+
+/// What a composer execution mode actually changes for one turn. Kept as a pure
+/// function so the mapping is testable without an HTTP round-trip.
+#[derive(Debug, PartialEq)]
+struct TurnPlan {
+    plan_mode: bool,
+    model: Option<String>,
+    iteration_cap: Option<usize>,
+    instructions: Option<String>,
+}
+
+fn resolve_turn_plan(
+    mode: &str,
+    requested_model: Option<&str>,
+    plan_mode: Option<bool>,
+    custom_instructions: Option<&str>,
+) -> TurnPlan {
+    // Plan mode is a per-turn decision, never inherited. Writing it on every turn
+    // stops a flag left on by an earlier turn (or set by the agent itself) from
+    // silently restricting a later chat turn.
+    let plan_mode_enabled = plan_mode.unwrap_or(mode == "plan") || mode == "plan";
+    // Auto means "let the provider pick": `odon-auto` resolves to each provider's
+    // default model further down.
+    let model = if mode == "auto" {
+        Some("odon-auto".to_string())
+    } else {
+        requested_model.map(|m| m.to_string())
+    };
+    // Agent turns get a longer step budget so multi-step work is not cut off
+    // mid-way; every other mode keeps the configured default.
+    let iteration_cap = if mode == "agent" { Some(200usize) } else { None };
+    let mode_note = match mode {
+        "plan" => Some(
+            "Execution mode: PLAN. Investigate with read-only tools, then present a concrete plan with the todo list. Do not modify files until plan mode is left.",
+        ),
+        "agent" => Some(
+            "Execution mode: AGENT. Work autonomously to completion. Break the work into todo items, and delegate independent side tasks with run_subagent rather than interleaving them yourself.",
+        ),
+        "auto" => Some(
+            "Execution mode: AUTO. Use the provider's default model and choose the cheapest sufficient approach for each step.",
+        ),
+        _ => None,
+    };
+    let instructions = match (custom_instructions, mode_note) {
+        (Some(custom), Some(note)) => Some(format!("{custom}\n\n{note}")),
+        (Some(custom), None) => Some(custom.to_string()),
+        (None, Some(note)) => Some(note.to_string()),
+        (None, None) => None,
+    };
+    TurnPlan {
+        plan_mode: plan_mode_enabled,
+        model,
+        iteration_cap,
+        instructions,
+    }
 }
 
 async fn send_message(
@@ -3280,9 +3339,22 @@ async fn send_message(
     State(state): State<AppState>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
-    if let Some(enabled) = req.plan_mode {
-        let _ = odon_tools::harness::set_plan_mode(&state.storage, &session_id, enabled);
-    }
+    let mode = req
+        .mode
+        .as_deref()
+        .unwrap_or("chat")
+        .trim()
+        .to_ascii_lowercase();
+    let turn = resolve_turn_plan(
+        &mode,
+        req.model.as_deref(),
+        req.plan_mode,
+        req.custom_instructions.as_deref(),
+    );
+    let _ = odon_tools::harness::set_plan_mode(&state.storage, &session_id, turn.plan_mode);
+    let requested_model = turn.model.clone();
+    let iteration_cap = turn.iteration_cap;
+    let turn_instructions = turn.instructions.clone();
     let cancel = tokio_util::sync::CancellationToken::new();
     let steer = SteerQueue::new();
     let turn_id = uuid::Uuid::new_v4().to_string();
@@ -3315,15 +3387,16 @@ async fn send_message(
 
     let res = state
         .runtime
-        .execute_turn_controlled(
+        .execute_turn_with_cap(
             &session_id,
             &req.text,
             attachments,
-            req.model.as_deref(),
+            requested_model.as_deref(),
             req.effort.as_deref(),
             cancel,
             Some(steer),
-            req.custom_instructions.as_deref(),
+            turn_instructions.as_deref(),
+            iteration_cap,
         )
         .await;
 
@@ -7191,6 +7264,42 @@ async fn delete_skill_item(Path(name): Path<String>) -> impl IntoResponse {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn composer_modes_change_the_turn_not_just_the_placeholder() {
+        // Chat is the baseline: no plan gate, no model override, default step cap.
+        let chat = resolve_turn_plan("chat", Some("gpt-5.6-luna"), None, None);
+        assert!(!chat.plan_mode);
+        assert_eq!(chat.model.as_deref(), Some("gpt-5.6-luna"));
+        assert_eq!(chat.iteration_cap, None);
+        assert_eq!(chat.instructions, None);
+
+        // Auto routes to the provider default instead of the pinned model.
+        let auto = resolve_turn_plan("auto", Some("gpt-5.6-luna"), None, None);
+        assert_eq!(auto.model.as_deref(), Some("odon-auto"));
+        assert!(!auto.plan_mode);
+        assert!(auto.instructions.unwrap().contains("AUTO"));
+
+        // Agent raises the step budget and authorises delegation.
+        let agent = resolve_turn_plan("agent", Some("gpt-5.6-luna"), None, None);
+        assert_eq!(agent.iteration_cap, Some(200));
+        assert!(!agent.plan_mode);
+        assert!(agent.instructions.unwrap().contains("run_subagent"));
+
+        // Plan gates mutating tools even when the client forgot the flag.
+        let plan = resolve_turn_plan("plan", Some("gpt-5.6-luna"), None, None);
+        assert!(plan.plan_mode);
+
+        // A stale `plan_mode: true` from an earlier turn must not leak into chat.
+        let chat_after_plan = resolve_turn_plan("chat", None, Some(false), None);
+        assert!(!chat_after_plan.plan_mode);
+
+        // Custom instructions are preserved and mode guidance is appended.
+        let custom = resolve_turn_plan("agent", None, None, Some("Answer in Indonesian"));
+        let text = custom.instructions.unwrap();
+        assert!(text.starts_with("Answer in Indonesian"));
+        assert!(text.contains("AGENT"));
+    }
 
     #[test]
     fn automation_intervals_and_cron_match() {

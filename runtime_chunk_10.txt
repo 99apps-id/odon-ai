@@ -1,0 +1,80 @@
+                                call_id: call.call_id,
+                                name: call.name,
+                                args: call.args,
+                                output,
+                                is_error,
+                            }
+                        });
+                    }
+                    loop {
+                        tokio::select! {
+                            _ = cancellation.cancelled() => {
+                                join_set.abort_all();
+                                break;
+                            }
+                            joined = join_set.join_next() => match joined {
+                                Some(Ok(done)) => executed.push(done),
+                                Some(Err(_)) => {}
+                                None => break,
+                            }
+                        }
+                    }
+                    // Calls that never finished (a Stop aborted them)
+                    // still owe the model a result, or the history the
+                    // next step replays is invalid.
+                    for meta in &registry_meta {
+                        if !executed.iter().any(|done| done.index == meta.index) {
+                            executed.push(ExecutedCall {
+                                index: meta.index,
+                                call_id: meta.call_id.clone(),
+                                name: meta.name.clone(),
+                                args: meta.args.clone(),
+                                output: serde_json::json!({
+                                    "error": "Tool execution cancelled by user"
+                                }),
+                                is_error: true,
+                            });
+                        }
+                    }
+                }
+            }
+
+            executed.sort_by_key(|call| call.index);
+            let mut executed_tools_info = Vec::new();
+            let mut tool_result_msgs: Vec<(String, String, String)> = Vec::new();
+            for call in executed {
+                if !call.is_error {
+                    if let Some(art_val) = call.output.get("artifact") {
+                        if let Ok(artifact) = serde_json::from_value::<Artifact>(art_val.clone()) {
+                            let _ = self.storage.save_artifact(&artifact);
+                            let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
+                                session_id: session_id.to_string(),
+                                artifact: artifact.clone(),
+                            });
+                            active_artifacts.push(artifact.id.clone());
+                        }
+                    }
+                }
+                let _ = self.event_tx.send(AgentEvent::ToolCallFinished {
+                    session_id: session_id.to_string(),
+                    call_id: call.call_id.clone(),
+                    output: call.output.clone(),
+                    is_error: call.is_error,
+                });
+                executed_tools_info.push(ToolCallInfo {
+                    call_id: call.call_id.clone(),
+                    tool_name: call.name.clone(),
+                    arguments: call.args,
+                    output: Some(call.output.clone()),
+                    is_error: call.is_error,
+                    requires_approval: false,
+                    is_approved: Some(true),
+                });
+                // Tool results are persisted AFTER the assistant message
+                // that declares the calls (below): providers reject a
+                // tool message that does not follow the matching
+                // tool_calls message.
+                tool_result_msgs.push((call.call_id, call.name, call.output.to_string()));
+            }
+            if current_iteration >= max_turn_iterations {
+                hit_step_cap = true;

@@ -29,6 +29,7 @@ pub struct AntigravityProvider {
     client: reqwest::Client,
     base_url: String,
     access_token: std::sync::Mutex<(String, std::time::Instant)>,
+    refresh_lock: tokio::sync::Mutex<()>,
     project: tokio::sync::Mutex<Option<String>>,
     #[allow(dead_code)]
     account_id: Option<String>,
@@ -108,6 +109,7 @@ impl AntigravityProvider {
                 .trim_end_matches('/')
                 .to_string(),
             access_token: std::sync::Mutex::new((access_token.into(), std::time::Instant::now())),
+            refresh_lock: tokio::sync::Mutex::new(()),
             project: tokio::sync::Mutex::new(None),
             account_id,
             signatures: std::sync::Arc::new(tokio::sync::Mutex::new(
@@ -129,16 +131,26 @@ impl AntigravityProvider {
     }
 
     async fn token(&self) -> String {
-        let (tok, age) = {
-            let g = self.access_token.lock().unwrap();
-            (g.0.clone(), g.1.elapsed())
+        let read = || {
+            let guard = self.access_token.lock().unwrap_or_else(|e| e.into_inner());
+            (guard.0.clone(), guard.1.elapsed())
         };
-        if age > TOKEN_MAX_AGE {
-            if let Some(fresh) = crate::host_creds::discover_antigravity().await {
-                let mut g = self.access_token.lock().unwrap();
-                *g = (fresh.access_token.clone(), std::time::Instant::now());
-                return fresh.access_token;
-            }
+        let (tok, age) = read();
+        if age <= TOKEN_MAX_AGE {
+            return tok;
+        }
+        // Serialise refreshes. Google rotates the refresh token on use, so two
+        // concurrent refreshes would make the loser fail and leave the provider
+        // caching a token that is already dead.
+        let _refresh = self.refresh_lock.lock().await;
+        let (tok, age) = read();
+        if age <= TOKEN_MAX_AGE {
+            return tok;
+        }
+        if let Some(fresh) = crate::host_creds::discover_antigravity().await {
+            let mut guard = self.access_token.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = (fresh.access_token.clone(), std::time::Instant::now());
+            return fresh.access_token;
         }
         tok
     }

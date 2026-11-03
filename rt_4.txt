@@ -1,0 +1,40 @@
+        providers.remove(name);
+        let mut def = self.default_provider.write().await;
+        if def.as_str() == name {
+            *def = providers
+                .keys()
+                .find(|key| key.as_str() != "odon-simulated" && key.as_str() != "default")
+                .cloned()
+                .unwrap_or_else(|| "default".to_string());
+        }
+    }
+
+    pub async fn get_provider(&self, name: Option<&str>) -> Option<Arc<dyn ModelProvider>> {
+        let providers = self.providers.read().await;
+        if let Some(n) = name {
+            if let Some(p) = providers.get(n) {
+                return Some(p.clone());
+            }
+            // Strict routing: do not silently fall back if a specific provider was requested
+            return None;
+        }
+        let def = self.default_provider.read().await;
+        providers.get(&*def).cloned().or_else(|| {
+            // Pick first non-simulated provider if available
+            providers
+                .iter()
+                .find(|(k, _)| k.as_str() != "odon-simulated")
+                .map(|(_, v)| v.clone())
+        })
+    }
+
+    /// The folder a session is pinned to, falling back to the daemon default.
+    fn session_workspace(&self, session_id: &str) -> String {
+        self.storage
+            .get_session(session_id)
+            .ok()
+            .and_then(|session| session.workspace_root)
+            .filter(|path| std::path::Path::new(path).is_dir())
+            .unwrap_or_else(|| self.workspace_root.clone())
+    }
+

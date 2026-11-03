@@ -26,6 +26,31 @@ pub trait ChannelAdapter: Send + Sync {
 
 const MAX_EXTRACTED_TEXT: usize = 180_000;
 
+/// Buffers a response body while enforcing `limit`, so an oversized or
+/// unbounded download is rejected without first loading it all into memory.
+pub(crate) async fn read_body_capped(mut resp: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
+    // Fail fast when the server declares an oversized body.
+    if resp
+        .content_length()
+        .is_some_and(|declared| declared > limit as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if body.len() + chunk.len() > limit {
+                    return None;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(None) => return Some(body),
+            Err(_) => return None,
+        }
+    }
+}
+
 pub fn is_extractable_document(name: &str, mime: &str) -> bool {
     let mime = mime.to_ascii_lowercase();
     if mime == "application/pdf" {

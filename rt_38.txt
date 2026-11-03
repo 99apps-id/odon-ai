@@ -1,0 +1,40 @@
+        text.chars().count()
+    )
+}
+
+/// Compacts a request copy of the history to `budget_tokens` estimated
+/// tokens. The stored history is never touched. Oversized tool outputs
+/// are trimmed first (they are usually the bulk and the least load
+/// bearing); if that is not enough, the oldest middle messages are
+/// elided between a kept head and a kept tail, with a marker so the
+/// model knows context was dropped. The kept tail never starts with a
+/// tool result, which providers reject without its declaring message.
+fn compact_history(messages: Vec<Message>, budget_tokens: usize) -> Vec<Message> {
+    let total: usize = messages.iter().map(message_estimated_tokens).sum();
+    if total <= budget_tokens || messages.len() <= 2 {
+        return messages;
+    }
+
+    let mut messages: Vec<Message> = messages
+        .into_iter()
+        .map(|mut message| {
+            if message.role == MessageRole::Tool
+                && message.content.text.chars().count() > COMPACT_TOOL_OUTPUT_CHARS
+            {
+                message.content.text =
+                    trim_long_text(&message.content.text, COMPACT_TOOL_OUTPUT_CHARS);
+            }
+            for call in &mut message.content.tool_calls {
+                if let Some(serde_json::Value::String(output)) = &mut call.output {
+                    if output.chars().count() > COMPACT_TOOL_OUTPUT_CHARS {
+                        *output = trim_long_text(output, COMPACT_TOOL_OUTPUT_CHARS);
+                    }
+                }
+            }
+            message
+        })
+        .collect();
+
+    let total: usize = messages.iter().map(message_estimated_tokens).sum();
+    if total <= budget_tokens {
+        return messages;

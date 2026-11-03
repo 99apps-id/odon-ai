@@ -1,0 +1,80 @@
+    let mut compacted: Vec<Message> = messages.drain(..head_len).collect();
+    compacted.push(Message::new_user(
+        &session_id,
+        format!(
+            "[Context compacted: {elided} earlier message(s) were elided to fit the context budget. Ask for anything you need re-read.]"
+        ),
+    ));
+    compacted.extend(messages.into_iter().skip(tail_start - head_len));
+    compacted
+}
+
+/// Tools that stay inline when the catalogue exceeds the inline cap:
+/// the everyday coding set. Names that do not exist in a given registry
+/// are simply skipped.
+const CORE_TOOL_NAMES: &[&str] = &[
+    "fs_read",
+    "fs_write",
+    "fs_edit",
+    "fs_patch",
+    "fs_list",
+    "fs_search",
+    "fs_find",
+    "bash_run",
+    "shell_exec",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "todo_write",
+    "todo_read",
+    "think",
+];
+
+/// The `find_tools` definition offered when the catalogue is capped.
+fn find_tools_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "find_tools".to_string(),
+        description:
+            "Search the full tool catalogue by keyword and register matching tools for this turn. Use this when the tool you need is not in the current tool list."
+                .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Keywords describing the capability, e.g. 'screenshot browser'." }
+            },
+            "required": ["query"]
+        }),
+    }
+}
+
+/// The `run_subagent` definition offered on top-level turns.
+fn subagent_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "run_subagent".to_string(),
+        description:
+            "Delegate one self-contained task to a subagent with its own session and a bounded step budget. It works in the same workspace and returns its final report. Use for independent side tasks; never for work that needs the current conversation's full context."
+                .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "task": { "type": "string", "description": "One self-contained instruction for the subagent." }
+            },
+            "required": ["task"]
+        }),
+    }
+}
+
+/// Builds the tool set a turn starts with: the whole catalogue when it
+/// fits the inline cap, otherwise a core set plus `find_tools` (the rest
+/// loads on demand), plus `run_subagent` on top-level turns.
+fn initial_active_tools(
+    registry_defs: &[ToolDefinition],
+    subagent_enabled: bool,
+) -> Vec<ToolDefinition> {
+    let mut active: Vec<ToolDefinition> = Vec::new();
+    if subagent_enabled {
+        active.push(subagent_definition());
+    }
+    let needs_search = registry_defs.len() + active.len() > MAX_INLINE_TOOL_SCHEMAS;
+    let registry_budget =
+        MAX_INLINE_TOOL_SCHEMAS.saturating_sub(active.len() + usize::from(needs_search));
