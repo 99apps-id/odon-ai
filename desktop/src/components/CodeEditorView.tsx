@@ -8,118 +8,6 @@ interface CodeFile {
   content: string;
 }
 
-const SAMPLE_FILES: CodeFile[] = [
-  {
-    name: 'App.tsx',
-    path: 'src/App.tsx',
-    language: 'typescript',
-    content: `import React, { useState, useEffect } from 'react';
-import { NoteList } from './features/notes/NoteList';
-import { Note } from './types';
-import { Search, Plus } from 'lucide-react';
-
-export default function App() {
-  const [notes, setNotes] = useState<Note[]>(() => {
-    const saved = localStorage.getItem('odon_notes');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', title: 'React 19 Architecture', body: 'Exploring useActionState, useOptimistic, and Server Actions.', tag: 'architecture', createdAt: '10:15 AM' },
-      { id: '2', title: 'ODON Runtime Integration', body: 'Autonomous tool loops with risk-tier policy gating.', tag: 'odon', createdAt: '10:22 AM' },
-      { id: '3', title: 'Knowledge Retrieval', body: 'Local vector search with zero latency SQLite persistence.', tag: 'research', createdAt: '10:24 AM' },
-    ];
-  });
-
-  const [search, setSearch] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('odon_notes', JSON.stringify(notes));
-  }, [notes]);
-
-  return (
-    <div className="min-h-screen bg-white text-neutral-900 p-8 antialiased">
-      <header className="flex items-center justify-between pb-6 border-b border-neutral-200">
-        <h1 className="font-semibold text-lg tracking-tight">Personal Notes</h1>
-      </header>
-      <main className="mt-6">
-        <NoteList notes={notes.filter(n => n.title.toLowerCase().includes(search.toLowerCase()))} />
-      </main>
-    </div>
-  );
-}`,
-  },
-  {
-    name: 'NoteList.tsx',
-    path: 'src/features/notes/NoteList.tsx',
-    language: 'typescript',
-    content: `import React from 'react';
-import { Note } from '../../types';
-
-interface NoteListProps {
-  notes: Note[];
-}
-
-export function NoteList({ notes }: NoteListProps) {
-  if (notes.length === 0) {
-    return (
-      <div className="text-center py-12 text-neutral-400 text-sm">
-        No notes yet. Add your first note above.
-      </div>
-    );
-  }
-
-  return (
-    <div className="divide-y divide-neutral-100">
-      {notes.map((note) => (
-        <article key={note.id} className="py-4 group">
-          <div className="flex items-baseline justify-between mb-1">
-            <h3 className="font-medium text-sm text-neutral-900">{note.title}</h3>
-            <time className="text-xs text-neutral-400 font-mono">{note.createdAt}</time>
-          </div>
-          <p className="text-sm text-neutral-600 leading-relaxed">{note.body}</p>
-          <div className="mt-2">
-            <span className="inline-block text-[11px] font-mono text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded">
-              #{note.tag}
-            </span>
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}`,
-  },
-  {
-    name: 'types.ts',
-    path: 'src/types.ts',
-    language: 'typescript',
-    content: `export interface Note {
-  id: string;
-  title: string;
-  body: string;
-  tag: string;
-  createdAt: string;
-}
-`,
-  },
-  {
-    name: 'package.json',
-    path: 'package.json',
-    language: 'json',
-    content: `{
-  "name": "personal-notes",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build"
-  },
-  "dependencies": {
-    "lucide-react": "^0.475.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  }
-}`,
-  },
-];
 
 interface CodeEditorViewProps {
   onRunPreview?: () => void;
@@ -128,8 +16,7 @@ interface CodeEditorViewProps {
 }
 
 export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEditorViewProps) {
-  const [showSample, setShowSample] = useState(false);
-  const fileList = files && files.length > 0 ? files : showSample ? SAMPLE_FILES : [];
+  const fileList = files && files.length > 0 ? files : [];
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const currentFile = fileList[activeFileIndex] || fileList[0];
@@ -151,13 +38,6 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEdit
         <p className="text-xs max-w-sm leading-relaxed">
           Ask the agent to build a project or module, or open a workspace file from the File Explorer.
         </p>
-        <button
-          type="button"
-          onClick={() => setShowSample(true)}
-          className="mt-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 transition-colors"
-        >
-          Load example project (demo)
-        </button>
       </div>
     );
   }

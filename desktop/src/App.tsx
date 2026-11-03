@@ -2531,7 +2531,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         View and manage results from your tasks.
                       </p>
 
-                      {/* Artifacts List (Bound to real or sample artifacts) */}
+                      {/* Artifacts List */}
                       <div className="space-y-2">
                         {artifacts.length > 0 ? (
                           artifacts.map((art) => (
@@ -2583,70 +2583,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                             </div>
                           ))
                         ) : (
-                          <>
-                            {/* Sample Item 1: odon-architecture.png */}
-                            <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
-                              <div className="flex items-center gap-2.5">
-                                <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-                                  <ImageIcon className="w-4 h-4" />
-                                </div>
-                                <div>
-                                  <div className="text-xs font-medium text-neutral-900 leading-tight">
-                                    odon-architecture.png
-                                  </div>
-                                  <div className="text-[10px] text-neutral-400 mt-0.5">
-                                    Image • 2.4 MB • 2h ago
-                                  </div>
-                                </div>
-                              </div>
-                              <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-
-                            {/* Sample Item 2: agent.rs */}
-                            <div
-                              onClick={() => setRightPanelView('editor')}
-                              className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2.5">
-                                <div className="p-2 rounded-xl bg-neutral-100 text-neutral-700">
-                                  <Code2 className="w-4 h-4" />
-                                </div>
-                                <div>
-                                  <div className="text-xs font-medium text-neutral-900 leading-tight">
-                                    agent.rs
-                                  </div>
-                                  <div className="text-[10px] text-neutral-400 mt-0.5">
-                                    Code • 12 KB • 4h ago
-                                  </div>
-                                </div>
-                              </div>
-                              <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-
-                            {/* Sample Item 3: rencana-produk.pdf */}
-                            <div className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group">
-                              <div className="flex items-center gap-2.5">
-                                <div className="p-2 rounded-xl bg-red-50 text-red-500">
-                                  <FileText className="w-4 h-4" />
-                                </div>
-                                <div>
-                                  <div className="text-xs font-medium text-neutral-900 leading-tight">
-                                    rencana-produk.pdf
-                                  </div>
-                                  <div className="text-[10px] text-neutral-400 mt-0.5">
-                                    PDF • 1.1 MB • Yesterday
-                                  </div>
-                                </div>
-                              </div>
-                              <button className="text-neutral-400 hover:text-neutral-700 p-1">
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </>
+                          <div className="text-center py-10 text-neutral-400 text-xs">
+                            No artifacts yet. Run a task to generate code, images, or documents.
+                          </div>
                         )}
                       </div>
 

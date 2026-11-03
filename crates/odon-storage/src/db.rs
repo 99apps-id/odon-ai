@@ -99,6 +99,7 @@ impl StorageEngine {
                 status TEXT NOT NULL,
                 active_model TEXT NOT NULL,
                 workspace_root TEXT,
+                metadata TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -186,7 +187,8 @@ impl StorageEngine {
                 "ALTER TABLE provider_configs ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'",
             ),
         ] {
-            let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('provider_configs')")?;
+            let mut stmt =
+                conn.prepare("SELECT name FROM pragma_table_info('provider_configs')")?;
             let exists = stmt
                 .query_map([], |row| row.get::<_, String>(0))?
                 .any(|name| name.as_deref() == Ok(column));
@@ -243,14 +245,15 @@ impl StorageEngine {
         let mode_str = serde_json::to_string(&session.mode)?;
         let status_str = serde_json::to_string(&session.status)?;
         conn.execute(
-            "INSERT INTO sessions (id, title, mode, status, active_model, workspace_root, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO sessions (id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 mode = excluded.mode,
                 status = excluded.status,
                 active_model = excluded.active_model,
                 workspace_root = excluded.workspace_root,
+                metadata = excluded.metadata,
                 updated_at = excluded.updated_at",
             params![
                 session.id,
@@ -269,15 +272,16 @@ impl StorageEngine {
     pub fn get_session(&self, id: &str) -> Result<Session> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, mode, status, active_model, workspace_root, created_at, updated_at
+            "SELECT id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at
              FROM sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             let mode_str: String = row.get(2)?;
             let status_str: String = row.get(3)?;
-            let created_at_str: String = row.get(6)?;
-            let updated_at_str: String = row.get(7)?;
+            let _metadata: Option<String> = row.get(6)?;
+            let created_at_str: String = row.get(7)?;
+            let updated_at_str: String = row.get(8)?;
 
             let mode: SessionMode = serde_json::from_str(&mode_str)?;
             let status: SessionStatus = serde_json::from_str(&status_str)?;
@@ -295,6 +299,10 @@ impl StorageEngine {
                 status,
                 active_model: row.get(4)?,
                 workspace_root: row.get(5)?,
+                metadata: row
+                    .get(6)
+                    .ok()
+                    .and_then(|v: Option<String>| v.and_then(|s| serde_json::from_str(&s).ok())),
                 created_at,
                 updated_at,
             })
@@ -306,7 +314,7 @@ impl StorageEngine {
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, mode, status, active_model, workspace_root, created_at, updated_at
+            "SELECT id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at
              FROM sessions ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -316,8 +324,9 @@ impl StorageEngine {
             let status_str: String = row.get(3)?;
             let active_model: String = row.get(4)?;
             let workspace_root: Option<String> = row.get(5)?;
-            let created_at_str: String = row.get(6)?;
-            let updated_at_str: String = row.get(7)?;
+            let metadata: Option<String> = row.get(6)?;
+            let created_at_str: String = row.get(7)?;
+            let updated_at_str: String = row.get(8)?;
 
             let mode: SessionMode = serde_json::from_str(&mode_str).unwrap_or(SessionMode::General);
             let status: SessionStatus =
@@ -336,6 +345,7 @@ impl StorageEngine {
                 status,
                 active_model,
                 workspace_root,
+                metadata: metadata.and_then(|v| serde_json::from_str(&v).ok()),
                 created_at,
                 updated_at,
             })
@@ -502,8 +512,7 @@ impl StorageEngine {
         let kind_str: String = row.get(3)?;
         let payload_json: String = row.get(5)?;
         let created_at_str: String = row.get(6)?;
-        let kind: ArtifactKind =
-            serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
+        let kind: ArtifactKind = serde_json::from_str(&kind_str).unwrap_or(ArtifactKind::Document);
         let payload = serde_json::from_str(&payload_json).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
                 0,
@@ -539,11 +548,7 @@ impl StorageEngine {
         Ok(versions)
     }
 
-    pub fn get_artifact_version(
-        &self,
-        artifact_id: &str,
-        version: i64,
-    ) -> Result<ArtifactVersion> {
+    pub fn get_artifact_version(&self, artifact_id: &str, version: i64) -> Result<ArtifactVersion> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT artifact_id, version, title, kind, summary, payload_json, created_at
@@ -559,11 +564,7 @@ impl StorageEngine {
         }
     }
 
-    pub fn restore_artifact_version(
-        &self,
-        artifact_id: &str,
-        version: i64,
-    ) -> Result<Artifact> {
+    pub fn restore_artifact_version(&self, artifact_id: &str, version: i64) -> Result<Artifact> {
         let old = self.get_artifact_version(artifact_id, version)?;
         let mut artifact = self.get_artifact(artifact_id)?;
         artifact.title = old.title;
@@ -685,10 +686,7 @@ impl StorageEngine {
             params![id],
         )?;
         tx.execute("DELETE FROM artifacts WHERE session_id = ?1", params![id])?;
-        tx.execute(
-            "DELETE FROM audit_logs WHERE session_id = ?1",
-            params![id],
-        )?;
+        tx.execute("DELETE FROM audit_logs WHERE session_id = ?1", params![id])?;
         tx.execute("DELETE FROM todos WHERE session_id = ?1", params![id])?;
         let count = tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         tx.commit()?;
@@ -941,11 +939,14 @@ mod tests {
         assert_eq!(versions[1].version, 1);
 
         let restored = storage.restore_artifact_version(&artifact.id, 1).unwrap();
-        assert_eq!(restored.payload, odon_core::ArtifactPayload::Document {
-            doc_type: "PRD".to_string(),
-            markdown: "# v1".to_string(),
-            size_bytes: 4,
-        });
+        assert_eq!(
+            restored.payload,
+            odon_core::ArtifactPayload::Document {
+                doc_type: "PRD".to_string(),
+                markdown: "# v1".to_string(),
+                size_bytes: 4,
+            }
+        );
         let versions = storage.list_artifact_versions(&artifact.id).unwrap();
         assert_eq!(versions.len(), 3);
     }
