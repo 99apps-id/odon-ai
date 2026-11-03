@@ -83,7 +83,7 @@ ODON exposes 226 registered tools with complete parameter schemas, risk tiers, a
 - **Artifact Synthesis (4 tools)**: `artifact_create_code`, `artifact_create_document`, `artifact_create_image`, `artifact_update`.
 
 ### 5. ⚙️ Enriched 7-Tab Settings Center
-- **Providers**: Official OAuth (GitHub Copilot, Google Antigravity, OpenAI Codex, Claude, xAI, Meta Muse) + BYOK (DeepSeek, OpenAI, Anthropic, Gemini, Qwen, Mistral, Groq, OpenRouter, Ollama).
+- **Providers**: Official OAuth (GitHub Copilot, Google Antigravity, OpenAI Codex, Claude, xAI) + BYOK (DeepSeek, OpenAI, Anthropic, Gemini, Qwen, Mistral, Groq, OpenRouter, Ollama, Meta Muse via the pay-as-you-go Model API at `https://api.meta.ai/v1`).
 - **Agents & Personas**: Switch between **Autonomous Coder**, **Security Auditor**, **Pentester & RE**, **Systems Architect**, and **Autonomous Sentinel**, with custom system prompt overrides and thinking effort levels.
 - **Skills**: Inspect and author reusable automation routines stored in `.odon/skills/*.md`.
 - **MCP Servers**: Configure `stdio` and `sse` Model Context Protocol endpoints.
