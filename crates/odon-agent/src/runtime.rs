@@ -1433,9 +1433,32 @@ impl AgentRuntime {
         }
     }
 
-    async fn finalize_child_workspace(child_session_id: &str, _storage: Arc<StorageEngine>) {
+    async fn finalize_child_workspace(child_session_id: &str, storage: Arc<StorageEngine>) {
+        // `git worktree remove` takes the worktree PATH and needs a CWD inside
+        // the repository. This used to pass the session id and no CWD, so it
+        // could never match a worktree and every delegated worktree leaked.
+        let Ok(session) = storage.get_session(child_session_id) else {
+            return;
+        };
+        let Some(worktree) = session.workspace_root else {
+            return;
+        };
+        let path = std::path::PathBuf::from(&worktree);
+        // Only remove worktrees this runtime created under .odon/worktrees;
+        // never delete a directory the user pointed the session at.
+        if path.file_name().and_then(|name| name.to_str()) != Some(child_session_id) {
+            return;
+        }
+        let Some(repo_root) = path
+            .parent()
+            .and_then(std::path::Path::parent)
+            .and_then(std::path::Path::parent)
+        else {
+            return;
+        };
         let _ = tokio::process::Command::new("git")
-            .args(["worktree", "remove", "--force", child_session_id])
+            .args(["worktree", "remove", "--force", worktree.as_str()])
+            .current_dir(repo_root)
             .output()
             .await;
     }
