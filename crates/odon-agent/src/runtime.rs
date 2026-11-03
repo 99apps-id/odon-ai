@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -1004,59 +1006,397 @@ impl AgentRuntime {
         depth: u32,
         cancellation: CancellationToken,
     ) -> (serde_json::Value, bool) {
-        if depth >= 1 {
+        if depth >= 2 {
             return (
                 serde_json::json!({ "error": "run_subagent cannot be nested" }),
                 true,
             );
         }
-        let Some(task) = args
-            .get("task")
+        let tasks = match Self::parse_subagent_tasks(args) {
+            Some(tasks) => tasks,
+            None => {
+                return (
+                    serde_json::json!({ "error": "run_subagent needs 'task' or 'tasks[]'" }),
+                    true,
+                );
+            }
+        };
+        let provider_override = args
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .map(str::trim);
+        let requested_model = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .map(str::trim);
+        let parent_model_override = self.resolve_model_for_session(parent_session_id, model);
+
+        let child_ids: Vec<String> = (0..tasks.len())
+            .map(|index| format!("sub-{}-{}", uuid::Uuid::new_v4().simple(), index))
+            .collect();
+        let child_count = child_ids.len();
+
+        for (index, child_session_id) in child_ids.iter().cloned().enumerate() {
+            let mut session = Session::new(
+                format!("Subagent: {}", truncate_chars(&tasks[index], 60)),
+                SessionMode::Agents,
+                model.to_string(),
+            );
+            session.id = child_session_id.clone();
+            session.workspace_root = Some(self.session_workspace(parent_session_id));
+            if let Ok(Some(parent)) = self.storage.get_session(parent_session_id) {
+                if let Some(meta) = parent.metadata.clone() {
+                    let mut child_meta = meta;
+                    if let Some(obj) = child_meta.as_object_mut() {
+                        obj.insert(
+                            "parent_session".to_string(),
+                            serde_json::Value::String(parent_session_id.to_string()),
+                        );
+                        obj.insert(
+                            "parent_model".to_string(),
+                            serde_json::Value::String(model.to_string()),
+                        );
+                        obj.insert(
+                            "child_index".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(index)),
+                        );
+                        obj.insert(
+                            "child_count".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(child_count)),
+                        );
+                    }
+                    session.metadata = Some(child_meta);
+                } else {
+                    session.metadata = Some(serde_json::json!({
+                        "parent_session": parent_session_id,
+                        "parent_model": model,
+                        "child_index": index,
+                        "child_count": child_count,
+                    }));
+                }
+            }
+            let _ = self.storage.save_session(&session);
+        }
+
+        let mut join_set = JoinSet::new();
+        let storage = self.storage.clone();
+        let approval = self.approval.clone();
+        let audit = self.audit.clone();
+
+        for (index, child_session_id) in child_ids.iter().cloned().enumerate() {
+            let task = tasks[index].clone();
+            let storage = storage.clone();
+            let approval = approval.clone();
+            let audit = audit.clone();
+            let cancellation_child = cancellation.child();
+            let provider_name = provider_override.map(|v| v.to_string());
+            let model_override = requested_model
+                .or(parent_model_override.as_deref())
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| model.to_string());
+
+            join_set.spawn(async move {
+                let _ = AgentRuntime::publish_child_event(
+                    &approval,
+                    &child_session_id,
+                    AgentState::Thinking,
+                    &task,
+                    parent_session_id,
+                );
+
+                let worktree = AgentRuntime::prepare_child_workspace(
+                    parent_session_id,
+                    &child_session_id,
+                    storage.clone(),
+                )
+                .await;
+
+                let mut attachments = Vec::new();
+                attachments.extend(
+                    AgentRuntime::collect_parent_attachments(storage.clone(), parent_session_id)
+                        .await,
+                );
+
+                let result = match worktree {
+                    Ok(worktree_path) => {
+                        let _ = AgentRuntime::update_child_workspace(
+                            &child_session_id,
+                            Some(worktree_path.to_string_lossy().to_string()),
+                            storage.clone(),
+                        );
+                        let workspace_root = worktree_path.to_string_lossy().to_string();
+                        match Box::pin(AgentRuntime::execute_child_turn(
+                            &child_session_id,
+                            task,
+                            attachments,
+                            provider_name.as_deref(),
+                            &model_override,
+                            storage.clone(),
+                            approval,
+                            audit,
+                            cancellation_child,
+                            depth + 1,
+                            Some(workspace_root),
+                        ))
+                        .await
+                        {
+                            Ok(message) => Ok(message.content.text.clone()),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
+
+                let _ = AgentRuntime::publish_child_event(
+                    &approval,
+                    &child_session_id,
+                    AgentState::Completed,
+                    &task,
+                    parent_session_id,
+                );
+
+                let _ = AgentRuntime::finalize_child_workspace(&child_session_id, storage.clone())
+                    .await;
+
+                (index, child_session_id, result)
+            });
+        }
+
+        let mut completed_reports = Vec::new();
+        let mut completed_errors = Vec::new();
+
+        while let Some(join) = join_set.join_next().await {
+            match join {
+                Ok((index, child_session_id, Ok(output))) => {
+                    completed_reports.push((index, child_session_id, output, None));
+                }
+                Ok((index, child_session_id, Err(error))) => {
+                    completed_errors.push((index, child_session_id, error));
+                }
+                Err(join_error) => {
+                    completed_errors.push((0, format!("join-error-{}", 0), join_error.to_string()));
+                }
+            }
+        }
+
+        completed_reports.sort_by_key(|item| item.0);
+        completed_errors.sort_by_key(|item| item.0);
+
+        let mut reports = Vec::with_capacity(child_count);
+        for index in 0..child_count {
+            let mut report = serde_json::json!({
+                "session": child_ids.get(index).cloned().unwrap_or_default(),
+                "status": "failed",
+                "output": "",
+            });
+            if let Some((_, _, output, _)) = completed_reports.iter().find(|item| item.0 == index) {
+                report["status"] = serde_json::json!("completed");
+                report["output"] = serde_json::json!(output);
+            } else if let Some((_, _, error)) = completed_errors.iter().find(|item| item.0 == index) {
+                report["error"] = serde_json::json!(error);
+            }
+            reports.push(report);
+        }
+
+        let overall_error = completed_errors.first().map(|item| item.2.clone());
+
+        if child_count > 1 {
+            (
+                serde_json::json!({
+                    "subagents": reports,
+                    "child_count": child_count,
+                    "provider": provider_override.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
+                    "model": requested_model.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
+                }),
+                overall_error.is_some(),
+            )
+        } else {
+            let report = reports.into_iter().next().unwrap_or_default();
+            (
+                serde_json::json!({
+                    "subagent_session": report.get("session").cloned().unwrap_or_default(),
+                    "output": report.get("output").cloned().unwrap_or_default(),
+                    "status": report.get("status").cloned().unwrap_or_default(),
+                    "error": report.get("error").cloned().unwrap_or_default(),
+                    "provider": provider_override.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
+                    "model": requested_model.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
+                }),
+                overall_error.is_some(),
+            )
+        }
+    }
+
+    fn parse_subagent_tasks(args: &serde_json::Value) -> Option<Vec<String>> {
+        let tasks = args
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|arr| !arr.is_empty());
+        if tasks.is_some() {
+            return tasks.map(|v| v.into_iter().map(|s| s.to_string()).collect());
+        }
+        args.get("task")
             .and_then(|v| v.as_str())
             .map(str::trim)
-            .filter(|task| !task.is_empty())
-        else {
-            return (
-                serde_json::json!({ "error": "run_subagent needs a non-empty 'task'" }),
-                true,
-            );
-        };
-        let child_session_id = format!("sub-{}", uuid::Uuid::new_v4().simple());
-        // The child works in the parent session's workspace.
-        let mut session = Session::new(
-            format!("Subagent: {}", truncate_chars(task, 60)),
-            SessionMode::Agents,
-            model.to_string(),
-        );
-        session.id = child_session_id.clone();
-        session.workspace_root = Some(self.session_workspace(parent_session_id));
-        let _ = self.storage.save_session(&session);
+            .filter(|s| !s.is_empty())
+            .map(|s| vec![s.to_string()])
+    }
 
-        // Boxed: the nested turn is a recursive async call, so the
-        // future needs heap indirection to have a finite size.
-        match Box::pin(self.execute_turn_inner(
-            &child_session_id,
-            task,
-            Vec::new(),
-            Some(model),
-            None,
-            cancellation,
-            None,
-            None,
-            depth + 1,
-            Some(SUBAGENT_MAX_ITERATIONS),
-        ))
-        .await
-        {
-            Ok(message) => (
-                serde_json::json!({
-                    "subagent_session": child_session_id,
-                    "output": message.content.text,
-                }),
-                false,
+    fn resolve_model_for_session(&self, session_id: &str, fallback: &str) -> Option<String> {
+        self.storage
+            .list_sessions()
+            .ok()
+            .and_then(|sessions| sessions.into_iter().find(|s| s.id == session_id))
+            .and_then(|session| {
+                if session.active_model.is_empty() || session.active_model == "odon-auto" {
+                    None
+                } else {
+                    Some(session.active_model)
+                }
+            })
+    }
+
+    async fn publish_child_event(
+        approval: &Arc<ApprovalEngine>,
+        child_session_id: &str,
+        state: AgentState,
+        task: &str,
+        parent_session_id: &str,
+    ) {
+        let _ = approval
+            .event_tx
+            .send(AgentEvent::StateChanged {
+                session_id: child_session_id.to_string(),
+                state,
+            });
+        let _ = approval.event_tx.send(AgentEvent::TextDelta {
+            session_id: child_session_id.to_string(),
+            delta: format!(
+                "Delegated from {}: {}",
+                parent_session_id,
+                truncate_chars(task, 120)
             ),
-            Err(error) => (serde_json::json!({ "error": error.to_string() }), true),
+        });
+    }
+
+    async fn collect_parent_attachments(
+        storage: Arc<StorageEngine>,
+        parent_session_id: &str,
+    ) -> Vec<MessageAttachment> {
+        let mut collected = Vec::new();
+        if let Ok(messages) = storage.list_messages(parent_session_id) {
+            for message in messages.into_iter().rev() {
+                if let Some(attachments) = message.content.attachments {
+                    for attachment in attachments {
+                        if !collected.iter().any(|a| a.data_base64 == attachment.data_base64) {
+                            collected.push(attachment);
+                        }
+                    }
+                }
+                if collected.len() >= 12 {
+                    break;
+                }
+            }
         }
+        collected
+    }
+
+    async fn prepare_child_workspace(
+        parent_session_id: &str,
+        child_session_id: &str,
+        storage: Arc<StorageEngine>,
+    ) -> Result<PathBuf, String> {
+        let parent_session = storage
+            .list_sessions()
+            .ok()
+            .and_then(|sessions| sessions.into_iter().find(|s| s.id == parent_session_id))
+            .ok_or("parent session not found")?;
+        let workspace = parent_session
+            .workspace_root
+            .clone()
+            .unwrap_or_default();
+        if workspace.is_empty() {
+            return Err("workspace is not configured".to_string());
+        }
+        let root = PathBuf::from(&workspace);
+        if !root.join(".git").exists() {
+            return Ok(root);
+        }
+        let worktree = root.join(".odon").join("worktrees").join(child_session_id);
+        tokio::fs::create_dir_all(&worktree)
+            .await
+            .map_err(|e| format!("failed to create worktree dir: {e}"))?;
+        let output = tokio::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                worktree.to_string_lossy().as_ref(),
+                "HEAD",
+            ])
+            .current_dir(&root)
+            .output()
+            .await
+            .map_err(|e| format!("failed to spawn git: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git worktree add failed: {stderr}"));
+        }
+        Ok(worktree)
+    }
+
+    async fn update_child_workspace(
+        child_session_id: &str,
+        worktree: Option<String>,
+        storage: Arc<StorageEngine>,
+    ) {
+        if let Some(path) = worktree {
+            if let Ok(Some(mut session)) = storage.get_session(child_session_id) {
+                session.workspace_root = Some(path);
+                let _ = storage.save_session(&session);
+            }
+        }
+    }
+
+    async fn finalize_child_workspace(
+        child_session_id: &str,
+        storage: Arc<StorageEngine>,
+    ) {
+        let _ = storage.delete_session(child_session_id);
+        let _ = tokio::process::Command::new("git")
+            .args([
+                "worktree",
+                "remove",
+                "--force",
+                child_session_id,
+            ])
+            .output()
+            .await;
+    }
+
+    async fn execute_child_turn(
+        child_session_id: &str,
+        task: Vec<String>,
+        attachments: Vec<MessageAttachment>,
+        provider_name: Option<&str>,
+        model: &str,
+        storage: Arc<StorageEngine>,
+        approval: Arc<ApprovalEngine>,
+        audit: Arc<AuditLogger>,
+        cancellation: CancellationToken,
+        depth: u32,
+        workspace_root: Option<String>,
+    ) -> Result<Message> {
+        Err(OdonError::Provider {
+            provider: "subagent".to_string(),
+            description: "child turn execution is not wired yet".to_string(),
+        })
     }
 }
 

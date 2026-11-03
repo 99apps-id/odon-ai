@@ -40,7 +40,6 @@ interface BrowserPreviewViewProps {
 export function BrowserPreviewView({
   initialUrl = 'http://127.0.0.1:4096/api/status',
   initialHtml,
-  seed,
   onSendToAgent,
 }: BrowserPreviewViewProps) {
   const [url, setUrl] = useState<string>(initialUrl);
@@ -59,36 +58,28 @@ export function BrowserPreviewView({
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const applySeed = (detail: BrowserSeed) => {
-    if (detail.markdown) {
-      setMarkdownContent(detail.markdown);
-      setMode('markdown');
-    }
-    if (detail.html) {
-      setHtmlContent(detail.html);
-      setMode('html');
-    }
-    if (detail.url) {
-      navigateTo(detail.url);
-    }
-  };
-
   // Listen for global custom events to open URL, HTML, or Markdown in the panel.
   useEffect(() => {
     const handleOpenBrowser = (e: Event) => {
       const customEvent = e as CustomEvent<BrowserSeed>;
-      if (customEvent.detail) applySeed(customEvent.detail);
+      const detail = customEvent.detail;
+      if (!detail) return;
+      if (detail.markdown) {
+        setMarkdownContent(detail.markdown);
+        setMode('markdown');
+      }
+      if (detail.html) {
+        setHtmlContent(detail.html);
+        setMode('html');
+      }
+      if (detail.url) {
+        navigateTo(detail.url);
+      }
     };
 
     window.addEventListener('odon:open-browser', handleOpenBrowser);
     return () => window.removeEventListener('odon:open-browser', handleOpenBrowser);
   }, [historyIndex, history]);
-
-  // When the panel mounts because App switched to the browser view, the event
-  // that triggered the switch has already fired. Seeded props bridge that gap.
-  useEffect(() => {
-    if (seed) applySeed(seed);
-  }, [seed]);
 
   const renderUrl = (formatted: string) => {
     setInputUrl(formatted);
