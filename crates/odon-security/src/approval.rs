@@ -124,6 +124,23 @@ impl ApprovalEngine {
         }
     }
 
+    /// Re-point the persisted policy and audit files, reloading both from
+    /// the new location. `new` reads the operator's real `~/.odon` directory,
+    /// so anything that must not inherit (tests most of all) has to call
+    /// this before it relies on a clean slate — otherwise a stored `*`
+    /// grant silently answers every request and nothing is ever asked.
+    pub fn with_paths(mut self, policy_path: PathBuf, audit_path: PathBuf) -> Self {
+        let always_allowed = std::fs::read_to_string(&policy_path)
+            .ok()
+            .and_then(|data| serde_json::from_str::<HashSet<String>>(&data).ok())
+            .unwrap_or_default();
+        self.always_allowed = Arc::new(RwLock::new(always_allowed));
+        self.audit_history = Arc::new(RwLock::new(Vec::new()));
+        self.policy_path = policy_path;
+        self.audit_path = audit_path;
+        self
+    }
+
     /// Lexically resolve `.` and `..` components without touching the disk.
     fn normalize_lexically(p: &std::path::Path) -> std::path::PathBuf {
         use std::path::{Component, PathBuf};
@@ -670,15 +687,15 @@ mod tests {
     #[tokio::test]
     async fn approval_publishes_requested_then_resolved_events() {
         let (tx, mut rx) = odon_core::events::create_event_bus(16);
-        let mut engine = ApprovalEngine::new(SecurityPolicy::default());
+        let engine = ApprovalEngine::new(SecurityPolicy::default());
         // Never write test records into the operator's real ~/.odon directory.
         let tmp = std::env::temp_dir().join(format!(
             "odon-approval-test-{}",
             uuid::Uuid::new_v4().simple()
         ));
-        engine.policy_path = tmp.join("approval-policies.json");
-        engine.audit_path = tmp.join("approval-audit.jsonl");
-        let engine = engine.with_events(tx);
+        let engine = engine
+            .with_paths(tmp.join("approval-policies.json"), tmp.join("approval-audit.jsonl"))
+            .with_events(tx);
 
         let waiter = {
             let engine = engine.clone();
@@ -734,10 +751,10 @@ mod tests {
             "odon-approval-test-{}",
             uuid::Uuid::new_v4().simple()
         ));
-        engine.policy_path = tmp.join("approval-policies.json");
-        engine.audit_path = tmp.join("approval-audit.jsonl");
-        engine.always_allowed = Arc::new(RwLock::new(std::collections::HashSet::new()));
-        (engine.with_events(tx), rx)
+        let engine = engine
+            .with_paths(tmp.join("approval-policies.json"), tmp.join("approval-audit.jsonl"))
+            .with_events(tx);
+        (engine, rx)
     }
 
     async fn next_requested_id(rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> String {
