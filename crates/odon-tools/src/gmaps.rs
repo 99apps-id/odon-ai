@@ -13,9 +13,11 @@
 //! `category`, `city`, `province`, `district`, `phone`, `address`, `rating`,
 //! `reviews` and `mapsUrl`.
 //!
-//! Configuration is explicit and never invented: without an engine URL and a
-//! service serial the tool fails with instructions instead of returning fake
-//! rows.
+//! Configuration is explicit and never invented: without an engine URL the tool
+//! fails with instructions instead of returning fake rows. The engine serial is
+//! optional: the engine serves an unauthenticated trial (capped per hour and per
+//! city count) when no serial is sent, and rejects a serial it does not know.
+//! Send one only when you own a listed licence.
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -30,7 +32,7 @@ use crate::registry::{Tool, ToolContext};
 
 /// Environment variable holding the engine base URL.
 pub const ENGINE_URL_ENV: &str = "ODON_GMAPS_ENGINE_URL";
-/// Environment variable holding the engine service serial.
+/// Environment variable holding the engine service serial (optional).
 pub const ENGINE_SERIAL_ENV: &str = "ODON_GMAPS_SERIAL";
 
 const TOOL_NAME: &str = "gmaps_search";
@@ -50,12 +52,15 @@ struct EngineConfig {
 
 fn resolve_config(engine_url: Option<&str>, serial: Option<&str>) -> Result<EngineConfig> {
     let base = engine_url.unwrap_or("").trim();
+    // The engine authorizes an empty serial as a capped trial, so a serial is
+    // never required here; an unlisted serial would be rejected by the engine.
     let serial = serial.unwrap_or("").trim();
-    if base.is_empty() || serial.is_empty() {
+    if base.is_empty() {
         return Err(tool_error(format!(
             "Google Maps engine is not configured. Set {ENGINE_URL_ENV} to the engine base URL \
-             and {ENGINE_SERIAL_ENV} to the service serial (the dewa-scraper engine serves \
-             POST /api/engine/run). Nothing is emitted without them."
+             (the engine serves POST /api/engine/run). Optionally set {ENGINE_SERIAL_ENV} when you \
+             hold a listed licence; without it the engine runs its capped trial. Nothing is \
+             emitted without an engine URL."
         )));
     }
     if !(base.starts_with("https://") || base.starts_with("http://")) {
@@ -169,8 +174,9 @@ impl Tool for GmapsSearchTool {
 
     fn description(&self) -> &str {
         "Search Google Maps business leads (name, address, phone, rating) through the configured \
-         dewa-scraper engine. Requires ODON_GMAPS_ENGINE_URL and ODON_GMAPS_SERIAL; searches spend \
-         engine quota."
+         dewa-scraper engine. Requires ODON_GMAPS_ENGINE_URL; ODON_GMAPS_SERIAL is optional and \
+         only needed for a listed licence (without it the engine runs a capped trial). Searches \
+         spend engine quota."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -186,8 +192,8 @@ impl Tool for GmapsSearchTool {
                 "depth": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 5,
-                    "description": "Result depth, default 2 (higher costs more engine quota)"
+                    "maximum": 7,
+                    "description": "Result depth, default 2 (the engine clamps to 1-7; higher costs more engine quota)"
                 }
             },
             "required": ["keyword", "cities"]
@@ -289,12 +295,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_requires_url_and_serial() {
-        let missing_both = resolve_config(None, None).unwrap_err().to_string();
-        assert!(missing_both.contains(ENGINE_URL_ENV), "{missing_both}");
-        assert!(missing_both.contains(ENGINE_SERIAL_ENV), "{missing_both}");
-        assert!(resolve_config(Some("https://engine.test"), None).is_err());
-        assert!(resolve_config(None, Some("serial")).is_err());
+    fn config_requires_url_but_not_serial() {
+        let missing_url = resolve_config(None, None).unwrap_err().to_string();
+        assert!(missing_url.contains(ENGINE_URL_ENV), "{missing_url}");
+        // A serial is optional: the engine authorizes an empty serial as a trial.
+        let trial = resolve_config(Some("https://engine.test"), None).unwrap();
+        assert_eq!(trial.serial, "");
     }
 
     #[test]
@@ -303,6 +309,7 @@ mod tests {
         assert_eq!(config.endpoint, "https://engine.test/api/engine/run");
         assert_eq!(config.serial, "serial");
         assert!(resolve_config(Some("engine.test"), Some("s")).is_err());
+        assert!(resolve_config(Some("engine.test"), None).is_err());
     }
 
     #[test]
