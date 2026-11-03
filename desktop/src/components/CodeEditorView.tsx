@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Copy, Check, FileCode, Play } from 'lucide-react';
+import { DiffView } from './DiffView';
+import { TOKEN_CLASS, languageFamily, tokenizeLine } from '../lib/highlight';
 
 interface CodeFile {
   name: string;
@@ -13,13 +15,39 @@ interface CodeEditorViewProps {
   onRunPreview?: () => void;
   onOpenTerminal?: () => void;
   files?: CodeFile[];
+  /** Unified diff to render instead of the file body (patch artifacts). */
+  diff?: string;
 }
 
-export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEditorViewProps) {
+export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: CodeEditorViewProps) {
   const fileList = files && files.length > 0 ? files : [];
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const currentFile = fileList[activeFileIndex] || fileList[0];
+
+  if (diff && diff.trim()) {
+    return (
+      <div className="h-full flex flex-col bg-sand-50 text-neutral-800 rounded-xl overflow-hidden border border-neutral-200 select-text">
+        <div className="flex items-center justify-between bg-white px-3 py-2 border-b border-neutral-200 shrink-0">
+          <span className="text-xs font-semibold text-neutral-900">Applied patch</span>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(diff);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-neutral-100 text-neutral-600 text-xs font-sans transition-colors cursor-pointer"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copied ? 'Copied' : 'Copy diff'}</span>
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-3">
+          <DiffView diff={diff} collapsible={false} />
+        </div>
+      </div>
+    );
+  }
 
   const handleCopy = () => {
     if (!currentFile) return;
@@ -118,7 +146,7 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEdit
                   {i + 1}
                 </td>
                 <td className="whitespace-pre overflow-x-visible align-top font-mono">
-                  {renderSyntaxLine(line)}
+                  {renderSyntaxLine(line, currentFile.language)}
                 </td>
               </tr>
             ))}
@@ -138,27 +166,16 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files }: CodeEdit
   );
 }
 
-function renderSyntaxLine(line: string) {
-  if (line.trim().startsWith('//')) {
-    return <span className="text-emerald-600 italic">{line}</span>;
-  }
-
-  const tokens = line.split(/(\b(?:import|from|export|default|function|const|let|return|interface|type)\b|'[^']*'|"[^"]*"|`[^`]*`)/g);
-
+function renderSyntaxLine(line: string, language: string) {
+  if (!line) return null;
+  const tokens = tokenizeLine(line, languageFamily(language));
   return (
     <span>
-      {tokens.map((token, idx) => {
-        if (/^(import|from|export|default|function|const|let|return|interface|type)$/.test(token)) {
-          return <span key={idx} className="text-blue-700 font-semibold">{token}</span>;
-        }
-        if (/^['"`]/.test(token)) {
-          return <span key={idx} className="text-amber-700">{token}</span>;
-        }
-        if (/^[A-Z][a-zA-Z0-9]+/.test(token)) {
-          return <span key={idx} className="text-teal-700 font-medium">{token}</span>;
-        }
-        return <span key={idx} className="text-slate-700">{token}</span>;
-      })}
+      {tokens.map((token, idx) => (
+        <span key={idx} className={TOKEN_CLASS[token.kind]}>
+          {token.text}
+        </span>
+      ))}
     </span>
   );
 }

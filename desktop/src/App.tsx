@@ -58,6 +58,7 @@ import { FileExplorerView } from './components/FileExplorerView';
 import { SshTerminalView } from './components/SshTerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { MarkdownView } from './components/MarkdownView';
+import { DiffView } from './components/DiffView';
 import { ApprovalCard } from './components/ApprovalCard';
 import { ApprovalCenterModal } from './components/ApprovalCenterModal';
 import { GitHubView } from './components/GitHubView';
@@ -561,6 +562,8 @@ export default function App() {
   const [streamingText, setStreamingText] = useState('');
   const [streamingThought, setStreamingThought] = useState('');
   const [streamingTool, setStreamingTool] = useState<string | null>(null);
+  const [chatDiffs, setChatDiffs] = useState<{ id: string; title: string; diff: string }[]>([]);
+  const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [steerCards, setSteerCards] = useState<SteerCard[]>([]);
   const steerCardsRef = useRef<SteerCard[]>([]);
@@ -700,6 +703,15 @@ export default function App() {
         setStreamingTool(null);
       } else if (event.type === 'artifact_created') {
         setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
+        const art = event.payload.artifact;
+        if (art.kind === 'patch' && art.payload?.type === 'patch' && art.payload.data?.diff) {
+          const diff = art.payload.data.diff;
+          setChatDiffs((prev) =>
+            prev.some((d) => d.id === art.id)
+              ? prev
+              : [...prev, { id: art.id, title: art.title, diff }].slice(-4),
+          );
+        }
       } else if (event.type === 'steer_applied') {
         setSteerCards((prev) => prev.filter((card) => card.id !== event.payload.steer_id));
       } else if (event.type === 'state_changed') {
@@ -785,6 +797,7 @@ export default function App() {
     setStreamingThought('');
     setStreamingTool(null);
     setSteerCards([]);
+    setChatDiffs([]);
     stoppedRef.current = false;
     setActiveWorkspace(workspaces.default);
   };
@@ -798,6 +811,7 @@ export default function App() {
     setStreamingText('');
     setStreamingThought('');
     setSteerCards([]);
+    setChatDiffs([]);
     stoppedRef.current = false;
     try {
       const data = await api.getSession(id);
@@ -2139,6 +2153,24 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   </div>
                 )}
 
+                {chatDiffs.length > 0 && (
+                  <div className="flex flex-col gap-2 mt-2">
+                    {chatDiffs.map((card) => (
+                      <div key={card.id} className="flex gap-2.5">
+                        <div className="w-5 h-5 rounded-full bg-white border border-neutral-200 text-neutral-900 shadow-2xs flex items-center justify-center shrink-0 mt-3">
+                          <CatLogo className="w-3.5 h-3.5 text-neutral-900" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-0.5">
+                            Patch applied · {card.title}
+                          </div>
+                          <DiffView diff={card.diff} maxRows={14} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div ref={chatEndRef} />
               </div>
             )}
@@ -2545,7 +2577,11 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                             <div
                               key={art.id}
                               onClick={() => {
-                                if (art.kind === 'code' || art.kind === 'patch') {
+                                if (art.kind === 'patch') {
+                                  setSelectedPatchId(art.id);
+                                  setRightPanelView('editor');
+                                } else if (art.kind === 'code') {
+                                  setSelectedPatchId(null);
                                   setRightPanelView('editor');
                                 } else {
                                   setRightPanelView('browser');
