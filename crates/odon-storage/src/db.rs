@@ -89,7 +89,7 @@ impl StorageEngine {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS sessions (
@@ -220,7 +220,7 @@ impl StorageEngine {
     // --- Todo Operations (per-session task plan) ---
 
     pub fn set_todos(&self, session_id: &str, items: &serde_json::Value) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO todos (session_id, items_json, updated_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(session_id) DO UPDATE SET
@@ -232,7 +232,7 @@ impl StorageEngine {
     }
 
     pub fn get_todos(&self, session_id: &str) -> Result<serde_json::Value> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare("SELECT items_json FROM todos WHERE session_id = ?1")?;
         let mut rows = stmt.query(params![session_id])?;
         if let Some(row) = rows.next()? {
@@ -246,7 +246,7 @@ impl StorageEngine {
     // --- Session Operations ---
 
     pub fn save_session(&self, session: &Session) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mode_str = serde_json::to_string(&session.mode)?;
         let status_str = serde_json::to_string(&session.status)?;
         let metadata_json = match &session.metadata {
@@ -280,7 +280,7 @@ impl StorageEngine {
     }
 
     pub fn get_session(&self, id: &str) -> Result<Session> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at
              FROM sessions WHERE id = ?1",
@@ -297,10 +297,10 @@ impl StorageEngine {
             let status: SessionStatus = serde_json::from_str(&status_str)?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
 
             Ok(Session {
                 id: row.get(0)?,
@@ -322,7 +322,7 @@ impl StorageEngine {
     }
 
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at
              FROM sessions ORDER BY updated_at DESC",
@@ -343,10 +343,10 @@ impl StorageEngine {
                 serde_json::from_str(&status_str).unwrap_or(SessionStatus::Active);
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
 
             Ok(Session {
                 id,
@@ -371,7 +371,7 @@ impl StorageEngine {
     // --- Message Operations ---
 
     pub fn save_message(&self, msg: &Message) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let role_str = match msg.role {
             MessageRole::User => "user",
             MessageRole::Assistant => "assistant",
@@ -400,7 +400,7 @@ impl StorageEngine {
     }
 
     pub fn list_messages(&self, session_id: &str) -> Result<Vec<Message>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, session_id, role, content_json, model, created_at
              FROM messages WHERE session_id = ?1 ORDER BY created_at ASC, rowid ASC",
@@ -430,7 +430,7 @@ impl StorageEngine {
                 });
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
 
             Ok(Message {
                 id,
@@ -452,7 +452,7 @@ impl StorageEngine {
     // --- Artifact Operations ---
 
     pub fn save_artifact(&self, artifact: &Artifact) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let kind_str = serde_json::to_string(&artifact.kind)?;
         let payload_json = serde_json::to_string(&artifact.payload)?;
 
@@ -532,7 +532,7 @@ impl StorageEngine {
         })?;
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|value| value.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now());
+            .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
         Ok(ArtifactVersion {
             artifact_id: row.get(0)?,
             version: row.get(1)?,
@@ -545,7 +545,7 @@ impl StorageEngine {
     }
 
     pub fn list_artifact_versions(&self, artifact_id: &str) -> Result<Vec<ArtifactVersion>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT artifact_id, version, title, kind, summary, payload_json, created_at
              FROM artifact_versions WHERE artifact_id = ?1 ORDER BY version DESC",
@@ -559,7 +559,7 @@ impl StorageEngine {
     }
 
     pub fn get_artifact_version(&self, artifact_id: &str, version: i64) -> Result<ArtifactVersion> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT artifact_id, version, title, kind, summary, payload_json, created_at
              FROM artifact_versions WHERE artifact_id = ?1 AND version = ?2",
@@ -587,7 +587,7 @@ impl StorageEngine {
     }
 
     pub fn list_artifacts(&self, session_id: &str) -> Result<Vec<Artifact>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, session_id, title, kind, summary, payload_json, created_at
              FROM artifacts WHERE session_id = ?1 ORDER BY created_at ASC",
@@ -612,7 +612,7 @@ impl StorageEngine {
             })?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
 
             Ok(Artifact {
                 id,
@@ -633,7 +633,7 @@ impl StorageEngine {
     }
 
     pub fn get_artifact(&self, id: &str) -> Result<Artifact> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, session_id, title, kind, summary, payload_json, created_at
              FROM artifacts WHERE id = ?1",
@@ -659,7 +659,7 @@ impl StorageEngine {
             })?;
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
 
             Ok(Artifact {
                 id,
@@ -706,7 +706,7 @@ impl StorageEngine {
     // --- Memory Operations ---
 
     pub fn set_memory(&self, key: &str, value: &str, category: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO memories (id, key, value, category, updated_at)
@@ -721,7 +721,7 @@ impl StorageEngine {
     }
 
     pub fn get_memory(&self, key: &str) -> Result<Option<MemoryItem>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt =
             conn.prepare("SELECT key, value, category, updated_at FROM memories WHERE key = ?1")?;
         let mut rows = stmt.query(params![key])?;
@@ -729,7 +729,7 @@ impl StorageEngine {
             let updated_at_str: String = row.get(3)?;
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
             Ok(Some(MemoryItem {
                 key: row.get(0)?,
                 value: row.get(1)?,
@@ -742,7 +742,7 @@ impl StorageEngine {
     }
 
     pub fn list_memories(&self, category: Option<&str>) -> Result<Vec<MemoryItem>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut memories = Vec::new();
         if let Some(cat) = category {
             let mut stmt = conn.prepare(
@@ -752,7 +752,7 @@ impl StorageEngine {
                 let updated_at_str: String = row.get(3)?;
                 let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
+                    .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
                 Ok(MemoryItem {
                     key: row.get(0)?,
                     value: row.get(1)?,
@@ -771,7 +771,7 @@ impl StorageEngine {
                 let updated_at_str: String = row.get(3)?;
                 let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
+                    .unwrap_or_else(|_| { tracing::warn!("corrupt timestamp in odon_state.db; substituting current time"); Utc::now() });
                 Ok(MemoryItem {
                     key: row.get(0)?,
                     value: row.get(1)?,
@@ -787,7 +787,7 @@ impl StorageEngine {
     }
 
     pub fn delete_memory(&self, key: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let count = conn.execute("DELETE FROM memories WHERE key = ?1", params![key])?;
         Ok(count > 0)
     }
@@ -803,7 +803,7 @@ impl StorageEngine {
         name: Option<&str>,
         models_json: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let now = Utc::now().to_rfc3339();
         if is_default {
             conn.execute(
@@ -835,7 +835,7 @@ impl StorageEngine {
     }
 
     pub fn get_provider_config(&self, provider_id: &str) -> Result<Option<ProviderConfigRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT provider_id, api_key, base_url, is_default, name, models_json, updated_at
              FROM provider_configs WHERE provider_id = ?1",
@@ -860,7 +860,7 @@ impl StorageEngine {
     }
 
     pub fn list_provider_configs(&self) -> Result<Vec<ProviderConfigRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT provider_id, api_key, base_url, is_default, name, models_json, updated_at
              FROM provider_configs ORDER BY provider_id ASC",
@@ -885,7 +885,7 @@ impl StorageEngine {
     }
 
     pub fn delete_provider_config(&self, provider_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn()?;
         let count = conn.execute(
             "DELETE FROM provider_configs WHERE provider_id = ?1",
             params![provider_id],

@@ -121,6 +121,21 @@ fn is_blocked_hostname(host: &str) -> bool {
 
 /// Validate a user-supplied URL before any network request.
 pub async fn validate_url(raw: &str) -> Result<reqwest::Url> {
+    validate_url_inner(raw, false).await
+}
+
+/// Validate a URL for the operator's preview browser.
+///
+/// The browser panel exists to show the app being worked on, which usually
+/// lives on loopback, so `localhost`/`127.0.0.1`/`[::1]` are permitted here.
+/// This mirrors the rule `/api/browser/read` already applies. Private LAN,
+/// link-local, CGNAT and cloud-metadata addresses stay blocked: those reach
+/// another machine, which the operator never asked for.
+pub async fn validate_url_allow_loopback(raw: &str) -> Result<reqwest::Url> {
+    validate_url_inner(raw, true).await
+}
+
+async fn validate_url_inner(raw: &str, allow_loopback: bool) -> Result<reqwest::Url> {
     let url = reqwest::Url::parse(raw.trim()).map_err(|e| OdonError::Tool {
         tool: "url_guard".to_string(),
         message: format!("Invalid URL: {e}"),
@@ -174,7 +189,11 @@ pub async fn validate_url(raw: &str) -> Result<reqwest::Url> {
     }
 
     if !allow_private_network() {
-        if is_blocked_hostname(&host) {
+        let host_is_loopback = match host.parse::<IpAddr>() {
+            Ok(ip) => ip.is_loopback(),
+            Err(_) => host == "localhost",
+        };
+        if is_blocked_hostname(&host) && !(allow_loopback && host_is_loopback) {
             return Err(OdonError::Tool {
                 tool: "url_guard".to_string(),
                 message: format!(
@@ -193,7 +212,8 @@ pub async fn validate_url(raw: &str) -> Result<reqwest::Url> {
         let mut checked = false;
         for addr in lookup {
             checked = true;
-            if is_blocked_ip(addr.ip()) {
+            let permitted_loopback = allow_loopback && addr.ip().is_loopback();
+            if is_blocked_ip(addr.ip()) && !permitted_loopback {
                 return Err(OdonError::Tool {
                     tool: "url_guard".to_string(),
                     message: format!(

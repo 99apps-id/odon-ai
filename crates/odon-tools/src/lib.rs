@@ -329,7 +329,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            215,
+            211,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
@@ -346,6 +346,13 @@ mod tests {
                 "cron_add",
                 "cron_list",
                 "cron_remove",
+                // Security perimeter: these mutate approval policy, widen the
+                // workspace, or add MCP servers, so they are never advertised
+                // to the model. The UI drives them over HTTP instead.
+                "approval_decide",
+                "settings_set",
+                "workspace_add",
+                "mcp_add_server",
             ]),
             "Compatibility tools must be reviewed explicitly"
         );

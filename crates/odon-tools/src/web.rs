@@ -393,7 +393,13 @@ impl Tool for WebFetchTool {
 
         let clean_text = clean_html_snippet(&body);
         let truncated = if clean_text.len() > 10000 {
-            format!("{}... [truncated]", &clean_text[..10000])
+            // Snap to a char boundary: arbitrary web text can split a
+            // multi-byte UTF-8 character at byte 10000.
+            let mut end = 10000;
+            while end > 0 && !clean_text.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}... [truncated]", &clean_text[..end])
         } else {
             clean_text
         };

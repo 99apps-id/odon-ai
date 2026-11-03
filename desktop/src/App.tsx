@@ -70,6 +70,20 @@ import { ArtifactVersionsModal } from './components/ArtifactVersionsModal';
 import { api, WorkspaceInfo, WorkspaceBrowseResult } from './api';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
+// The composer exposes exactly four modes. Values outside this set are never
+// valid UI state: older builds wrote starter-card modes ("create", "agents",
+// "automations") into localStorage, so anything unrecognised falls back to chat.
+type ExecutionMode = 'chat' | 'auto' | 'agent' | 'plan';
+
+const EXECUTION_MODES: readonly ExecutionMode[] = ['chat', 'auto', 'agent', 'plan'];
+
+function parseExecutionMode(raw: string | null): ExecutionMode {
+  if (raw && (EXECUTION_MODES as readonly string[]).includes(raw)) {
+    return raw as ExecutionMode;
+  }
+  return 'chat';
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -348,12 +362,16 @@ export default function App() {
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   // Composer Execution Mode (unified UX: one composer, multiple modes)
-  const [executionMode, setExecutionMode] = useState<'chat' | 'auto' | 'agent' | 'plan'>(() => {
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('odon_execution_mode') as any) || 'chat';
+      return parseExecutionMode(localStorage.getItem('odon_execution_mode'));
     }
     return 'chat';
   });
+  // Session label chosen from a starter card. Keep it out of the composer
+  // mode: the composer has four modes, the backend session label has six
+  // values, and mixing them stored an invalid composer mode.
+  const [pendingSessionMode, setPendingSessionMode] = useState<string>('general');
   // Persist execution mode
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1131,7 +1149,7 @@ export default function App() {
           const title = textToSend.slice(0, 32) + (textToSend.length > 32 ? '...' : '');
           const newSession = await api.createSession(
             title,
-            executionMode,
+            pendingSessionMode,
             selectedModel,
             activeWorkspace || workspaces.default || undefined,
           );
@@ -1140,6 +1158,8 @@ export default function App() {
           currentSessionIdRef.current = sid;
           setCurrentSessionId(sid);
           setSessions((prev) => [newSession, ...prev]);
+          // Consumed once: a later session must not silently inherit this label.
+          setPendingSessionMode('general');
         } else {
           activeSessionRef.current = sid;
         }
@@ -1233,9 +1253,12 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
     return () => clearTimeout(timer);
   }, [isGenerating]);
 
-  // Seed the composer from hero action cards so users can review the prompt before sending.
-  const handleActionCard = (_title: string, promptText: string, mode: string) => {
-    setExecutionMode(mode as any);
+  // Seed the composer from the starter cards so the user can review the prompt
+  // before sending. The mode must stay inside the composer's four valid modes;
+  // session modes beyond these are a backend concern, not a UI state concern.
+  const handleActionCard = (promptText: string, mode: ExecutionMode, sessionMode: string) => {
+    setExecutionMode(mode);
+    setPendingSessionMode(sessionMode);
     setActiveNav('chat');
     setInputMessage(promptText);
   };
@@ -1567,28 +1590,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               </button>
 
               <button
-                onClick={() => setActiveNav('create')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'create'
-                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
-                  }`}
-              >
-                <ImageIcon className={`w-4 h-4 ${activeNav === 'create' ? 'text-blue-600' : 'text-neutral-600'}`} />
-                <span>Create</span>
-              </button>
-
-              <button
-                onClick={() => setActiveNav('documents')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'documents'
-                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
-                  }`}
-              >
-                <FileText className={`w-4 h-4 ${activeNav === 'documents' ? 'text-blue-600' : 'text-neutral-600'}`} />
-                <span>Documents</span>
-              </button>
-
-              <button
                 onClick={() => setActiveNav('files')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${(activeNav === 'files' || activeNav === 'explorer')
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
@@ -1597,17 +1598,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               >
                 <Folder className={`w-4 h-4 ${(activeNav === 'files' || activeNav === 'explorer') ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Files</span>
-              </button>
-
-              <button
-                onClick={() => setActiveNav('agents')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'agents'
-                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
-                  }`}
-              >
-                <Bot className={`w-4 h-4 ${activeNav === 'agents' ? 'text-blue-600' : 'text-neutral-600'}`} />
-                <span>Agents</span>
               </button>
             </nav>
 
@@ -1681,7 +1671,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 px-4">
             <div className="flex items-center gap-2">
-              {activeNav !== 'chat' && activeNav !== 'create' && activeNav !== 'documents' && activeNav !== 'agents' ? (
+              {activeNav !== 'chat' ? (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setActiveNav('chat')}
@@ -1862,7 +1852,11 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   Your universal AI assistant for coding, creating, documents, and more.
                 </p>
 
-                <PromptStartersGrid onSelect={handleActionCard} />
+                <PromptStartersGrid
+                  onSelect={(_title, promptText, mode, sessionMode) =>
+                    handleActionCard(promptText, mode, sessionMode)
+                  }
+                />
               </div>
             )}
 
@@ -2378,17 +2372,17 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       gradient — the active mode is white on a sand track, so
                       the control never competes with the message itself. */}
                   <div className="flex items-center gap-0.5 p-0.5 bg-neutral-100/80 rounded-lg">
-                    {[
+                    {([
                       { key: 'chat', label: 'Chat', Icon: MessageSquare },
                       { key: 'auto', label: 'Auto', Icon: Zap },
                       { key: 'agent', label: 'Agent', Icon: Bot },
                       { key: 'plan', label: 'Plan', Icon: FileText },
-                    ].map((m) => {
+                    ] as const).map((m) => {
                       const active = executionMode === m.key;
                       return (
                         <button
                           key={m.key}
-                          onClick={() => setExecutionMode(m.key as any)}
+                          onClick={() => setExecutionMode(m.key)}
                           title={m.label}
                           aria-pressed={active}
                           className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium transition-colors ${

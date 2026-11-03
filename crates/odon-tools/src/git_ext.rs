@@ -416,6 +416,12 @@ impl Tool for GitTagTool {
         let msg = args.get("message").and_then(|m| m.as_str());
 
         if let Some(t) = tag {
+            if !valid_git_ref_arg(t) {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("invalid tag name: {t:?}"),
+                });
+            }
             let mut git_args = vec!["tag", "-a", t];
             if let Some(m) = msg {
                 git_args.push("-m");
@@ -463,6 +469,20 @@ impl Tool for GitRemoteAddTool {
             .and_then(|n| n.as_str())
             .unwrap_or("origin");
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        if !valid_remote_name(name) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid remote name: {name:?}"),
+            });
+        }
+        if !valid_remote_url(url) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "invalid or disallowed remote URL: {url:?} (transport helpers like 'ext::' are not permitted)"
+                ),
+            });
+        }
         let (code, stdout, stderr) =
             run_git(&ctx.workspace_root, &["remote", "add", name, url]).await?;
         Ok(
@@ -499,6 +519,20 @@ impl Tool for GitRemoteSetUrlTool {
             .and_then(|n| n.as_str())
             .unwrap_or("origin");
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        if !valid_remote_name(name) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid remote name: {name:?}"),
+            });
+        }
+        if !valid_remote_url(url) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "invalid or disallowed remote URL: {url:?} (transport helpers like 'ext::' are not permitted)"
+                ),
+            });
+        }
         let (code, stdout, stderr) =
             run_git(&ctx.workspace_root, &["remote", "set-url", name, url]).await?;
         Ok(

@@ -1445,18 +1445,25 @@ fn sanitize_relay_file_name(value: &str, fallback_extension: &str) -> String {
     name
 }
 
-fn workspace_artifact_path(state: &AppState, candidate: &str) -> Option<PathBuf> {
+/// Confine relay artifact reads to allowed workspace roots. A hostile
+/// artifact payload must not be able to read arbitrary absolute paths
+/// (e.g. ~/.ssh/id_rsa) into a Telegram/WhatsApp attachment.
+async fn workspace_artifact_path(state: &AppState, candidate: &str) -> Option<PathBuf> {
     let path = PathBuf::from(candidate);
     let path = if path.is_absolute() {
         path
     } else {
         PathBuf::from(&state.workspace_root).join(candidate.trim_start_matches('/'))
     };
-    if path.exists() {
-        Some(path)
-    } else {
-        None
+    let canonical = std::fs::canonicalize(&path).ok()?;
+    for root in workspace_roots(state).await {
+        if let Ok(canonical_root) = std::fs::canonicalize(&root) {
+            if canonical.starts_with(&canonical_root) && canonical.is_file() {
+                return Some(canonical);
+            }
+        }
     }
+    None
 }
 
 async fn relay_artifact_file(
@@ -1470,15 +1477,25 @@ async fn relay_artifact_file(
             preview_url,
             ..
         } => {
-            let path = file_path
-                .as_deref()
-                .and_then(|candidate| workspace_artifact_path(state, candidate))
-                .or_else(|| {
-                    preview_url
-                        .as_deref()
-                        .and_then(|url| url.strip_prefix("/api/files/"))
-                        .and_then(|candidate| workspace_artifact_path(state, candidate))
-                })?;
+            let mut resolved: Option<PathBuf> = None;
+            if let Some(candidate) = file_path.as_deref() {
+                resolved = workspace_artifact_path(state, candidate).await;
+            }
+            if resolved.is_none() {
+                if let Some(candidate) = preview_url
+                    .as_deref()
+                    .and_then(|url| url.strip_prefix("/api/files/"))
+                {
+                    resolved = workspace_artifact_path(state, candidate).await;
+                }
+            }
+            let path = resolved?;
+            // Cap relay attachments at 20 MiB.
+            const MAX_RELAY_FILE_BYTES: u64 = 20 * 1024 * 1024;
+            let metadata = tokio::fs::metadata(&path).await.ok()?;
+            if metadata.len() > MAX_RELAY_FILE_BYTES {
+                return None;
+            }
             let bytes = tokio::fs::read(&path).await.ok()?;
             let mime = relay_mime_for_path(&path);
             Some((
@@ -2393,6 +2410,11 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
 
+            // Same-origin requests need no CORS at all. Cross-origin access is
+            // limited to the shipped desktop origins, the vite dev server and
+            // anything explicitly opted in via ODON_ALLOWED_ORIGINS — never
+            // arbitrary localhost ports, which would let any local web page
+            // drive the daemon API.
             let allowed_origins: Vec<String> = std::env::var("ODON_ALLOWED_ORIGINS")
                 .ok()
                 .map(|value| {
@@ -2409,15 +2431,15 @@ async fn main() -> anyhow::Result<()> {
                         return false;
                     };
                     let lower = value.to_ascii_lowercase();
-                    let local = lower == "http://localhost"
-                        || lower.starts_with("http://localhost:")
-                        || lower == "http://127.0.0.1"
-                        || lower.starts_with("http://127.0.0.1:")
-                        || lower == "http://[::1]"
-                        || lower.starts_with("http://[::1]:")
-                        || lower == "tauri://localhost"
-                        || lower == "https://tauri.localhost"
-                        || lower == "http://tauri.localhost";
+                    let local = matches!(
+                        lower.as_str(),
+                        "tauri://localhost"
+                            | "https://tauri.localhost"
+                            | "http://tauri.localhost"
+                            | "http://localhost:3000"
+                            | "http://127.0.0.1:3000"
+                            | "http://[::1]:3000"
+                    );
                     local || allowed_origins.iter().any(|allowed| allowed == &lower)
                 }))
                 .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
@@ -3409,9 +3431,26 @@ async fn steer_turn(
     }
 }
 
+/// Truncate a string on a UTF-8 char boundary (String::truncate panics
+/// when the byte index lands inside a multi-byte character).
+fn truncate_on_char_boundary(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+}
+
 fn mask_secret(secret: &str) -> String {
-    if secret.len() > 8 {
-        format!("{}...{}", &secret[..4], &secret[secret.len() - 4..])
+    let chars: Vec<char> = secret.chars().collect();
+    if chars.len() > 8 {
+        // Char-based masking: byte slicing panics on multi-byte UTF-8.
+        let head: String = chars[..4].iter().collect();
+        let tail: String = chars[chars.len() - 4..].iter().collect();
+        format!("{}...{}", head, tail)
     } else if secret.is_empty() {
         String::new()
     } else {
@@ -3846,6 +3885,16 @@ struct ArtifactExportQuery {
     format: Option<String>,
 }
 
+/// Escape HTML special chars for safely interpolating into markup.
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 fn artifact_export_file_name(title: &str, extension: &str) -> String {
     let safe: String = title
         .chars()
@@ -3897,8 +3946,8 @@ fn artifact_export_content(
             ArtifactPayload::Document { markdown, .. } => Some((
                 format!(
                     "<!doctype html><meta charset=\"utf-8\"><title>{}</title><pre style=\"white-space:pre-wrap;font-family:system-ui\">{}</pre>",
-                    artifact.title,
-                    markdown.replace('<', "&lt;").replace('>', "&gt;")
+                    html_escape(&artifact.title),
+                    html_escape(markdown)
                 ),
                 "text/html".to_string(),
             )),
@@ -4215,11 +4264,11 @@ async fn execute_terminal(
         let mut capped_stdout = full_stdout;
         let mut capped_stderr = stderr;
         if capped_stdout.len() > MAX_OUTPUT_BYTES {
-            capped_stdout.truncate(MAX_OUTPUT_BYTES);
+            truncate_on_char_boundary(&mut capped_stdout, MAX_OUTPUT_BYTES);
             truncated = true;
         }
         if capped_stderr.len() > MAX_OUTPUT_BYTES {
-            capped_stderr.truncate(MAX_OUTPUT_BYTES);
+            truncate_on_char_boundary(&mut capped_stderr, MAX_OUTPUT_BYTES);
             truncated = true;
         }
         if truncated {
@@ -4496,15 +4545,7 @@ async fn get_provider_configs(State(state): State<AppState>) -> impl IntoRespons
     let configs = state.storage.list_provider_configs().unwrap_or_default();
     let mut result = Vec::new();
     for c in configs {
-        let masked = if c.api_key.len() > 8 {
-            format!(
-                "{}...{}",
-                &c.api_key[..4],
-                &c.api_key[c.api_key.len() - 4..]
-            )
-        } else {
-            "********".to_string()
-        };
+        let masked = mask_secret(&c.api_key);
         result.push(json!({
             "provider_id": c.provider_id,
             "configured": true,
@@ -5669,17 +5710,17 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
             .replace('>', "&gt;");
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><base href=\"{}\"><title>{}</title></head><body style=\"margin:0;background:#fff;color:#111;font-family:ui-monospace,SFMono-Regular,Menlo,monospace\"><pre style=\"white-space:pre-wrap;padding:16px\">{}</pre></body></html>",
-            final_url,
-            title,
+            html_escape(final_url.as_str()),
+            html_escape(&title),
             escaped
         )
     } else {
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><base href=\"{}\"><title>{}</title></head><body style=\"margin:0;background:#fff;color:#111;font-family:system-ui\"><div style=\"padding:16px\">This URL returned <strong>{}</strong> content, which the built-in preview cannot render. <a href=\"{}\" target=\"_blank\" rel=\"noreferrer\">Open it directly</a>.</div></body></html>",
-            final_url,
-            title,
-            content_type,
-            final_url
+            html_escape(final_url.as_str()),
+            html_escape(&title),
+            html_escape(&content_type),
+            html_escape(final_url.as_str())
         )
     };
 
@@ -5778,15 +5819,31 @@ async fn serve_file(
             } else {
                 "application/octet-stream"
             };
-            (
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, mime),
-                    (header::CACHE_CONTROL, "public, max-age=3600"),
-                ],
-                bytes,
-            )
-                .into_response()
+            // SVG can carry script; serve it as an attachment so it never
+            // executes in the daemon origin. Never let shared caches store
+            // workspace file contents.
+            if clean.ends_with(".svg") {
+                (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, mime),
+                        (header::CACHE_CONTROL, "private, no-store"),
+                        (header::CONTENT_DISPOSITION, "attachment"),
+                    ],
+                    bytes,
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, mime),
+                        (header::CACHE_CONTROL, "private, no-store"),
+                    ],
+                    bytes,
+                )
+                    .into_response()
+            }
         }
         Err(_) => (
             StatusCode::NOT_FOUND,
@@ -5837,8 +5894,23 @@ async fn delete_approval_policy(
     Json(json!({ "removed": removed, "key": key }))
 }
 
+/// Redact stdio-server env secrets before returning MCP configs to clients.
+fn redact_mcp_env(servers: Vec<odon_tools::mcp::McpServerConfig>) -> Vec<odon_tools::mcp::McpServerConfig> {
+    servers
+        .into_iter()
+        .map(|mut s| {
+            if let Some(env) = s.env.as_mut() {
+                for value in env.values_mut() {
+                    *value = "***".to_string();
+                }
+            }
+            s
+        })
+        .collect()
+}
+
 async fn get_mcp_servers() -> impl IntoResponse {
-    let servers = odon_tools::mcp::load_mcp_servers();
+    let servers = redact_mcp_env(odon_tools::mcp::load_mcp_servers());
     Json(json!(servers))
 }
 
@@ -5852,7 +5924,7 @@ async fn save_mcp_server(
         servers.push(server);
     }
     let _ = odon_tools::mcp::save_mcp_servers(&servers);
-    Json(json!({ "success": true, "servers": servers }))
+    Json(json!({ "success": true, "servers": redact_mcp_env(servers) }))
 }
 
 async fn delete_mcp_server(Path(id): Path<String>) -> impl IntoResponse {
@@ -5868,7 +5940,7 @@ async fn toggle_mcp_server(Path(id): Path<String>) -> impl IntoResponse {
         s.enabled = !s.enabled;
     }
     let _ = odon_tools::mcp::save_mcp_servers(&servers);
-    Json(json!({ "success": true, "servers": servers }))
+    Json(json!({ "success": true, "servers": redact_mcp_env(servers) }))
 }
 
 #[derive(Deserialize)]
@@ -6981,11 +7053,11 @@ async fn exec_ssh_command(
     let mut capped_stderr = stderr;
     let mut truncated = false;
     if capped_stdout.len() > MAX_OUTPUT_BYTES {
-        capped_stdout.truncate(MAX_OUTPUT_BYTES);
+        truncate_on_char_boundary(&mut capped_stdout, MAX_OUTPUT_BYTES);
         truncated = true;
     }
     if capped_stderr.len() > MAX_OUTPUT_BYTES {
-        capped_stderr.truncate(MAX_OUTPUT_BYTES);
+        truncate_on_char_boundary(&mut capped_stderr, MAX_OUTPUT_BYTES);
         truncated = true;
     }
     if truncated {

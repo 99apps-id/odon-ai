@@ -762,6 +762,16 @@ impl Tool for AutomationTriggerTool {
                 message: "id is required".to_string(),
             });
         }
+        if !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+            || id.contains("..")
+        {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("invalid automation id: {id:?}"),
+            });
+        }
         // Automations are owned by the daemon; trigger the real endpoint so
         // this tool reflects actual execution instead of pretending.
         let url = format!(
@@ -1033,9 +1043,11 @@ impl Tool for McpAddServerTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        // stdio MCP servers spawn an arbitrary local command on every call;
+        // treat registration as system-mutating rather than workspace-mutating.
+        RiskTier::Tier2SystemMutating
     }
-    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("custom");
         let name = args.get("name").and_then(|n| n.as_str()).unwrap_or(id);
         let transport = args
@@ -1054,6 +1066,37 @@ impl Tool for McpAddServerTool {
                     tool: self.name().to_string(),
                     message: format!("Invalid or disallowed MCP SSE URL '{url}': {error}"),
                 })?;
+        }
+        if transport == "stdio" {
+            // A stdio MCP server is an arbitrary local command that spawns on
+            // demand; it must face the same catastrophic-command policy as
+            // shell execution instead of slipping through at Tier 1/0.
+            let cmd_line = match &command {
+                Some(cmd) => match &args.get("args").and_then(|a| a.as_array()) {
+                    Some(items) => format!(
+                        "{} {}",
+                        cmd,
+                        items
+                            .iter()
+                            .filter_map(|i| i.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                    None => cmd.clone(),
+                },
+                None => {
+                    return Err(OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: "stdio transport requires a 'command' parameter".to_string(),
+                    });
+                }
+            };
+            let policy = ctx.approval_engine.get_policy().await;
+            if let Some(reason) = policy.command_forbidden_reason(&cmd_line) {
+                return Err(OdonError::Security(format!(
+                    "MCP stdio command blocked by security policy: {reason}"
+                )));
+            }
         }
         let server_args = args.get("args").and_then(|a| a.as_array()).map(|items| {
             items
@@ -1176,14 +1219,20 @@ impl Tool for SettingsSetTool {
         RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let mode_str = args
-            .get("mode")
-            .and_then(|m| m.as_str())
-            .unwrap_or("autonomous");
+        // Fail closed: unknown/missing modes must not silently become Autonomous.
+        let mode_str = args.get("mode").and_then(|m| m.as_str()).unwrap_or("");
         let mode = match mode_str.to_lowercase().as_str() {
+            "autonomous" => odon_security::ExecutionMode::Autonomous,
             "supervised" => odon_security::ExecutionMode::Supervised,
             "locked" => odon_security::ExecutionMode::Locked,
-            _ => odon_security::ExecutionMode::Autonomous,
+            _ => {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!(
+                        "unrecognized execution mode {mode_str:?}; expected one of autonomous|supervised|locked"
+                    ),
+                });
+            }
         };
         ctx.approval_engine.update_mode(mode).await;
         Ok(json!({ "execution_mode": mode_str, "status": "updated" }))

@@ -78,8 +78,27 @@ pub fn save_mcp_servers(servers: &[McpServerConfig]) -> Result<()> {
     let data = serde_json::to_string_pretty(servers).map_err(|e| {
         odon_core::OdonError::Internal(format!("Failed to serialize MCP servers: {}", e))
     })?;
-    std::fs::write(&path, data).map_err(|e| {
-        odon_core::OdonError::Internal(format!("Failed to write MCP servers: {}", e))
+    // Write atomically with owner-only permissions: this file may contain
+    // stdio-server env secrets (API keys).
+    let tmp_path = path.with_extension("json.tmp");
+    {
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp_path).map_err(|e| {
+            odon_core::OdonError::Internal(format!("Failed to write MCP servers: {}", e))
+        })?;
+        use std::io::Write;
+        file.write_all(data.as_bytes()).map_err(|e| {
+            odon_core::OdonError::Internal(format!("Failed to write MCP servers: {}", e))
+        })?;
+    }
+    std::fs::rename(&tmp_path, &path).map_err(|e| {
+        odon_core::OdonError::Internal(format!("Failed to persist MCP servers: {}", e))
     })?;
     Ok(())
 }

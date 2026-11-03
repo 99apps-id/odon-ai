@@ -450,7 +450,7 @@ impl WhatsAppChannel {
             } else if looks_like_text_file(&file_name, &mime) {
                 let text = String::from_utf8_lossy(&bytes);
                 let text = if text.len() > 200_000 {
-                    format!("{}...(truncated)", &text[..200_000])
+                    format!("{}...(truncated)", text.chars().take(200_000).collect::<String>())
                 } else {
                     text.to_string()
                 };

@@ -13,7 +13,12 @@ fn add_path_to_zip(
     path: &Path,
     options: zip::write::SimpleFileOptions,
 ) -> std::result::Result<(), String> {
-    if path.is_dir() {
+    // Do not follow symlinks: a workspace symlink to ~/.ssh would otherwise
+    // be archived verbatim into an in-workspace zip.
+    let type_ = fs::symlink_metadata(path)
+        .map_err(|e| e.to_string())?
+        .file_type();
+    if type_.is_dir() {
         let mut entries: Vec<_> = fs::read_dir(path)
             .map_err(|e| e.to_string())?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -22,7 +27,7 @@ fn add_path_to_zip(
         for entry in entries {
             add_path_to_zip(zip, base, &entry.path(), options)?;
         }
-    } else if path.is_file() {
+    } else if type_.is_file() {
         let name = path
             .strip_prefix(base)
             .unwrap_or(path)
@@ -475,7 +480,11 @@ impl Tool for FsTreeTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
-        let max_depth = args.get("max_depth").and_then(|d| d.as_u64()).unwrap_or(3) as usize;
+        let max_depth = args
+            .get("max_depth")
+            .and_then(|d| d.as_u64())
+            .unwrap_or(3)
+            .clamp(1, 16) as usize;
         let root = resolve_path(&ctx.workspace_root, rel)?;
 
         let mut lines = Vec::new();
@@ -494,11 +503,20 @@ impl Tool for FsTreeTool {
                     if name.starts_with('.') || name == "target" || name == "node_modules" {
                         continue;
                     }
+                    // Do not follow symlinks: avoids infinite cycles and
+                    // leaking the outside-workspace tree into the output.
+                    let ty = match entry.file_type() {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    if ty.is_symlink() {
+                        continue;
+                    }
                     let is_last = i == total - 1;
                     let connector = if is_last { "└── " } else { "├── " };
                     let sub_prefix = if is_last { "    " } else { "│   " };
                     let path = entry.path();
-                    if path.is_dir() {
+                    if ty.is_dir() {
                         lines.push(format!("{}{}{}/", prefix, connector, name));
                         build_tree(
                             &path,
@@ -549,11 +567,20 @@ impl Tool for FsDuTool {
             let mut files = 0usize;
             if let Ok(entries) = fs::read_dir(p) {
                 for entry in entries.filter_map(std::result::Result::ok) {
+                    let ty = match entry.file_type() {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    // Skip symlinks entirely: prevents cycles and escaping
+                    // the workspace into outside directories.
+                    if ty.is_symlink() {
+                        continue;
+                    }
                     let ep = entry.path();
-                    if ep.is_file() {
+                    if ty.is_file() {
                         bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
                         files += 1;
-                    } else if ep.is_dir() {
+                    } else if ty.is_dir() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         if name != "target" && name != "node_modules" && !name.starts_with('.') {
                             let (sb, sf) = dir_size(&ep);
@@ -618,6 +645,10 @@ impl Tool for FsCopyRecursiveTool {
             for entry in fs::read_dir(src)? {
                 let entry = entry?;
                 let ty = entry.file_type()?;
+                if ty.is_symlink() {
+                    // Skip symlinks instead of copying their targets.
+                    continue;
+                }
                 if ty.is_dir() {
                     copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
                 } else {
@@ -736,10 +767,19 @@ impl Tool for FsFindTool {
                     {
                         continue;
                     }
+                    let ty = match entry.file_type() {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    // Do not follow symlinks (avoids cycles and escaping
+                    // the search root).
+                    if ty.is_symlink() {
+                        continue;
+                    }
 
-                    if p.is_dir() {
+                    if ty.is_dir() {
                         scan(&p, root_len, name_f, ext_f, matches);
-                    } else if p.is_file() {
+                    } else if ty.is_file() {
                         let matches_name = name_f
                             .as_ref()
                             .is_none_or(|n| file_name.to_lowercase().contains(n));
@@ -896,12 +936,29 @@ impl Tool for FsUnzipTool {
             message: e.to_string(),
         })?;
 
+        // Zip-bomb guard: cap entry count and cumulative expanded bytes.
+        const MAX_ENTRIES: usize = 10_000;
+        const MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
         let mut extracted = 0usize;
+        let mut total_bytes = 0u64;
         for index in 0..archive.len() {
+            if index >= MAX_ENTRIES {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Archive exceeds {MAX_ENTRIES} entries"),
+                });
+            }
             let mut entry = archive.by_index(index).map_err(|e| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
+            total_bytes = total_bytes.saturating_add(entry.size());
+            if total_bytes > MAX_TOTAL_BYTES {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("Archive exceeds the {MAX_TOTAL_BYTES}-byte extraction budget"),
+                });
+            }
             // `enclosed_name` rejects absolute paths and `..` traversal.
             let Some(relative) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
                 continue;

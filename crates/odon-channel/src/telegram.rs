@@ -79,6 +79,27 @@ fn looks_like_text_file(name: &str, mime: &str) -> bool {
     .any(|ext| lower.ends_with(ext))
 }
 
+/// Remove any URL from a message.
+///
+/// Telegram request URLs embed the bot token (`/bot<id>:<secret>/`), so a raw
+/// transport error logged verbatim would leak the credential into logs and the
+/// UI. Keeping the surrounding text preserves the diagnostic value.
+fn scrub_urls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find("http") {
+        let (head, tail) = rest.split_at(pos);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || c == ')' || c == '"' || c == '\'')
+            .unwrap_or(tail.len());
+        out.push_str("<url>");
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 impl TelegramRelay {
     pub fn new(token: Option<String>) -> Self {
         let allowed_users = std::env::var("TELEGRAM_ALLOWED_USERS")
@@ -139,12 +160,12 @@ impl TelegramRelay {
             .json(&body)
             .send()
             .await
-            .map_err(|e| OdonError::Channel(format!("Telegram {method} failed: {e}")))?;
+            .map_err(|e| OdonError::Channel(format!("Telegram {method} failed: {}", e.without_url())))?;
         let status = resp.status();
         let text = resp
             .text()
             .await
-            .map_err(|e| OdonError::Channel(format!("Telegram {method} read failed: {e}")))?;
+            .map_err(|e| OdonError::Channel(format!("Telegram {method} read failed: {}", e.without_url())))?;
         let val: Value = serde_json::from_str(&text).map_err(|e| {
             OdonError::Channel(format!(
                 "Telegram {method} returned invalid JSON: {e}: {text}"
@@ -405,7 +426,7 @@ impl TelegramRelay {
                     } else if looks_like_text_file(file_name, mime) {
                         let text = String::from_utf8_lossy(&bytes);
                         let text = if text.len() > 200_000 {
-                            format!("{}...(truncated)", &text[..200_000])
+                            format!("{}...(truncated)", text.chars().take(200_000).collect::<String>())
                         } else {
                             text.to_string()
                         };
@@ -553,7 +574,8 @@ impl TelegramRelay {
                     }
                 }
                 Err(e) => {
-                    error!("Telegram polling error: {e}");
+                    // Strip the URL (it embeds the bot token) before logging.
+                    error!("Telegram polling error: {}", e.without_url());
                     tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
                     backoff = (backoff * 2).min(30);
                 }
@@ -616,7 +638,11 @@ impl ChannelAdapter for TelegramRelay {
             }
             Ok(Err(e)) => {
                 // Keep the daemon alive: the network may come back later.
-                warn!("Telegram getMe could not complete: {e}");
+                // The request URL embeds the bot token, so log only the cause.
+                warn!(
+                    "Telegram getMe could not complete: {}",
+                    scrub_urls(&e.to_string())
+                );
             }
             Err(_) => {
                 warn!("Telegram getMe timed out; polling will retry in the background");
@@ -661,5 +687,15 @@ mod tests {
     fn value_ids_do_not_gain_quotes() {
         assert_eq!(value_to_id(&json!(12345)), "12345");
         assert_eq!(value_to_id(&json!("abc")), "abc");
+    }
+
+    /// A logged transport error must not carry the bot token to disk or UI.
+    #[test]
+    fn scrub_urls_removes_the_bot_token() {
+        let raw = "error sending request for url (https://api.telegram.org/bot123:SECRET/getMe)";
+        let clean = scrub_urls(raw);
+        assert!(!clean.contains("SECRET"), "token leaked: {clean}");
+        assert!(!clean.contains("https://"), "url leaked: {clean}");
+        assert!(clean.contains("error sending request for url"), "lost the cause: {clean}");
     }
 }

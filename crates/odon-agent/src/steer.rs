@@ -31,14 +31,16 @@ impl SteerQueue {
     /// Insert or update a steer by id. Updating an existing steer to priority
     /// wakes the running turn so it can preempt the current stream.
     pub fn push(&self, message: SteerMessage) {
-        let mut messages = self.messages.lock().unwrap();
+        let mut messages = self.messages.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
             existing.text = message.text;
             existing.attachments = message.attachments;
             if message.priority {
                 existing.priority = true;
                 self.priority.store(true, Ordering::SeqCst);
-                self.notify.notify_waiters();
+                // notify_one stores a permit when nobody is waiting yet,
+                // so the wakeup is not lost in the check-then-wait race.
+                self.notify.notify_one();
             }
             return;
         }
@@ -49,19 +51,19 @@ impl SteerQueue {
         messages.push(message);
         drop(messages);
         if should_notify {
-            self.notify.notify_waiters();
+            self.notify.notify_one();
         }
     }
 
     /// Remove and return all pending steers.
     pub fn drain(&self) -> Vec<SteerMessage> {
-        let mut messages = self.messages.lock().unwrap();
+        let mut messages = self.messages.lock().unwrap_or_else(|e| e.into_inner());
         self.priority.store(false, Ordering::SeqCst);
         std::mem::take(&mut *messages)
     }
 
     pub fn has_pending(&self) -> bool {
-        !self.messages.lock().unwrap().is_empty()
+        !self.messages.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     /// Wait until at least one steer is marked priority. The priority flag is

@@ -233,11 +233,10 @@ impl ModelProvider for AnthropicProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let mut err_body = resp.text().await.unwrap_or_default();
-            if err_body.len() > 2000 {
-                err_body.truncate(2000);
-                err_body.push('…');
-            }
+            let err_body = crate::truncate_str_boundary(
+                &resp.text().await.unwrap_or_default(),
+                2000,
+            );
             return Err(OdonError::Provider {
                 provider: self.label.clone(),
                 message: format!(

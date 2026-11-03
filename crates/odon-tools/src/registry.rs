@@ -253,6 +253,11 @@ impl ToolRegistry {
                 | "cron_add"
                 | "cron_list"
                 | "cron_remove"
+                // Security-perimeter tools: never advertised to the model.
+                | "approval_decide"
+                | "settings_set"
+                | "workspace_add"
+                | "mcp_add_server"
         )
         .then_some(ToolVisibility::Compatibility)
         .unwrap_or(ToolVisibility::Model)

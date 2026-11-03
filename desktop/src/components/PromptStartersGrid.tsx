@@ -1,8 +1,26 @@
 import { useState } from "react";
 import { ImageIcon, Video, FileText, Terminal, Shield, GitPullRequest, Share2 } from "lucide-react";
 
+type ExecutionModeKey = "chat" | "auto" | "agent" | "plan";
+
+// Mirrors the backend SessionMode labels. Kept separate from
+// ExecutionModeKey: a starter has a composer mode and a session label,
+// and the two vocabularies are not interchangeable.
+type SessionModeKey =
+  | "general"
+  | "code"
+  | "create"
+  | "documents"
+  | "agents"
+  | "automations";
+
 type PromptStartersProps = {
-  onSelect: (title: string, promptText: string, mode: string) => void;
+  onSelect: (
+    title: string,
+    promptText: string,
+    mode: ExecutionModeKey,
+    sessionMode: SessionModeKey,
+  ) => void;
 };
 
 type Starter = {
@@ -10,7 +28,8 @@ type Starter = {
   title: string;
   description: string;
   prompt: string;
-  mode: string;
+  mode: ExecutionModeKey;
+  sessionMode: SessionModeKey;
   icon: typeof ImageIcon;
 };
 
@@ -21,7 +40,8 @@ const STARTERS: Starter[] = [
     description: "Scaffold a modular app scaffold",
     prompt:
       "Build a personal notes web application with clean modular React 19 and SQLite storage.",
-    mode: "create",
+    mode: "agent",
+    sessionMode: "code",
     icon: Terminal,
   },
   {
@@ -30,7 +50,8 @@ const STARTERS: Starter[] = [
     description: "Analyze a screenshot or mockup",
     prompt:
       "Review the attached interface screenshot for usability, accessibility, and visual hierarchy. Prioritize actionable fixes.",
-    mode: "create",
+    mode: "chat",
+    sessionMode: "general",
     icon: ImageIcon,
   },
   {
@@ -39,7 +60,8 @@ const STARTERS: Starter[] = [
     description: "Draft a product requirements document",
     prompt:
       "Draft a comprehensive product requirements document (PRD) for local AI orchestration.",
-    mode: "create",
+    mode: "chat",
+    sessionMode: "documents",
     icon: FileText,
   },
   {
@@ -48,7 +70,8 @@ const STARTERS: Starter[] = [
     description: "Run an autonomous audit",
     prompt:
       "Run an autonomous security audit agent on the workspace tools and policy engine.",
-    mode: "agents",
+    mode: "agent",
+    sessionMode: "agents",
     icon: Shield,
   },
   {
@@ -57,7 +80,8 @@ const STARTERS: Starter[] = [
     description: "Set up an automated relay sync",
     prompt:
       "Set up automated background scheduler for Telegram and WhatsApp relay sync.",
-    mode: "automations",
+    mode: "auto",
+    sessionMode: "automations",
     icon: Share2,
   },
   {
@@ -66,7 +90,8 @@ const STARTERS: Starter[] = [
     description: "Draft a storyboard and script",
     prompt:
       "Create a concise product walkthrough storyboard and narration script, with one scene per key user outcome.",
-    mode: "create",
+    mode: "plan",
+    sessionMode: "create",
     icon: Video,
   },
 ];
@@ -84,7 +109,14 @@ export function PromptStartersGrid({ onSelect }: PromptStartersProps) {
             key={starter.id}
             onMouseEnter={() => setHovered(starter.id)}
             onMouseLeave={() => setHovered(null)}
-            onClick={() => onSelect(starter.title, starter.prompt, starter.mode)}
+            onClick={() =>
+              onSelect(
+                starter.title,
+                starter.prompt,
+                starter.mode,
+                starter.sessionMode,
+              )
+            }
             className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
               isHovered
                 ? "border-neutral-300 shadow-xs bg-neutral-50"

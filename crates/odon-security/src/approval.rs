@@ -124,30 +124,52 @@ impl ApprovalEngine {
         }
     }
 
+    /// Lexically resolve `.` and `..` components without touching the disk.
+    fn normalize_lexically(p: &std::path::Path) -> std::path::PathBuf {
+        use std::path::{Component, PathBuf};
+        let mut out = PathBuf::new();
+        for component in p.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    out.pop();
+                }
+                Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+                Component::RootDir => out.push(std::path::MAIN_SEPARATOR.to_string()),
+                Component::Normal(part) => out.push(part),
+            }
+        }
+        out
+    }
+
+    fn canonical_root(workspace_root: &std::path::Path) -> std::path::PathBuf {
+        workspace_root
+            .canonicalize()
+            .unwrap_or_else(|_| Self::normalize_lexically(workspace_root))
+    }
+
     /// Check if target parameters point outside the workspace.
     pub fn is_outside_workspace(
         parameters: &serde_json::Value,
         workspace_root: &std::path::Path,
     ) -> bool {
+        let root = Self::canonical_root(workspace_root);
         for key in ["path", "cwd", "destination", "source", "file"] {
             if let Some(p_str) = parameters.get(key).and_then(|v| v.as_str()) {
-                let p = std::path::Path::new(p_str);
-                if p.is_absolute() {
-                    if !p.starts_with(workspace_root) {
-                        return true;
-                    }
-                } else if p
-                    .components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
-                {
-                    let normalized = workspace_root.join(p);
-                    if let Ok(canonical) = normalized.canonicalize() {
-                        if !canonical.starts_with(workspace_root) {
-                            return true;
-                        }
-                    } else {
-                        return true;
-                    }
+                let raw = std::path::Path::new(p_str);
+                // Join relative paths onto the workspace root; absolute paths
+                // are taken as-is. Never trust the raw spelling — `..`
+                // components must be resolved before containment is decided.
+                let joined = if raw.is_absolute() {
+                    raw.to_path_buf()
+                } else {
+                    workspace_root.join(raw)
+                };
+                let normalized = joined
+                    .canonicalize()
+                    .unwrap_or_else(|_| Self::normalize_lexically(&joined));
+                if !normalized.starts_with(&root) {
+                    return true;
                 }
             }
         }
@@ -549,11 +571,9 @@ impl ApprovalEngine {
     /// so a one-shot opt-in never widens into a lasting grant.
     fn exact_policy_key(tool_name: &str, parameters: &serde_json::Value) -> String {
         let scope = Self::scope_of(parameters);
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        parameters.to_string().hash(&mut hasher);
-        format!("{tool_name}|{scope}|{:016x}", hasher.finish())
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(parameters.to_string().as_bytes());
+        format!("{tool_name}|{scope}|{:x}", digest)
     }
 
     /// Stored marker for "Allow All": stored as a bare `*` so one explicit
@@ -582,16 +602,46 @@ impl ApprovalEngine {
         self.audit_history.read().await.clone()
     }
 
+    /// Best-effort scrub of token-like substrings before writing to disk.
+    fn redact_secrets(text: &str) -> String {
+        use regex::Regex;
+        use std::sync::OnceLock;
+        static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+        let patterns = PATTERNS.get_or_init(|| {
+            [
+                r"sk-[A-Za-z0-9_\-]{8,}",
+                r"gh[pousr]_[A-Za-z0-9]{8,}",
+                r"github_pat_[A-Za-z0-9_]{8,}",
+                r"xox[baprs]-[A-Za-z0-9\-]{8,}",
+                r"AKIA[0-9A-Z]{8,}",
+                r"(?i)bearer\s+[A-Za-z0-9._\-]{8,}",
+                r#"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)(\\?"?\s*[:=]\s*\\?"?)[^",\s&]{4,}"#,
+            ]
+            .iter()
+            .filter_map(|p| Regex::new(p).ok())
+            .collect()
+        });
+        let mut out = text.to_string();
+        for pattern in patterns {
+            out = pattern.replace_all(&out, "***REDACTED***").into_owned();
+        }
+        out
+    }
+
     fn persist_audit_record(record: &AuditRecord, path: &PathBuf) {
         if let Ok(line) = serde_json::to_string(record) {
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "{line}")
-                });
+            let line = Self::redact_secrets(&line);
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).append(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let _ = options.open(path).and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "{line}")
+            });
         }
     }
 
@@ -620,7 +670,15 @@ mod tests {
     #[tokio::test]
     async fn approval_publishes_requested_then_resolved_events() {
         let (tx, mut rx) = odon_core::events::create_event_bus(16);
-        let engine = ApprovalEngine::new(SecurityPolicy::default()).with_events(tx);
+        let mut engine = ApprovalEngine::new(SecurityPolicy::default());
+        // Never write test records into the operator's real ~/.odon directory.
+        let tmp = std::env::temp_dir().join(format!(
+            "odon-approval-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        engine.policy_path = tmp.join("approval-policies.json");
+        engine.audit_path = tmp.join("approval-audit.jsonl");
+        let engine = engine.with_events(tx);
 
         let waiter = {
             let engine = engine.clone();

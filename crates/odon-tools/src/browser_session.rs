@@ -173,16 +173,34 @@ pub(crate) async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> 
         .cloned()
         .ok_or_else(|| err(format!("session '{id}' is not live; resume it first")))?;
     let p = live.lock().await.meta.port;
-    let ts: Vec<Value> = reqwest::get(format!("http://127.0.0.1:{p}/json"))
-        .await
-        .map_err(|e| err(e.to_string()))?
-        .json()
-        .await
-        .map_err(|e| err(e.to_string()))?;
-    let u = ts
-        .iter()
-        .find_map(|x| x.get("webSocketDebuggerUrl").and_then(Value::as_str))
-        .ok_or_else(|| err("no active browser tab"))?;
+    // A session that was just spawned has not published its page target yet,
+    // so wait briefly instead of failing the panel and the agent with
+    // "no active browser tab" during startup.
+    let deadline_target = tokio::time::Instant::now() + Duration::from_secs(10);
+    let u = loop {
+        let mut found = None;
+        if let Ok(r) = reqwest::get(format!("http://127.0.0.1:{p}/json")).await {
+            if let Ok(ts) = r.json::<Vec<Value>>().await {
+                found = ts
+                    .iter()
+                    .filter(|x| {
+                        x.get("type")
+                            .and_then(Value::as_str)
+                            .map(|t| t == "page")
+                            .unwrap_or(true)
+                    })
+                    .find_map(|x| x.get("webSocketDebuggerUrl").and_then(Value::as_str))
+                    .map(str::to_string);
+            }
+        }
+        if let Some(found) = found {
+            break found;
+        }
+        if tokio::time::Instant::now() >= deadline_target {
+            return Err(err("no active browser tab"));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
     let (mut ws, _) = tokio_tungstenite::connect_async(u)
         .await
         .map_err(|e| err(e.to_string()))?;
@@ -193,16 +211,45 @@ pub(crate) async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> 
     ))
     .await
     .map_err(|e| err(e.to_string()))?;
-    let m = tokio::time::timeout(Duration::from_secs(20), ws.next())
-        .await
-        .map_err(|_| err("CDP timeout"))?
-        .ok_or_else(|| err("CDP closed"))?
-        .map_err(|e| err(e.to_string()))?;
-    match m {
-        tokio_tungstenite::tungstenite::Message::Text(x) => {
-            serde_json::from_str(&x).map_err(|e| err(e.to_string()))
+    // CDP pushes unsolicited events on the same socket, so the first frame is
+    // not necessarily our reply. Wait for the frame whose id matches ours and
+    // surface Chrome's own error text instead of a generic fallback.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return Err(err(format!("CDP timeout waiting for {method}")));
         }
-        _ => Err(err("invalid CDP response")),
+        let m = tokio::time::timeout(left, ws.next())
+            .await
+            .map_err(|_| err(format!("CDP timeout waiting for {method}")))?
+            .ok_or_else(|| err("CDP closed"))?
+            .map_err(|e| err(e.to_string()))?;
+        let text = match m {
+            tokio_tungstenite::tungstenite::Message::Text(x) => x,
+            tokio_tungstenite::tungstenite::Message::Close(_) => {
+                return Err(err("CDP closed"))
+            }
+            _ => continue,
+        };
+        let frame: Value = serde_json::from_str(&text).map_err(|e| err(e.to_string()))?;
+        if frame.get("id").and_then(Value::as_i64) != Some(1) {
+            continue;
+        }
+        if let Some(e) = frame.get("error") {
+            let msg = e
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| e.to_string());
+            let data = e
+                .get("data")
+                .and_then(Value::as_str)
+                .map(|d| format!(": {d}"))
+                .unwrap_or_default();
+            return Err(err(format!("{method} failed: {msg}{data}")));
+        }
+        return Ok(frame);
     }
 }
 
@@ -289,9 +336,79 @@ impl Tool for BrowserSessionCreateTool {
             .get("url")
             .and_then(Value::as_str)
             .unwrap_or("about:blank");
+        validate_session_url(url).await?;
         let m = create_session(&ctx.workspace_root, url).await?;
         Ok(json!(m))
     }
+}
+
+/// Sessions carry a URL into a full Chromium network stack. Only allow
+/// `about:blank` or URLs that survive the same SSRF guard used elsewhere.
+async fn validate_session_url(url: &str) -> Result<()> {
+    if url == "about:blank" {
+        return Ok(());
+    }
+    // The panel previews the app under development, so loopback is allowed;
+    // LAN and metadata targets stay blocked by the shared guard.
+    crate::net_guard::validate_url_allow_loopback(url)
+        .await
+        .map_err(|e| err(e.to_string()))?;
+    Ok(())
+}
+
+/// Launch Chromium and wait until its DevTools endpoint actually answers.
+///
+/// `port()` only reserves a free port and releases it again, so two sessions
+/// created at the same time can be handed the same number; the loser then
+/// fails to bind and dies silently. Waiting for `/json/version` and retrying
+/// turns that race into a slow-but-correct start instead of a dead session
+/// that the panel shows as blank.
+pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(Child, u16)> {
+    let exe = browser()?;
+    let mut last = String::from("browser did not start");
+    for _ in 0..3 {
+        let p = port().await?;
+        let mut c = Command::new(&exe);
+        c.args([
+            "--headless=new",
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--window-size=1280,800",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--remote-debugging-address=127.0.0.1",
+            &format!("--remote-debugging-port={p}"),
+            &format!("--user-data-dir={}", root.display()),
+            url,
+        ]);
+        let mut child = match c.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                last = e.to_string();
+                continue;
+            }
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Ok(Some(_)) = child.try_wait() {
+                last = format!("browser exited during startup (port {p})");
+                break;
+            }
+            if reqwest::get(format!("http://127.0.0.1:{p}/json/version"))
+                .await
+                .is_ok()
+            {
+                return Ok((child, p));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                last = format!("browser did not expose its debugging port ({p})");
+                let _ = child.kill();
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    Err(err(format!("could not start a browser session: {last}")))
 }
 
 /// Spawn a Chromium session and register it in the shared live store.
@@ -302,18 +419,7 @@ pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Me
     let id = sid();
     let root = session_dir(workspace_root, &id);
     std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
-    let p = port().await?;
-    let mut c = Command::new(browser()?);
-    c.args([
-        "--headless=new",
-        "--disable-gpu",
-        "--no-first-run",
-        "--no-default-browser-check",
-        &format!("--remote-debugging-port={p}"),
-        &format!("--user-data-dir={}", root.display()),
-        url,
-    ]);
-    let child = c.spawn().map_err(|e| err(e.to_string()))?;
+    let (child, p) = spawn_browser(&root, url).await?;
     let now = chrono::Utc::now().to_rfc3339();
     let m = Meta {
         session_id: id.clone(),
@@ -404,18 +510,8 @@ impl Tool for BrowserSessionResumeTool {
         // Otherwise load persisted metadata from disk and spawn a fresh browser
         // that reuses the saved profile directory.
         let m = find_persisted_meta(&ctx.workspace_root, id)?;
-        let p = port().await?;
-        let mut c = Command::new(browser()?);
-        c.args([
-            "--headless=new",
-            "--disable-gpu",
-            "--no-first-run",
-            "--no-default-browser-check",
-            &format!("--remote-debugging-port={p}"),
-            &format!("--user-data-dir={}", m.profile_dir),
-            &m.url,
-        ]);
-        let child = c.spawn().map_err(|e| err(e.to_string()))?;
+        validate_session_url(&m.url).await?;
+        let (child, p) = spawn_browser(std::path::Path::new(&m.profile_dir), &m.url).await?;
         let now = chrono::Utc::now().to_rfc3339();
         let mut n = m.clone();
         n.port = p;

@@ -679,6 +679,7 @@ impl AgentRuntime {
             let mut sorted_indices: Vec<_> = tool_accumulator.keys().cloned().collect();
             sorted_indices.sort_unstable();
             let mut pending: Vec<PendingCall> = Vec::new();
+            let mut executed: Vec<ExecutedCall> = Vec::new();
             for idx in sorted_indices {
                 if let Some(tool_call) = tool_accumulator.get(&idx) {
                     let call_id = if tool_call.id.is_empty() {
@@ -686,14 +687,27 @@ impl AgentRuntime {
                     } else {
                         tool_call.id.clone()
                     };
-                    let args_val: serde_json::Value = serde_json::from_str(&tool_call.arguments)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                    pending.push(PendingCall {
-                        index: idx,
-                        call_id,
-                        name: tool_call.name.clone(),
-                        args: args_val,
-                    });
+                    // Do not silently substitute `{}` for malformed streamed
+                    // arguments: surface the parse failure to the model as a
+                    // tool error instead of executing with empty defaults.
+                    match serde_json::from_str::<serde_json::Value>(&tool_call.arguments) {
+                        Ok(args_val) => pending.push(PendingCall {
+                            index: idx,
+                            call_id,
+                            name: tool_call.name.clone(),
+                            args: args_val,
+                        }),
+                        Err(e) => executed.push(ExecutedCall {
+                            index: idx,
+                            call_id,
+                            name: tool_call.name.clone(),
+                            args: serde_json::Value::Null,
+                            output: serde_json::json!({
+                                "error": format!("tool arguments were not valid JSON: {e}")
+                            }),
+                            is_error: true,
+                        }),
+                    }
                 }
             }
             for call in &pending {
@@ -705,7 +719,6 @@ impl AgentRuntime {
                 });
             }
 
-            let mut executed: Vec<ExecutedCall> = Vec::new();
             let mut registry_calls: Vec<PendingCall> = Vec::new();
             for call in pending {
                 match call.name.as_str() {
@@ -1547,7 +1560,14 @@ fn compact_history(messages: Vec<Message>, budget_tokens: usize) -> Vec<Message>
         return messages;
     }
 
-    let head_len = 4.min(messages.len());
+    let mut head_len = 4.min(messages.len());
+    // Do not end the kept head on an assistant message that declares
+    // tool_calls: its tool results would fall into the elided window,
+    // which permanently breaks provider validation for the session.
+    // Shift such messages into the elided region instead.
+    while head_len > 0 && !messages[head_len - 1].content.tool_calls.is_empty() {
+        head_len -= 1;
+    }
     let tail_budget = budget_tokens / 2;
     let mut tail_start = messages.len();
     let mut tail_tokens = 0usize;

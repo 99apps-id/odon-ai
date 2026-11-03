@@ -42,6 +42,14 @@ impl Tool for DevServerStartTool {
                 message: "Missing 'command' argument".to_string(),
             });
         }
+        // Parity with shell_exec / exec_background: refuse catastrophic
+        // commands even in background form.
+        let policy = ctx.approval_engine.get_policy().await;
+        if let Some(reason) = policy.command_forbidden_reason(cmd_str) {
+            return Err(OdonError::Security(format!(
+                "Command blocked by security policy: {reason}"
+            )));
+        }
 
         let task_name = args
             .get("task_name")
@@ -98,8 +106,13 @@ impl Tool for DevServerStartTool {
                             if let Ok(mut guard) = task_clone.stdout.lock() {
                                 guard.push_str(&String::from_utf8_lossy(&buffer[..n]));
                                 if guard.len() > MAX_BACKGROUND_BUFFER {
-                                    let len = guard.len();
-                                    guard.replace_range(len - 2000.., "");
+                                    let drain_to = guard.len() - MAX_BACKGROUND_BUFFER;
+                                    let boundary = guard
+                                        .char_indices()
+                                        .find(|(index, _)| *index >= drain_to)
+                                        .map(|(index, _)| index)
+                                        .unwrap_or(0);
+                                    guard.drain(..boundary);
                                 }
                             }
                         }
@@ -120,8 +133,13 @@ impl Tool for DevServerStartTool {
                             if let Ok(mut guard) = task_clone.stderr.lock() {
                                 guard.push_str(&String::from_utf8_lossy(&buffer[..n]));
                                 if guard.len() > MAX_BACKGROUND_BUFFER {
-                                    let len = guard.len();
-                                    guard.replace_range(len - 2000.., "");
+                                    let drain_to = guard.len() - MAX_BACKGROUND_BUFFER;
+                                    let boundary = guard
+                                        .char_indices()
+                                        .find(|(index, _)| *index >= drain_to)
+                                        .map(|(index, _)| index)
+                                        .unwrap_or(0);
+                                    guard.drain(..boundary);
                                 }
                             }
                         }
@@ -258,7 +276,12 @@ impl Tool for DevServerLogsTool {
             .unwrap_or(8000) as usize;
         let truncate = |text: String| {
             if text.len() > tail {
-                text[text.len() - tail..].to_string()
+                // Snap the start to a char boundary.
+                let mut start = text.len() - tail;
+                while start < text.len() && !text.is_char_boundary(start) {
+                    start += 1;
+                }
+                text[start..].to_string()
             } else {
                 text
             }

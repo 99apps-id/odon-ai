@@ -178,7 +178,7 @@ pub struct OAuthAccount {
     pub plan: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
     pub provider: String,
     pub access_token: String,
@@ -191,6 +191,27 @@ pub struct OAuthToken {
     pub email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
+}
+
+impl std::fmt::Debug for OAuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthToken")
+            .field("provider", &self.provider)
+            .field("access_token", &"***REDACTED***")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field("expires_at", &self.expires_at)
+            .field("account_id", &self.account_id)
+            .field(
+                "id_token",
+                &self.id_token.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field("email", &self.email)
+            .field("plan", &self.plan)
+            .finish()
+    }
 }
 
 impl OAuthToken {
@@ -367,7 +388,8 @@ impl OAuthService {
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
             return Err(auth_error(format!(
-                "device code endpoint returned {status}: {body}"
+                "device code endpoint returned {status}: {}",
+                safe_error_summary(&body)
             )));
         }
         let device: DeviceCodeResponse = serde_json::from_str(&body)
@@ -717,7 +739,8 @@ impl PendingDeviceLogin {
                 }
                 None if !status.is_success() => {
                     return Err(auth_error(format!(
-                        "device token endpoint returned {status}: {body}"
+                        "device token endpoint returned {status}: {}",
+                        safe_error_summary(&body)
                     )));
                 }
                 None => return Err(auth_error("device token response had no access token")),
@@ -1040,6 +1063,34 @@ fn validate_device_verification_uri(provider: OAuthProvider, uri: &str) -> Resul
     Ok(())
 }
 
+/// Summarize an error response body without echoing it verbatim. Credential
+/// endpoints can (and do) reflect request material — authorization codes,
+/// refresh tokens, client secrets — back inside a 4xx/5xx body, so raw bodies
+/// must never reach logs or error messages.
+fn safe_error_summary(body: &str) -> String {
+    let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
+    let summary = parsed.and_then(|v| {
+        let code = v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .or_else(|| v.get("message").and_then(|m| m.as_str()))?;
+        let desc = v
+            .get("error_description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+        Some(if desc.is_empty() {
+            code.chars().take(200).collect::<String>()
+        } else {
+            format!(
+                "{}: {}",
+                code.chars().take(100).collect::<String>(),
+                desc.chars().take(200).collect::<String>()
+            )
+        })
+    });
+    summary.unwrap_or_else(|| format!("({} bytes of non-JSON error body withheld)", body.len()))
+}
+
 async fn parse_oauth_token_response(
     response: reqwest::Response,
     provider: OAuthProvider,
@@ -1050,8 +1101,9 @@ async fn parse_oauth_token_response(
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
         return Err(auth_error(format!(
-            "{} token endpoint returned {status}: {body}",
-            provider
+            "{} token endpoint returned {status}: {}",
+            provider,
+            safe_error_summary(&body)
         )));
     }
     let raw: RawTokenResponse = serde_json::from_str(&body)
@@ -1106,7 +1158,8 @@ async fn mint_copilot_token(client: &reqwest::Client, github_token: &str) -> Res
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
         return Err(auth_error(format!(
-            "Copilot token endpoint returned {status}: {body}"
+            "Copilot token endpoint returned {status}: {}",
+            safe_error_summary(&body)
         )));
     }
     #[derive(Deserialize)]
@@ -1147,7 +1200,8 @@ async fn mint_muse_key(client: &reqwest::Client, dca_token: &str) -> Result<OAut
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
         return Err(auth_error(format!(
-            "Muse key endpoint returned {status}: {body}"
+            "Muse key endpoint returned {status}: {}",
+            safe_error_summary(&body)
         )));
     }
     #[derive(Deserialize)]

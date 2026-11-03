@@ -169,7 +169,9 @@ impl Tool for WorkspaceAddTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        // Widening the workspace allowlist expands every path-containment check;
+        // treat it as system-mutating so it always requires explicit approval.
+        RiskTier::Tier2SystemMutating
     }
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let path = args
@@ -179,11 +181,39 @@ impl Tool for WorkspaceAddTool {
                 tool: self.name().to_string(),
                 message: "Missing 'path' parameter".to_string(),
             })?;
-        if !std::path::Path::new(path).is_dir() {
+        let canonical = std::path::Path::new(path);
+        if !canonical.is_dir() {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),
                 message: format!("Workspace path does not exist or is not a directory: {path}"),
             });
+        }
+        // Refuse filesystem roots and the user's home directory: registering
+        // them as workspaces effectively disables path sandboxing.
+        let canonicalized = canonical
+            .canonicalize()
+            .map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("Could not canonicalize {path}: {e}"),
+            })?;
+        if canonicalized.parent().is_none() {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Refusing to register a filesystem root as a workspace".to_string(),
+            });
+        }
+        if let Some(home) = dirs::home_dir() {
+            if let (Ok(canon_home), Ok(canon_target)) =
+                (home.canonicalize(), canonicalized.canonicalize())
+            {
+                if canon_target == canon_home {
+                    return Err(OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: "Refusing to register the home directory as a workspace"
+                            .to_string(),
+                    });
+                }
+            }
         }
         let (status, value) = daemon_json(
             reqwest::Method::POST,
