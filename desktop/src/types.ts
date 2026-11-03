@@ -250,12 +250,18 @@ export const FALLBACK_PROVIDERS: ProviderItem[] = [
   },
   {
     id: 'muse',
-    name: 'Meta Muse Code',
-    category: 'oauth',
-    auth_type: 'oauth',
-    description: 'Meta Muse Code developer device authorization and SSE streaming',
+    name: 'Meta Muse (Model API)',
+    category: 'byok',
+    auth_type: 'api_key',
+    description: 'Meta Model API pay-as-you-go key (LLM|numeric_id|secret). OpenAI- and Anthropic-compatible.',
+    default_base_url: 'https://api.meta.ai/v1',
     models: [
-      { id: 'muse-spark-1.3', name: 'Muse Spark 1.3', context: 1000000, recommended: true },
+      { id: 'muse-wonder-1.0', name: 'Muse Wonder 1.0', context: 1048576, recommended: true },
+      { id: 'muse-spark-1.3', name: 'Muse Spark 1.3', context: 1048576, recommended: true },
+      { id: 'muse-spark-1.3-contributor', name: 'Muse Spark 1.3 Contributor', context: 1048576 },
+      { id: 'muse-spark-1.2', name: 'Muse Spark 1.2', context: 1048576 },
+      { id: 'muse-spark-1.2-contributor', name: 'Muse Spark 1.2 Contributor', context: 1048576 },
+      { id: 'muse-spark-1.1', name: 'Muse Spark 1.1', context: 1048576 },
     ],
   },
   {

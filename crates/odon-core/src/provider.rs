@@ -93,17 +93,14 @@ impl ProviderConfig {
         }
     }
 
-    pub fn new_muse(access_token: impl Into<String>) -> Self {
+    /// Meta Model API is pay-as-you-go and OpenAI-compatible. The credential is
+    /// a plain API key (`LLM|{numeric_id}|{secret}`), not an OAuth grant.
+    pub fn new_muse(api_key: impl Into<String>) -> Self {
         Self {
             kind: ProviderKind::Muse,
             base_url: "https://api.meta.ai/v1".to_string(),
-            auth: AuthKind::OAuth {
-                access_token: access_token.into(),
-                refresh_token: None,
-                expires_at: None,
-                account_id: None,
-            },
-            default_model: "muse-spark-1.3".to_string(),
+            auth: AuthKind::ApiKey(api_key.into()),
+            default_model: "muse-wonder-1.0".to_string(),
             custom_headers: std::collections::HashMap::new(),
         }
     }

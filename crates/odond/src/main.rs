@@ -5314,11 +5314,17 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 ]
             },
             {
-                "id": "muse", "name": "Meta Muse Code", "category": "oauth", "auth_type": "oauth",
-                "connected": is_connected("muse"),
-                "description": "Meta Muse Code developer device authorization and SSE streaming",
+                "id": "muse", "name": "Meta Muse (Model API)", "category": "byok", "auth_type": "api_key",
+                "configured": is_byok("muse"),
+                "default_base_url": "https://api.meta.ai/v1",
+                "description": "Meta Model API pay-as-you-go key (LLM|numeric_id|secret). OpenAI- and Anthropic-compatible.",
                 "models": [
-                    { "id": "muse-spark-1.3", "name": "Muse Spark 1.3", "context": 1000000, "recommended": true }
+                    { "id": "muse-wonder-1.0", "name": "Muse Wonder 1.0", "context": 1048576, "recommended": true },
+                    { "id": "muse-spark-1.3", "name": "Muse Spark 1.3", "context": 1048576, "recommended": true },
+                    { "id": "muse-spark-1.3-contributor", "name": "Muse Spark 1.3 Contributor", "context": 1048576, "recommended": false },
+                    { "id": "muse-spark-1.2", "name": "Muse Spark 1.2", "context": 1048576, "recommended": false },
+                    { "id": "muse-spark-1.2-contributor", "name": "Muse Spark 1.2 Contributor", "context": 1048576, "recommended": false },
+                    { "id": "muse-spark-1.1", "name": "Muse Spark 1.1", "context": 1048576, "recommended": false }
                 ]
             },
             {
