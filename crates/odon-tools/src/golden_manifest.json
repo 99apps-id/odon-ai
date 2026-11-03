@@ -2053,5 +2053,13 @@
     "visibility": "model",
     "ready": true,
     "issues": []
-  }
-]
+  },
+  {
+    "name": "gmaps_search",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  }]
