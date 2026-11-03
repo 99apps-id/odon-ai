@@ -86,6 +86,12 @@ function parseExecutionMode(raw: string | null): ExecutionMode {
   return 'chat';
 }
 
+interface ToolCallSummary {
+  name: string;
+  /** Target URL when the tool was called with one, so the chip can open the real page. */
+  url?: string;
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -93,7 +99,7 @@ interface ChatMessage {
   timestamp: string;
   showAppCard?: boolean;
   thought?: string;
-  toolCalls?: string[];
+  toolCalls?: ToolCallSummary[];
   terminal?: TerminalEntry[];
   attachments?: MessageAttachment[];
 }
@@ -147,13 +153,22 @@ function normalizeSessionHistory(history: Message[]): ChatMessage[] {
       .find((message) => message.content.text.trim().length > 0);
 
     if (finalAssistant) {
-      const toolCalls = Array.from(
-        new Set(
-          assistants.flatMap(
-            (message) => message.content.tool_calls?.map((call) => call.tool_name) || [],
-          ),
-        ),
-      ).filter(Boolean);
+      const toolCalls: ToolCallSummary[] = Array.from(
+        new Map(
+          assistants
+            .flatMap((message) => message.content.tool_calls || [])
+            .map((call) => [
+              call.tool_name,
+              {
+                name: call.tool_name,
+                url:
+                  typeof (call.arguments as any)?.url === 'string'
+                    ? (call.arguments as any).url
+                    : undefined,
+              } satisfies ToolCallSummary,
+            ]),
+        ).values(),
+      );
 
       output.push({
         id: finalAssistant.id,
@@ -742,7 +757,7 @@ export default function App() {
             });
             setLiveTerminal(Array.from(pendingTerminalRef.current.values()).slice(-4));
           }
-        } else if (['browser_open', 'url_preview', 'probe_url', 'web_fetch'].includes(toolName)) {
+        } else if (['browser_open', 'browser_navigate', 'browser_session_navigate', 'url_preview', 'probe_url', 'web_fetch'].includes(toolName)) {
           const u = event.payload.arguments?.url;
           if (u) {
             window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { url: u } }));
@@ -1209,7 +1224,10 @@ export default function App() {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           showAppCard: resMsg.content.artifact_ids?.length > 0 || resMsg.content.text.includes('```'),
           thought: resMsg.content.thought,
-          toolCalls: resMsg.content.tool_calls?.map((t) => t.tool_name),
+          toolCalls: resMsg.content.tool_calls?.map((t) => ({
+            name: t.tool_name,
+            url: typeof (t.arguments as any)?.url === 'string' ? (t.arguments as any).url : undefined,
+          })),
           terminal: terminalEntriesOf([resMsg]),
         };
 
@@ -1971,7 +1989,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     {msg.toolCalls && msg.toolCalls.length > 0 && (
                       <div className="ml-7 flex flex-wrap items-center gap-2 py-1">
                         {msg.toolCalls.map((tc, idx) => {
-                          const tcLower = tc.toLowerCase();
+                          const tcLower = tc.name.toLowerCase();
                           const isTerm = ['terminal', 'bash', 'shell', 'exec', 'kill'].some(k => tcLower.includes(k));
                           const isWeb = ['browser', 'web', 'fetch', 'url', 'http'].some(k => tcLower.includes(k));
                           return (
@@ -1982,6 +2000,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                   setRightPanelView('terminal');
                                   setIsRightPanelOpen(true);
                                 } else if (isWeb) {
+                                  // Seed the panel with the real target so it shows the
+                                  // page the tool touched, not an empty/status screen.
+                                  setBrowserSeed(tc.url ? { url: tc.url } : null);
                                   setRightPanelView('browser');
                                   setIsRightPanelOpen(true);
                                 }
@@ -1993,7 +2014,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                   ? 'bg-blue-50 text-blue-800 border-blue-200/80 hover:bg-blue-100'
                                   : 'bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200'
                               }`}
-                              title={isTerm ? "Click to view in Terminal panel" : isWeb ? "Click to view in Browser Preview" : tc}
+                              title={isTerm ? "Click to view in Terminal panel" : isWeb ? (tc.url ? `Open ${tc.url}` : "No URL recorded for this call") : tc.name}
                             >
                               {isTerm ? (
                                 <Terminal className="w-3 h-3 text-emerald-600" />
@@ -2002,7 +2023,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                               ) : (
                                 <Terminal className="w-3 h-3 text-neutral-500" />
                               )}
-                              <span>{tc}</span>
+                              <span>{tc.name}</span>
                             </span>
                           );
                         })}

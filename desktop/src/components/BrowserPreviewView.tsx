@@ -40,8 +40,9 @@ interface BrowserPreviewViewProps {
 }
 
 export function BrowserPreviewView({
-  initialUrl = 'http://127.0.0.1:4096/api/status',
+  initialUrl = '',
   initialHtml,
+  seed,
   onSendToAgent,
 }: BrowserPreviewViewProps) {
   const [url, setUrl] = useState<string>(initialUrl);
@@ -90,6 +91,24 @@ export function BrowserPreviewView({
     window.addEventListener('odon:open-browser', handleOpenBrowser);
     return () => window.removeEventListener('odon:open-browser', handleOpenBrowser);
   }, [historyIndex, history]);
+
+  // Apply the seed supplied by the parent. Without this the seed prop was dead
+  // and a panel opened while unmounted (so it missed the custom event) fell back
+  // to the daemon status JSON instead of the page the agent navigated to.
+  useEffect(() => {
+    if (!seed) return;
+    if (seed.markdown) {
+      setMarkdownContent(seed.markdown);
+      setMode('markdown');
+    }
+    if (seed.html) {
+      setHtmlContent(seed.html);
+      setMode('html');
+    }
+    if (seed.url) {
+      navigateTo(seed.url);
+    }
+  }, [seed]);
 
   const renderUrl = (formatted: string) => {
     setInputUrl(formatted);
@@ -457,16 +476,25 @@ export function BrowserPreviewView({
                 : 'w-full'
             }`}
           >
-            <iframe
-              ref={iframeRef}
-              src={htmlContent ? undefined : url}
-              srcDoc={htmlContent || undefined}
-              onLoad={() => setIsLoading(false)}
-              className="w-full h-full border-0 bg-white"
-              sandbox="allow-scripts allow-forms"
-              referrerPolicy="no-referrer"
-              title="Browser Preview Viewport"
-            />
+            {!url && !htmlContent ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center">
+                <p className="text-sm font-medium text-neutral-600">No page loaded</p>
+                <p className="text-xs text-neutral-500">
+                  Type a URL above, or let the agent navigate and this panel follows.
+                </p>
+              </div>
+            ) : (
+              <iframe
+                ref={iframeRef}
+                src={htmlContent ? undefined : url}
+                srcDoc={htmlContent || undefined}
+                onLoad={() => setIsLoading(false)}
+                className="w-full h-full border-0 bg-white"
+                sandbox="allow-scripts allow-forms"
+                referrerPolicy="no-referrer"
+                title="Browser Preview Viewport"
+              />
+            )}
           </div>
         )}
 

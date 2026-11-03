@@ -234,26 +234,64 @@ async fn validate_url_inner(raw: &str, allow_loopback: bool) -> Result<reqwest::
     Ok(url)
 }
 
-/// Redirect policy that prevents an allowed public URL from bouncing to an
-/// internal host. Redirects must stay on the same host and be http(s).
+/// True for `localhost` and loopback literals, matching `validate_url_inner`.
+fn is_loopback_host(host: &str) -> bool {
+    match host.parse::<IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => host.trim_end_matches('.').eq_ignore_ascii_case("localhost"),
+    }
+}
+
+/// Redirect policy that keeps SSRF protection while allowing normal web
+/// redirects.
+///
+/// The previous version required every hop to stay on the original host, so the
+/// ordinary `example.com` -> `www.example.com` bounce was reported as
+/// "error following redirect for url" and most real sites became unreadable.
+/// Matching the initial-URL rule instead: block cloud metadata, the operator's
+/// host lists, non-http(s) schemes, and private addresses (loopback only
+/// survives when the request itself started on loopback, which is the preview
+/// panel's dev-server case). A public hostname therefore always stays reachable.
 pub fn redirect_policy(original_host: String) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= 5 {
             return attempt.error("too many redirects");
         }
-        let url = attempt.url();
-        if !matches!(url.scheme(), "http" | "https") {
-            return attempt.error("redirect to a non-http(s) scheme blocked");
+        match redirect_decision(&original_host, attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(reason) => attempt.error(reason),
         }
-        let host = url.host_str().unwrap_or("").to_ascii_lowercase();
-        if host != original_host.to_ascii_lowercase() {
-            return attempt.error("cross-host redirect blocked by SSRF policy");
-        }
-        if !allow_private_network() && is_blocked_hostname(&host) {
-            return attempt.error("redirect to a private host blocked by SSRF policy");
-        }
-        attempt.follow()
     })
+}
+
+/// The single decision used for every redirect hop. Kept pure so the rules can
+/// be tested without making a network request.
+fn redirect_decision(original_host: &str, target: &reqwest::Url) -> std::result::Result<(), &'static str> {
+    if !matches!(target.scheme(), "http" | "https") {
+        return Err("redirect to a non-http(s) scheme blocked");
+    }
+    let host = target.host_str().unwrap_or("").to_ascii_lowercase();
+    if host.is_empty() {
+        return Err("redirect without a host blocked");
+    }
+    if is_metadata_host(&host) {
+        return Err("redirect to a cloud metadata endpoint blocked");
+    }
+    let allowed_hosts = csv_env("ODON_ALLOWED_HOSTS");
+    if !allowed_hosts.is_empty() && !host_allowed_by_list(&host, &allowed_hosts) {
+        return Err("redirect host is not in ODON_ALLOWED_HOSTS");
+    }
+    let blocked_hosts = csv_env("ODON_BLOCKED_HOSTS");
+    if host_allowed_by_list(&host, &blocked_hosts) {
+        return Err("redirect host is in ODON_BLOCKED_HOSTS");
+    }
+    if !allow_private_network()
+        && is_blocked_hostname(&host)
+        && !(is_loopback_host(original_host) && is_loopback_host(&host))
+    {
+        return Err("redirect to a private host blocked by SSRF policy");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -292,5 +330,54 @@ mod tests {
     async fn rejects_non_http_schemes() {
         assert!(validate_url("file:///etc/passwd").await.is_err());
         assert!(validate_url("gopher://example.com").await.is_err());
+    }
+
+    fn url(raw: &str) -> reqwest::Url {
+        reqwest::Url::parse(raw).unwrap()
+    }
+
+    #[test]
+    fn allows_ordinary_public_cross_host_redirects() {
+        // The regression: google.com redirects to www.google.com, and most sites
+        // bounce host this way. Requiring the same host broke normal browsing.
+        assert!(redirect_decision("google.com", &url("https://www.google.com/")).is_ok());
+        assert!(redirect_decision("example.com", &url("https://example.com/id")).is_ok());
+        assert!(redirect_decision("httpbin.org", &url("https://httpbin.org/get")).is_ok());
+        // A path-only redirect keeps the host and must stay allowed.
+        assert!(redirect_decision("github.com", &url("https://github.com/login")).is_ok());
+    }
+
+    #[test]
+    fn still_blocks_ssrf_redirect_targets() {
+        if allow_private_network() {
+            return; // operator opted out of the private-network guard
+        }
+        for target in [
+            "http://127.0.0.1:4096/api/status",
+            "http://10.0.0.5/admin",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://localhost:3000/",
+            "http://metadata.google.internal/",
+        ] {
+            assert!(
+                redirect_decision("example.com", &url(target)).is_err(),
+                "{target} must stay blocked"
+            );
+        }
+        assert!(redirect_decision("example.com", &url("file:///etc/passwd")).is_err());
+        assert!(redirect_decision("example.com", &url("ftp://example.com/x")).is_err());
+    }
+
+    #[test]
+    fn loopback_redirect_only_survives_from_loopback() {
+        if allow_private_network() {
+            return;
+        }
+        // The preview panel serves a dev server on loopback, so a loopback to
+        // loopback redirect must work.
+        assert!(redirect_decision("127.0.0.1", &url("http://127.0.0.1:3001/")).is_ok());
+        // A public page must never be able to bounce into loopback.
+        assert!(redirect_decision("example.com", &url("http://127.0.0.1:3001/")).is_err());
     }
 }
