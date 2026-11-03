@@ -1659,6 +1659,8 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "todo_write",
     "todo_read",
     "think",
+    "web_search",
+    "web_fetch",
 ];
 
 /// The `find_tools` definition offered when the catalogue is capped.
@@ -1887,5 +1889,32 @@ mod tests {
         let active = initial_active_tools(&defs, false);
         assert_eq!(active.len(), 20);
         assert!(!active.iter().any(|tool| tool.name == "find_tools"));
+    }
+
+    #[test]
+    fn web_tools_survive_the_inline_cap() {
+        // A real catalogue is larger than the inline cap, so web access must
+        // not depend on the model calling find_tools first.
+        let mut defs: Vec<ToolDefinition> = (0..300)
+            .map(|i| ToolDefinition {
+                name: format!("tool_{i}"),
+                description: "d".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            })
+            .collect();
+        for name in ["web_search", "web_fetch"] {
+            defs.push(ToolDefinition {
+                name: name.to_string(),
+                description: "web".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            });
+        }
+        let active = initial_active_tools(&defs, true);
+        for name in ["web_search", "web_fetch"] {
+            assert!(
+                active.iter().any(|tool| tool.name == name),
+                "{name} missing from the inline set"
+            );
+        }
     }
 }
