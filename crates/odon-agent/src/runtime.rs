@@ -1136,9 +1136,16 @@ impl AgentRuntime {
                             storage.clone(),
                         );
                         let workspace_root = worktree_path.to_string_lossy().to_string();
-                        let _slot = subagent_slot.acquire_owned().await.map_err(|_| {
-                            OdonError::Internal("subagent concurrency gate closed".to_string())
-                        })?;
+                        let _slot = match subagent_slot.acquire_owned().await {
+                            Ok(slot) => slot,
+                            Err(_) => {
+                                return (
+                                    index,
+                                    child_session_id,
+                                    Err("subagent slot unavailable".to_string()),
+                                );
+                            }
+                        };
                         match Box::pin(child_runtime.execute_child_turn(
                             &child_session_id,
                             task.clone(),
@@ -1382,7 +1389,7 @@ impl AgentRuntime {
         }
     }
 
-    async fn finalize_child_workspace(child_session_id: &str, storage: Arc<StorageEngine>) {
+    async fn finalize_child_workspace(child_session_id: &str, _storage: Arc<StorageEngine>) {
         let _ = tokio::process::Command::new("git")
             .args(["worktree", "remove", "--force", child_session_id])
             .output()
