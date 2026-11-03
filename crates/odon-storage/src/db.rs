@@ -244,6 +244,10 @@ impl StorageEngine {
         let conn = self.conn.lock().unwrap();
         let mode_str = serde_json::to_string(&session.mode)?;
         let status_str = serde_json::to_string(&session.status)?;
+        let metadata_json = match &session.metadata {
+            Some(value) => Some(serde_json::to_string(value)?),
+            None => None,
+        };
         conn.execute(
             "INSERT INTO sessions (id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -262,6 +266,7 @@ impl StorageEngine {
                 status_str,
                 session.active_model,
                 session.workspace_root,
+                metadata_json,
                 session.created_at.to_rfc3339(),
                 session.updated_at.to_rfc3339(),
             ],

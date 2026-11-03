@@ -3801,6 +3801,7 @@ async fn resolve_approval(
     let dec = match req.decision.to_ascii_lowercase().as_str() {
         "approved" | "approve_once" => ApprovalDecision::Approved,
         "approved_always" | "approve_always" => ApprovalDecision::ApprovedAlways,
+        "approved_all" | "approve_all" | "allow_all" => ApprovalDecision::ApprovedAll,
         _ => ApprovalDecision::Rejected {
             reason: req
                 .reason
@@ -3923,7 +3924,8 @@ async fn execute_terminal(
         .await
     {
         Ok(odon_security::ApprovalDecision::Approved)
-        | Ok(odon_security::ApprovalDecision::ApprovedAlways) => {}
+        | Ok(odon_security::ApprovalDecision::ApprovedAlways)
+        | Ok(odon_security::ApprovalDecision::ApprovedAll) => {}
         Ok(odon_security::ApprovalDecision::Rejected { reason }) => {
             return (
                 StatusCode::FORBIDDEN,
@@ -6068,7 +6070,11 @@ async fn evaluate_http_action(
         .evaluate_and_request("desktop-api", tool_name, parameters, description)
         .await
     {
-        Ok(ApprovalDecision::Approved | ApprovalDecision::ApprovedAlways) => Ok(()),
+        Ok(
+            ApprovalDecision::Approved
+            | ApprovalDecision::ApprovedAlways
+            | ApprovalDecision::ApprovedAll,
+        ) => Ok(()),
         Ok(ApprovalDecision::Rejected { reason }) => {
             Err(json!({ "success": false, "error": reason, "code": "approval_rejected" }))
         }
@@ -6567,7 +6573,8 @@ async fn exec_ssh_command(
         .await
     {
         Ok(odon_security::ApprovalDecision::Approved)
-        | Ok(odon_security::ApprovalDecision::ApprovedAlways) => {}
+        | Ok(odon_security::ApprovalDecision::ApprovedAlways)
+        | Ok(odon_security::ApprovalDecision::ApprovedAll) => {}
         Ok(odon_security::ApprovalDecision::Rejected { reason }) => {
             return Json(json!({
                 "exit_code": 1,

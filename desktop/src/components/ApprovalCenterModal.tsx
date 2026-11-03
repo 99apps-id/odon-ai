@@ -29,7 +29,10 @@ interface ApprovalCenterModalProps {
     risk: string;
     arguments: Record<string, unknown>;
   } | null;
-  onDecideApproval: (decision: 'approve_once' | 'approve_always' | 'deny') => void;
+  onDecideApproval: (
+    decision: 'approve_once' | 'approve_always' | 'approve_all' | 'deny',
+    reason?: string,
+  ) => void;
 }
 
 export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
@@ -43,6 +46,8 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
   const [policies, setPolicies] = useState<string[]>([]);
   const [executionMode, setExecutionMode] = useState<string>('Autonomous');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [denyReason, setDenyReason] = useState<string>('');
+  const [showDenyReason, setShowDenyReason] = useState<boolean>(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -201,10 +206,41 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                     </pre>
                   </div>
 
+                  {showDenyReason && (
+                    <div className="rounded-xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/60 dark:bg-rose-950/20 p-3 space-y-2">
+                      <label className="block text-[11px] font-medium text-rose-800 dark:text-rose-200">
+                        What should the agent do instead? (optional)
+                      </label>
+                      <textarea
+                        value={denyReason}
+                        onChange={(e) => setDenyReason(e.target.value)}
+                        rows={2}
+                        placeholder="e.g. Don't delete that file — run git status first instead."
+                        className="w-full rounded-lg border border-rose-200 dark:border-rose-800/70 bg-white dark:bg-neutral-900 px-2.5 py-2 text-xs text-neutral-800 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-rose-300 dark:focus:ring-rose-700"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowDenyReason(false)}
+                          className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg"
+                        >
+                          Back
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDecideApproval('deny', denyReason.trim() || undefined)}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
                     <button
                       type="button"
-                      onClick={() => onDecideApproval('deny')}
+                      onClick={() => setShowDenyReason(true)}
                       className="px-4 py-2 rounded-xl text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-100/60 dark:hover:bg-rose-950/50 transition-colors"
                     >
                       <XCircle className="w-3.5 h-3.5 inline mr-1" />
@@ -216,7 +252,15 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                       className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-all shadow-xs"
                     >
                       <CheckCheck className="w-3.5 h-3.5 inline mr-1 text-blue-500" />
-                      Always Allow in Session
+                      Always Allow {pendingApproval.toolName}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDecideApproval('approve_all')}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-all shadow-xs"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 inline mr-1 text-emerald-500" />
+                      Allow All Tools
                     </button>
                     <button
                       type="button"

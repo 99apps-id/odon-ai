@@ -40,6 +40,7 @@ pub struct ApprovalRequest {
 pub enum ApprovalDecision {
     Approved,
     ApprovedAlways,
+    ApprovedAll,
     Rejected { reason: String },
     Expired,
 }
@@ -67,6 +68,7 @@ fn decision_label(decision: &ApprovalDecision) -> &'static str {
     match decision {
         ApprovalDecision::Approved => "approved",
         ApprovalDecision::ApprovedAlways => "approved_always",
+        ApprovalDecision::ApprovedAll => "approved_all",
         ApprovalDecision::Rejected { .. } => "rejected",
         ApprovalDecision::Expired => "expired",
     }
@@ -156,6 +158,12 @@ impl ApprovalEngine {
     pub fn with_events(mut self, events: EventSender) -> Self {
         self.events = Some(events);
         self
+    }
+
+    /// Borrow the event-bus sender when one is attached (e.g. so the agent
+    /// runtime can publish child-session lifecycle events).
+    pub fn event_sender(&self) -> Option<&EventSender> {
+        self.events.as_ref()
     }
 
     fn emit(&self, event: AgentEvent) {
@@ -344,8 +352,16 @@ impl ApprovalEngine {
     ) -> Result<ApprovalDecision, String> {
         let risk = self.check_risk(tool_name).await;
         let policy_key = Self::policy_key(tool_name, parameters);
-        if self.always_allowed.read().await.contains(&policy_key) {
-            return Ok(ApprovalDecision::Approved);
+        let exact_key = Self::exact_policy_key(tool_name, parameters);
+        let wildcard_key = Self::wildcard_policy_key(parameters);
+        {
+            let allowed = self.always_allowed.read().await;
+            if allowed.contains(&policy_key)
+                || allowed.contains(&exact_key)
+                || allowed.contains(&wildcard_key)
+            {
+                return Ok(ApprovalDecision::Approved);
+            }
         }
 
         let policy = self.policy.read().await;
@@ -424,15 +440,26 @@ impl ApprovalEngine {
     /// Pre-approve a single tool invocation for this process. Used by the CLI
     /// `tools run --yes` path after the user explicitly opts in.
     pub async fn pre_approve(&self, tool_name: &str, parameters: &serde_json::Value) {
-        let key = Self::policy_key(tool_name, parameters);
+        let key = Self::exact_policy_key(tool_name, parameters);
         self.always_allowed.write().await.insert(key);
     }
 
     pub async fn submit_decision(&self, approval_id: &str, decision: ApprovalDecision) -> bool {
         let mut pending = self.pending.write().await;
         if let Some(entry) = pending.remove(approval_id) {
-            if matches!(decision, ApprovalDecision::ApprovedAlways) {
-                let key = Self::policy_key(&entry.request.tool_name, &entry.request.parameters);
+            let grant_key = match &decision {
+                // "Always" sticks per tool in one workspace scope.
+                ApprovalDecision::ApprovedAlways => Some(Self::policy_key(
+                    &entry.request.tool_name,
+                    &entry.request.parameters,
+                )),
+                // "Allow all" sticks for every tool in one workspace scope.
+                ApprovalDecision::ApprovedAll => Some(Self::wildcard_policy_key(
+                    &entry.request.parameters,
+                )),
+                _ => None,
+            };
+            if let Some(key) = grant_key {
                 let policies = {
                     let mut policies = self.always_allowed.write().await;
                     policies.insert(key);
@@ -476,7 +503,14 @@ impl ApprovalEngine {
                 Self::persist_audit_record(&audit[0], &self.audit_path);
             }
 
-            let _ = entry.sender.send(decision);
+            // "Allow all" resolves the current request as a plain approval:
+            // the lasting part is the stored wildcard grant, and no caller
+            // needs a new decision variant to handle.
+            let send_decision = match decision {
+                ApprovalDecision::ApprovedAll => ApprovalDecision::Approved,
+                other => other,
+            };
+            let _ = entry.sender.send(send_decision);
             drop(pending);
             self.emit(AgentEvent::ApprovalResolved {
                 session_id,
@@ -489,22 +523,42 @@ impl ApprovalEngine {
         }
     }
 
-    fn policy_key(tool_name: &str, parameters: &serde_json::Value) -> String {
-        let scope = parameters
+    fn scope_of(parameters: &serde_json::Value) -> &str {
+        parameters
             .get("path")
             .or_else(|| parameters.get("cwd"))
             .or_else(|| parameters.get("destination"))
             .or_else(|| parameters.get("id"))
             .and_then(|value| value.as_str())
-            .unwrap_or("workspace");
-        // Bind "always allow" to the exact invocation, not just the tool and
-        // directory: hash the full parameters so a future command, target, or
-        // server definition never inherits a past approval.
+            .unwrap_or("workspace")
+    }
+
+    /// Scope that "Always allow" binds to: the tool within one workspace
+    /// target. Users who choose Always expect later calls of the same tool in
+    /// the same place to stop prompting, so the full parameters must NOT be
+    /// part of this key (an earlier exact-hash key made every new command
+    /// prompt again and users reported "already Always, still asked").
+    fn policy_key(tool_name: &str, parameters: &serde_json::Value) -> String {
+        format!("{tool_name}|{}", Self::scope_of(parameters))
+    }
+
+    /// Exact-invocation key, used only by [`Self::pre_approve`] (CLI `--yes`)
+    /// so a one-shot opt-in never widens into a lasting grant.
+    fn exact_policy_key(tool_name: &str, parameters: &serde_json::Value) -> String {
+        let scope = Self::scope_of(parameters);
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
         parameters.to_string().hash(&mut hasher);
         format!("{tool_name}|{scope}|{:016x}", hasher.finish())
+    }
+
+    /// Stored marker for "Allow All": stored as a bare `*` so one explicit
+    /// grant covers every tool and scope until the user revokes it (it shows
+    /// up as `*` in the policies list). Distinct from Always, which stays
+    /// scoped per tool and target.
+    fn wildcard_policy_key(_parameters: &serde_json::Value) -> String {
+        "*".to_string()
     }
 
     pub async fn list_pending(&self) -> Vec<ApprovalRequest> {
@@ -608,5 +662,142 @@ mod tests {
             waiter.await.unwrap().unwrap(),
             ApprovalDecision::Approved
         ));
+    }
+
+    /// Engine whose policy/audit files live in a throwaway temp dir so tests
+    /// never touch the operator's real `approval-policies.json`.
+    fn test_engine() -> (ApprovalEngine, tokio::sync::broadcast::Receiver<AgentEvent>) {
+        let (tx, rx) = odon_core::events::create_event_bus(64);
+        let mut engine = ApprovalEngine::new(SecurityPolicy::default());
+        let tmp = std::env::temp_dir().join(format!(
+            "odon-approval-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        engine.policy_path = tmp.join("approval-policies.json");
+        engine.audit_path = tmp.join("approval-audit.jsonl");
+        engine.always_allowed =
+            Arc::new(RwLock::new(std::collections::HashSet::new()));
+        (engine.with_events(tx), rx)
+    }
+
+    async fn next_requested_id(
+        rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
+    ) -> String {
+        loop {
+            match rx.recv().await.unwrap() {
+                AgentEvent::ApprovalRequested { approval_id, .. } => {
+                    return approval_id
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn always_allow_sticks_for_later_different_parameters() {
+        let (engine, mut rx) = test_engine();
+
+        let first = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request(
+                        "s1",
+                        "shell_exec",
+                        &serde_json::json!({"command": "git status", "cwd": "C:/work"}),
+                        "run",
+                    )
+                    .await
+            })
+        };
+        let id = next_requested_id(&mut rx).await;
+        assert!(engine
+            .submit_decision(&id, ApprovalDecision::ApprovedAlways)
+            .await);
+        assert!(matches!(
+            first.await.unwrap().unwrap(),
+            ApprovalDecision::ApprovedAlways
+        ));
+
+        // A later, different command with the same tool and scope must be
+        // approved instantly instead of prompting again.
+        let second = engine
+            .evaluate_and_request(
+                "s1",
+                "shell_exec",
+                &serde_json::json!({"command": "git diff", "cwd": "C:/work"}),
+                "run",
+            )
+            .await;
+        assert!(matches!(second, Ok(ApprovalDecision::Approved)));
+
+        // The same tool in a different scope still prompts, proven by the
+        // granted key being scope-bound.
+        assert!(engine.get_always_allowed().await.iter().any(|key| key == "shell_exec|C:/work"));
+    }
+
+    #[tokio::test]
+    async fn approve_all_covers_other_tools_until_revoked() {
+        let (engine, mut rx) = test_engine();
+
+        let first = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request(
+                        "s1",
+                        "fs_delete",
+                        &serde_json::json!({"path": "C:/work/old.txt"}),
+                        "delete",
+                    )
+                    .await
+            })
+        };
+        let id = next_requested_id(&mut rx).await;
+        assert!(engine
+            .submit_decision(&id, ApprovalDecision::ApprovedAll)
+            .await);
+        // The current request itself resolves as a plain approval.
+        assert!(matches!(
+            first.await.unwrap().unwrap(),
+            ApprovalDecision::Approved
+        ));
+
+        // A different tool name is covered by the stored wildcard grant.
+        let second = engine
+            .evaluate_and_request(
+                "s1",
+                "shell_exec",
+                &serde_json::json!({"command": "git status", "cwd": "C:/work"}),
+                "run",
+            )
+            .await;
+        assert!(matches!(second, Ok(ApprovalDecision::Approved)));
+
+        // Revoking the wildcard removes the cover again.
+        assert!(engine.revoke_allowed("*").await);
+        assert!(!engine
+            .get_always_allowed()
+            .await
+            .iter()
+            .any(|key| key == "*"));
+    }
+
+    #[test]
+    fn always_and_exact_keys_have_different_granularity() {
+        let a = serde_json::json!({"command": "git status", "cwd": "C:/work"});
+        let b = serde_json::json!({"command": "rm -rf x", "cwd": "C:/work"});
+        assert_eq!(
+            ApprovalEngine::policy_key("shell_exec", &a),
+            ApprovalEngine::policy_key("shell_exec", &b),
+        );
+        assert_ne!(
+            ApprovalEngine::exact_policy_key("shell_exec", &a),
+            ApprovalEngine::exact_policy_key("shell_exec", &b),
+        );
+        assert_eq!(
+            ApprovalEngine::wildcard_policy_key(&a),
+            "*".to_string()
+        );
     }
 }

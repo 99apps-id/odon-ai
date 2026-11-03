@@ -1046,7 +1046,7 @@ impl AgentRuntime {
             );
             session.id = child_session_id.clone();
             session.workspace_root = Some(self.session_workspace(parent_session_id));
-            if let Ok(Some(parent)) = self.storage.get_session(parent_session_id) {
+            if let Ok(parent) = self.storage.get_session(parent_session_id) {
                 if let Some(meta) = parent.metadata.clone() {
                     let mut child_meta = meta;
                     if let Some(obj) = child_meta.as_object_mut() {
@@ -1089,8 +1089,11 @@ impl AgentRuntime {
             let task = tasks[index].clone();
             let storage = storage.clone();
             let approval = approval.clone();
-            let audit = audit.clone();
-            let cancellation_child = cancellation.child();
+            let _audit = audit.clone();
+            let cancellation_child = cancellation.child_token();
+            let parent_session_id = parent_session_id.to_string();
+            let fallback_workspace = self.workspace_root.clone();
+            let child_runtime = self.child_runtime(self.workspace_root.clone());
             let provider_name = provider_override.map(|v| v.to_string());
             let model_override = requested_model
                 .or(parent_model_override.as_deref())
@@ -1103,19 +1106,20 @@ impl AgentRuntime {
                     &child_session_id,
                     AgentState::Thinking,
                     &task,
-                    parent_session_id,
+                    &parent_session_id,
                 );
 
                 let worktree = AgentRuntime::prepare_child_workspace(
-                    parent_session_id,
+                    &parent_session_id,
                     &child_session_id,
                     storage.clone(),
+                    &fallback_workspace,
                 )
                 .await;
 
                 let mut attachments = Vec::new();
                 attachments.extend(
-                    AgentRuntime::collect_parent_attachments(storage.clone(), parent_session_id)
+                    AgentRuntime::collect_parent_attachments(storage.clone(), &parent_session_id)
                         .await,
                 );
 
@@ -1127,15 +1131,12 @@ impl AgentRuntime {
                             storage.clone(),
                         );
                         let workspace_root = worktree_path.to_string_lossy().to_string();
-                        match Box::pin(AgentRuntime::execute_child_turn(
+                        match Box::pin(child_runtime.execute_child_turn(
                             &child_session_id,
-                            task,
+                            task.clone(),
                             attachments,
                             provider_name.as_deref(),
                             &model_override,
-                            storage.clone(),
-                            approval,
-                            audit,
                             cancellation_child,
                             depth + 1,
                             Some(workspace_root),
@@ -1154,7 +1155,7 @@ impl AgentRuntime {
                     &child_session_id,
                     AgentState::Completed,
                     &task,
-                    parent_session_id,
+                    &parent_session_id,
                 );
 
                 let _ = AgentRuntime::finalize_child_workspace(&child_session_id, storage.clone())
@@ -1170,7 +1171,7 @@ impl AgentRuntime {
         while let Some(join) = join_set.join_next().await {
             match join {
                 Ok((index, child_session_id, Ok(output))) => {
-                    completed_reports.push((index, child_session_id, output, None));
+                    completed_reports.push((index, child_session_id, output, None::<String>));
                 }
                 Ok((index, child_session_id, Err(error))) => {
                     completed_errors.push((index, child_session_id, error));
@@ -1202,13 +1203,20 @@ impl AgentRuntime {
 
         let overall_error = completed_errors.first().map(|item| item.2.clone());
 
+        let provider_display = provider_override
+            .or_else(|| parent_model_override.as_deref())
+            .unwrap_or(model);
+        let model_display = requested_model
+            .or_else(|| parent_model_override.as_deref())
+            .unwrap_or(model);
+
         if child_count > 1 {
             (
                 serde_json::json!({
                     "subagents": reports,
                     "child_count": child_count,
-                    "provider": provider_override.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
-                    "model": requested_model.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
+                    "provider": provider_display,
+                    "model": model_display,
                 }),
                 overall_error.is_some(),
             )
@@ -1220,8 +1228,8 @@ impl AgentRuntime {
                     "output": report.get("output").cloned().unwrap_or_default(),
                     "status": report.get("status").cloned().unwrap_or_default(),
                     "error": report.get("error").cloned().unwrap_or_default(),
-                    "provider": provider_override.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
-                    "model": requested_model.unwrap_or_else(|| parent_model_override.unwrap_or_else(|| model.to_string())),
+                    "provider": provider_display,
+                    "model": model_display,
                 }),
                 overall_error.is_some(),
             )
@@ -1269,34 +1277,32 @@ impl AgentRuntime {
         task: &str,
         parent_session_id: &str,
     ) {
-        let _ = approval
-            .event_tx
-            .send(AgentEvent::StateChanged {
+        if let Some(tx) = approval.event_sender().as_ref() {
+            let _ = tx.send(AgentEvent::StateChanged {
                 session_id: child_session_id.to_string(),
                 state,
             });
-        let _ = approval.event_tx.send(AgentEvent::TextDelta {
-            session_id: child_session_id.to_string(),
-            delta: format!(
-                "Delegated from {}: {}",
-                parent_session_id,
-                truncate_chars(task, 120)
-            ),
-        });
+            let _ = tx.send(AgentEvent::TextDelta {
+                session_id: child_session_id.to_string(),
+                delta: format!(
+                    "Delegated from {}: {}",
+                    parent_session_id,
+                    truncate_chars(task, 120)
+                ),
+            });
+        }
     }
 
     async fn collect_parent_attachments(
         storage: Arc<StorageEngine>,
         parent_session_id: &str,
     ) -> Vec<MessageAttachment> {
-        let mut collected = Vec::new();
+        let mut collected: Vec<MessageAttachment> = Vec::new();
         if let Ok(messages) = storage.list_messages(parent_session_id) {
             for message in messages.into_iter().rev() {
-                if let Some(attachments) = message.content.attachments {
-                    for attachment in attachments {
-                        if !collected.iter().any(|a| a.data_base64 == attachment.data_base64) {
-                            collected.push(attachment);
-                        }
+                for attachment in message.content.attachments {
+                    if !collected.iter().any(|a| a.data_base64 == attachment.data_base64) {
+                        collected.push(attachment);
                     }
                 }
                 if collected.len() >= 12 {
@@ -1311,16 +1317,16 @@ impl AgentRuntime {
         parent_session_id: &str,
         child_session_id: &str,
         storage: Arc<StorageEngine>,
-    ) -> Result<PathBuf, String> {
+        fallback_workspace: &str,
+    ) -> std::result::Result<PathBuf, String> {
         let parent_session = storage
-            .list_sessions()
-            .ok()
-            .and_then(|sessions| sessions.into_iter().find(|s| s.id == parent_session_id))
-            .ok_or("parent session not found")?;
+            .get_session(parent_session_id)
+            .map_err(|_| "parent session not found".to_string())?;
         let workspace = parent_session
             .workspace_root
             .clone()
-            .unwrap_or_default();
+            .filter(|root| !root.trim().is_empty())
+            .unwrap_or_else(|| fallback_workspace.to_string());
         if workspace.is_empty() {
             return Err("workspace is not configured".to_string());
         }
@@ -1357,7 +1363,7 @@ impl AgentRuntime {
         storage: Arc<StorageEngine>,
     ) {
         if let Some(path) = worktree {
-            if let Ok(Some(mut session)) = storage.get_session(child_session_id) {
+            if let Ok(mut session) = storage.get_session(child_session_id) {
                 session.workspace_root = Some(path);
                 let _ = storage.save_session(&session);
             }
@@ -1380,23 +1386,70 @@ impl AgentRuntime {
             .await;
     }
 
+    /// Runs one delegated child turn on a runtime that shares the parent's
+    /// storage, tools, providers and approval gates. The child session is
+    /// pre-created with the delegated workspace so its tools run there.
     async fn execute_child_turn(
+        &self,
         child_session_id: &str,
-        task: Vec<String>,
+        task: String,
         attachments: Vec<MessageAttachment>,
         provider_name: Option<&str>,
         model: &str,
-        storage: Arc<StorageEngine>,
-        approval: Arc<ApprovalEngine>,
-        audit: Arc<AuditLogger>,
         cancellation: CancellationToken,
         depth: u32,
         workspace_root: Option<String>,
     ) -> Result<Message> {
-        Err(OdonError::Provider {
-            provider: "subagent".to_string(),
-            description: "child turn execution is not wired yet".to_string(),
-        })
+        if self.storage.get_session(child_session_id).is_err() {
+            let mut child = Session::new(
+                truncate_chars(&task, 48),
+                SessionMode::General,
+                model.to_string(),
+            );
+            child.id = child_session_id.to_string();
+            child.workspace_root = workspace_root.clone();
+            child.metadata = Some(serde_json::json!({
+                "delegated": true,
+                "task": truncate_chars(&task, 200),
+            }));
+            let _ = self.storage.save_session(&child);
+        }
+        let model_override = provider_name
+            .map(|provider| format!("{provider}::{model}"))
+            .unwrap_or_else(|| model.to_string());
+        self.execute_turn_inner(
+            child_session_id,
+            &task,
+            attachments,
+            Some(model_override.as_str()),
+            None,
+            cancellation,
+            None,
+            None,
+            depth,
+            Some(self.max_turn_iterations()),
+        )
+        .await
+    }
+
+    /// A runtime for one delegated child that shares every long-lived
+    /// collaborator with the parent (storage, tools, providers, approval,
+    /// audit, events) so child turns see the same world.
+    fn child_runtime(&self, workspace_root: String) -> AgentRuntime {
+        AgentRuntime {
+            storage: self.storage.clone(),
+            tools: self.tools.clone(),
+            approval: self.approval.clone(),
+            audit: self.audit.clone(),
+            providers: self.providers.clone(),
+            default_provider: self.default_provider.clone(),
+            event_tx: self.event_tx.clone(),
+            workspace_root,
+            max_turn_iterations: AtomicUsize::new(self.max_turn_iterations()),
+            context_budget_tokens: AtomicUsize::new(
+                self.context_budget_tokens.load(Ordering::Relaxed),
+            ),
+        }
     }
 }
 

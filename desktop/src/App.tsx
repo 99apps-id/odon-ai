@@ -757,13 +757,16 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, streamingThought, isGenerating]);
 
-  const decideApproval = async (decision: 'approve_once' | 'approve_always' | 'deny') => {
+  const decideApproval = async (
+    decision: 'approve_once' | 'approve_always' | 'approve_all' | 'deny',
+    reason?: string,
+  ) => {
     if (!pendingApproval) return;
     try {
       await api.resolveApproval(
         pendingApproval.id,
         decision,
-        decision === 'deny' ? 'Rejected by user' : undefined,
+        decision === 'deny' ? reason?.trim() || 'Rejected by user' : undefined,
       );
       setPendingApproval(null);
     } catch (error) {
