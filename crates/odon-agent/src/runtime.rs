@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::task::JoinSet;
@@ -29,7 +29,20 @@ struct AccumulatedToolCall {
 /// small fixed number: a coding turn legitimately needs dozens of tool
 /// steps, and the cap exists to stop a runaway loop, not normal work.
 /// Override with `ODON_MAX_TURN_ITERATIONS` or `set_max_turn_iterations`.
-pub const DEFAULT_MAX_TURN_ITERATIONS: usize = 100;
+/// `0` means no cap at all (see [`UNLIMITED_TURN_ITERATIONS`]).
+pub const DEFAULT_MAX_TURN_ITERATIONS: usize = 500;
+
+/// Per-turn step cap for a provider that bills neither per step nor per
+/// token (OAuth / keyless: ChatGPT codex, Claude OAuth, Antigravity, xAI
+/// OAuth, Copilot, Muse). Mirrors Termigo's `OAUTH_MAX_AGENT_STEPS` of
+/// 10_000: for those providers the real bound is the provider's own usage
+/// window, not a step count this runtime invents.
+pub const OAUTH_MAX_TURN_ITERATIONS: usize = 10_000;
+
+/// Sentinel stored when the step cap is disabled. The loop compares
+/// `current_iteration < cap`, so this is "run until the model stops
+/// asking for tools or the turn is cancelled".
+pub const UNLIMITED_TURN_ITERATIONS: usize = usize::MAX;
 
 /// Default context budget in estimated tokens for one provider request.
 /// History beyond it is compacted (see `compact_history`). Override with
@@ -46,8 +59,36 @@ pub const MAX_INLINE_TOOL_SCHEMAS: usize = 128;
 const MAX_PARALLEL_TOOLS: usize = 4;
 
 /// Step cap for a delegated subagent run.
-const SUBAGENT_MAX_ITERATIONS: usize = 25;
+const SUBAGENT_MAX_ITERATIONS: usize = 5_000;
 const MAX_CONCURRENT_SUBAGENTS: usize = 4;
+
+/// True when `provider_name` identifies a subscription / keyless provider
+/// whose steps cost no metered tokens. Matched by substring because ODON
+/// providers carry their name either as a fixed label or as the configured
+/// provider id (for example `claude-oauth`, `github-copilot`).
+pub fn is_unmetered_provider(provider_name: &str) -> bool {
+    const MARKERS: [&str; 7] = [
+        "antigravity",
+        "openai-codex",
+        "chatgpt",
+        "claude-oauth",
+        "xai-oauth",
+        "github-copilot",
+        "copilot",
+    ];
+    let name = provider_name.trim().to_ascii_lowercase();
+    MARKERS.iter().any(|marker| name.contains(marker)) || name.contains("muse")
+}
+
+/// The step cap a turn gets when the operator set no explicit override.
+/// Termigo's rule: one explicit number per model, never a hidden ladder.
+pub fn default_step_cap_for(provider_name: &str) -> usize {
+    if is_unmetered_provider(provider_name) {
+        OAUTH_MAX_TURN_ITERATIONS
+    } else {
+        DEFAULT_MAX_TURN_ITERATIONS
+    }
+}
 
 fn env_usize(name: &str, default: usize, min: usize, max: usize) -> usize {
     std::env::var(name)
@@ -55,6 +96,15 @@ fn env_usize(name: &str, default: usize, min: usize, max: usize) -> usize {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value >= min && *value <= max)
         .unwrap_or(default)
+}
+
+/// `0` disables the per-turn step cap, anything else is clamped to 1..=10_000.
+pub fn normalize_step_cap(value: usize) -> usize {
+    if value == 0 {
+        UNLIMITED_TURN_ITERATIONS
+    } else {
+        value.clamp(1, 10_000)
+    }
 }
 
 pub struct AgentRuntime {
@@ -67,6 +117,10 @@ pub struct AgentRuntime {
     event_tx: broadcast::Sender<AgentEvent>,
     workspace_root: String,
     max_turn_iterations: AtomicUsize,
+    /// True once the operator pinned a cap (env var or
+    /// [`AgentRuntime::set_max_turn_iterations`]). While false the cap is
+    /// resolved per provider by [`default_step_cap_for`].
+    step_cap_explicit: AtomicBool,
     context_budget_tokens: AtomicUsize,
 }
 
@@ -88,12 +142,15 @@ impl AgentRuntime {
             default_provider: Arc::new(RwLock::new("default".to_string())),
             event_tx,
             workspace_root,
-            max_turn_iterations: AtomicUsize::new(env_usize(
+            max_turn_iterations: AtomicUsize::new(normalize_step_cap(env_usize(
                 "ODON_MAX_TURN_ITERATIONS",
                 DEFAULT_MAX_TURN_ITERATIONS,
-                1,
+                0,
                 10_000,
-            )),
+            ))),
+            step_cap_explicit: AtomicBool::new(
+                std::env::var("ODON_MAX_TURN_ITERATIONS").is_ok(),
+            ),
             context_budget_tokens: AtomicUsize::new(env_usize(
                 "ODON_CONTEXT_BUDGET_TOKENS",
                 DEFAULT_CONTEXT_BUDGET_TOKENS,
@@ -108,10 +165,12 @@ impl AgentRuntime {
         self.max_turn_iterations.load(Ordering::Relaxed)
     }
 
-    /// Sets the per-turn step cap (clamped to 1..=10000).
+    /// Sets the per-turn step cap. `0` removes the cap entirely; other
+    /// values are clamped to 1..=10000.
     pub fn set_max_turn_iterations(&self, value: usize) {
+        self.step_cap_explicit.store(true, Ordering::Relaxed);
         self.max_turn_iterations
-            .store(value.clamp(1, 10_000), Ordering::Relaxed);
+            .store(normalize_step_cap(value), Ordering::Relaxed);
     }
 
     /// The context budget in estimated tokens currently in force.
@@ -204,12 +263,21 @@ impl AgentRuntime {
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
 
-        let memories = self.storage.list_memories(None).unwrap_or_default();
+        let memories = self.storage.list_user_memories(10).unwrap_or_default();
         let mut memories_text = String::new();
         if !memories.is_empty() {
             memories_text.push_str("\n### Known User Preferences & Project Memory:\n");
-            for m in memories.iter().take(10) {
-                memories_text.push_str(&format!("- [{}] {}: {}\n", m.category, m.key, m.value));
+            for m in memories.iter() {
+                // Facts are stored content-addressed, so the key is a hash and
+                // only the value carries meaning for the model.
+                if m.category == "facts" {
+                    memories_text.push_str(&format!("- {}\n", m.value));
+                } else {
+                    memories_text.push_str(&format!(
+                        "- [{}] {}: {}\n",
+                        m.category, m.key, m.value
+                    ));
+                }
             }
         }
 
@@ -497,8 +565,18 @@ impl AgentRuntime {
         let subagent_enabled = depth == 0;
         let mut active_tools = initial_active_tools(&tool_defs, subagent_enabled);
 
+        // Explicit caps win: a caller (a subagent budget) or the operator
+        // (env / setter). Otherwise the cap follows the provider, because a
+        // subscription provider costs no metered tokens per step while a
+        // BYOK one does.
         let max_turn_iterations = iteration_cap
-            .unwrap_or_else(|| self.max_turn_iterations())
+            .unwrap_or_else(|| {
+                if self.step_cap_explicit.load(Ordering::Relaxed) {
+                    self.max_turn_iterations()
+                } else {
+                    default_step_cap_for(provider.provider_name())
+                }
+            })
             .max(1);
         let mut current_iteration = 0;
         let mut hit_step_cap = false;
@@ -1526,6 +1604,7 @@ impl AgentRuntime {
             event_tx: self.event_tx.clone(),
             workspace_root,
             max_turn_iterations: AtomicUsize::new(self.max_turn_iterations()),
+            step_cap_explicit: AtomicBool::new(self.step_cap_explicit.load(Ordering::Relaxed)),
             context_budget_tokens: AtomicUsize::new(
                 self.context_budget_tokens.load(Ordering::Relaxed),
             ),
@@ -1939,5 +2018,53 @@ mod tests {
                 "{name} missing from the inline set"
             );
         }
+    }
+
+    #[test]
+    fn step_cap_defaults_to_500_and_zero_means_no_cap() {
+        // 500 is the shipped default so a long turn is not cut off mid-work.
+        assert_eq!(DEFAULT_MAX_TURN_ITERATIONS, 500);
+        assert_eq!(normalize_step_cap(DEFAULT_MAX_TURN_ITERATIONS), 500);
+        // A subagent may outlive a metered parent turn, but never the
+        // subscription ceiling, and it always stays inside the clamp.
+        assert!(SUBAGENT_MAX_ITERATIONS > DEFAULT_MAX_TURN_ITERATIONS);
+        assert_eq!(
+            normalize_step_cap(SUBAGENT_MAX_ITERATIONS),
+            SUBAGENT_MAX_ITERATIONS
+        );
+        // 0 disables the cap; the loop then never trips its step guard.
+        assert_eq!(normalize_step_cap(0), UNLIMITED_TURN_ITERATIONS);
+        // Anything else keeps the documented clamp.
+        assert_eq!(normalize_step_cap(1), 1);
+        assert_eq!(normalize_step_cap(20_000), 10_000);
+    }
+
+    #[test]
+    fn subscription_providers_get_the_deeper_cap() {
+        // Termigo parity: OAuth / keyless providers are bounded by their
+        // own usage window, so they get 10_000 steps; a metered API-key
+        // provider keeps 500.
+        for name in [
+            "openai-codex",
+            "chatgpt",
+            "claude-oauth",
+            "antigravity",
+            "xai-oauth",
+            "github-copilot",
+            "copilot",
+            "muse-something",
+        ] {
+            assert!(is_unmetered_provider(name), "{name} should be unmetered");
+            assert_eq!(default_step_cap_for(name), OAUTH_MAX_TURN_ITERATIONS);
+        }
+        for name in ["default", "mistral", "openai", "openrouter", "odon-auto"] {
+            assert!(!is_unmetered_provider(name), "{name} is metered");
+            assert_eq!(default_step_cap_for(name), DEFAULT_MAX_TURN_ITERATIONS);
+        }
+        // The deeper cap still obeys the documented clamp.
+        assert_eq!(
+            normalize_step_cap(OAUTH_MAX_TURN_ITERATIONS),
+            OAUTH_MAX_TURN_ITERATIONS
+        );
     }
 }

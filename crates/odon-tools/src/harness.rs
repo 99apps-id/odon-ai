@@ -11,6 +11,17 @@ use crate::registry::{Tool, ToolContext};
 const STATUSES: [&str; 3] = ["pending", "in_progress", "completed"];
 const MAX_TODOS: usize = 100;
 
+/// Deterministic 64-bit FNV-1a. Used to build a stable, content-addressed
+/// memory key so the same fact saved twice never duplicates a row.
+pub(crate) fn fnv1a(input: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 fn tool_err(tool: &str, message: impl Into<String>) -> OdonError {
     OdonError::Tool {
         tool: tool.to_string(),
@@ -369,7 +380,10 @@ impl Tool for RememberTool {
             .ok_or_else(|| tool_err(self.name(), "Missing 'fact' parameter"))?;
 
         if let Some(storage) = &ctx.storage {
-            let key = format!("memory:facts:{}", ctx.session_id);
+            // Content-addressed key: the same fact saved from any session
+            // maps to one row, so memory carries across sessions instead of
+            // fragmenting per session id.
+            let key = format!("memory:facts:{:016x}", fnv1a(fact));
             let _ = storage.set_memory(&key, fact, "facts");
         }
 
@@ -498,5 +512,32 @@ mod tests {
         assert!(is_plan_mode(&storage, "s1"));
         set_plan_mode(&storage, "s1", false).unwrap();
         assert!(!is_plan_mode(&storage, "s1"));
+    }
+
+    #[test]
+    fn fact_keys_are_content_addressed_not_session_scoped() {
+        assert_eq!(fnv1a("prefers tabs"), fnv1a("prefers tabs"));
+        assert_ne!(fnv1a("prefers tabs"), fnv1a("prefers spaces"));
+
+        let storage = odon_storage::StorageEngine::new_in_memory().unwrap();
+        let fact = "deploys on fridays";
+        let key_a = format!("memory:facts:{:016x}", fnv1a(fact));
+        let key_b = format!("memory:facts:{:016x}", fnv1a(fact));
+        assert!(
+            !key_a.contains("s1") && !key_a.contains("s2"),
+            "the key must not embed a session id"
+        );
+
+        // Same fact from two different sessions collapses to one row.
+        storage.set_memory(&key_a, fact, "facts").unwrap();
+        storage.set_memory(&key_b, fact, "facts").unwrap();
+        let rows: Vec<_> = storage
+            .list_user_memories(50)
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.category == "facts")
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value, fact);
     }
 }

@@ -825,6 +825,39 @@ impl StorageEngine {
         Ok(memories)
     }
 
+    /// Memories worth showing to a model: everything except per-session harness
+    /// plumbing (`plan_mode`, `todos`). Filtering happens in SQL on purpose: those
+    /// rows are rewritten every turn, so trimming by recency before filtering would
+    /// let plumbing crowd out the user's own memories.
+    pub fn list_user_memories(&self, limit: usize) -> Result<Vec<MemoryItem>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT key, value, category, updated_at FROM memories \
+             WHERE category NOT IN ('plan_mode', 'todos') \
+             ORDER BY updated_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            let updated_at_str: String = row.get(3)?;
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| {
+                    tracing::warn!("corrupt timestamp in odon_state.db; substituting current time");
+                    Utc::now()
+                });
+            Ok(MemoryItem {
+                key: row.get(0)?,
+                value: row.get(1)?,
+                category: row.get(2)?,
+                updated_at,
+            })
+        })?;
+        let mut memories = Vec::new();
+        for r in rows {
+            memories.push(r?);
+        }
+        Ok(memories)
+    }
+
     pub fn delete_memory(&self, key: &str) -> Result<bool> {
         let conn = self.lock_conn()?;
         let count = conn.execute("DELETE FROM memories WHERE key = ?1", params![key])?;
@@ -1121,5 +1154,60 @@ mod tests {
                 .unwrap()
                 .is_default
         );
+    }
+
+    #[test]
+    fn user_memories_exclude_per_session_plumbing() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+
+        // Per-session plumbing written by the harness tools.
+        storage
+            .set_memory("plan_mode:s1", "false", "plan_mode")
+            .unwrap();
+        storage
+            .set_memory("todos:s1", r#"[{"status":"pending"}]"#, "todos")
+            .unwrap();
+        storage
+            .set_memory("memory:facts:abc", "prefers tabs", "facts")
+            .unwrap();
+        storage
+            .set_memory("ponytail-origin", "clay accent", "project")
+            .unwrap();
+
+        let all = storage.list_memories(None).unwrap();
+        assert!(
+            all.iter().any(|m| m.category == "plan_mode"),
+            "plumbing rows are still readable for debugging"
+        );
+
+        let user = storage.list_user_memories(10).unwrap();
+        let mut keys: Vec<&str> = user.iter().map(|m| m.key.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys, vec!["memory:facts:abc", "ponytail-origin"]);
+        assert!(
+            user.iter()
+                .all(|m| m.category != "plan_mode" && m.category != "todos"),
+            "session plumbing must never reach the system prompt"
+        );
+    }
+
+    #[test]
+    fn user_memories_are_not_starved_by_plumbing_rows() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+
+        // More plumbing rows than the prompt limit, all written after the
+        // real memory so a naive ORDER BY created_at DESC LIMIT would drop it.
+        storage
+            .set_memory("memory:facts:real", "keep me", "facts")
+            .unwrap();
+        for i in 0..25 {
+            storage
+                .set_memory(&format!("plan_mode:{i}"), "false", "plan_mode")
+                .unwrap();
+        }
+
+        let user = storage.list_user_memories(10).unwrap();
+        assert_eq!(user.len(), 1);
+        assert_eq!(user[0].key, "memory:facts:real");
     }
 }

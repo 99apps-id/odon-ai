@@ -3301,9 +3301,11 @@ fn resolve_turn_plan(
     } else {
         requested_model.map(|m| m.to_string())
     };
-    // Agent turns get a longer step budget so multi-step work is not cut off
-    // mid-way; every other mode keeps the configured default.
-    let iteration_cap = if mode == "agent" { Some(200usize) } else { None };
+    // Every mode uses the configured step budget. Agent mode used to add a
+    // hardcoded 200 here, which is now *below* the 500 default and would cut
+    // long autonomous work short; the runtime default (or
+    // ODON_MAX_TURN_ITERATIONS) governs instead.
+    let iteration_cap: Option<usize> = None;
     let mode_note = match mode {
         "plan" => Some(
             "Execution mode: PLAN. Investigate with read-only tools, then present a concrete plan with the todo list. Do not modify files until plan mode is left.",
@@ -7284,9 +7286,11 @@ mod tests {
         assert!(!auto.plan_mode);
         assert!(auto.instructions.unwrap().contains("AUTO"));
 
-        // Agent raises the step budget and authorises delegation.
+        // Agent authorises delegation and leaves the step budget to the
+        // runtime default (500, or ODON_MAX_TURN_ITERATIONS) instead of
+        // lowering it with a hardcoded cap.
         let agent = resolve_turn_plan("agent", Some("gpt-5.6-luna"), None, None);
-        assert_eq!(agent.iteration_cap, Some(200));
+        assert_eq!(agent.iteration_cap, None);
         assert!(!agent.plan_mode);
         assert!(agent.instructions.unwrap().contains("run_subagent"));
 
