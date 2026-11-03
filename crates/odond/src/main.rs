@@ -4422,6 +4422,9 @@ fn default_base_url_for(provider: &str) -> String {
         "openrouter" => "https://openrouter.ai/api/v1".to_string(),
         "groq" => "https://api.groq.com/openai/v1".to_string(),
         "ollama" => "http://localhost:11434/v1".to_string(),
+        // Meta Model API is OpenAI-compatible and serves Muse on /v1, so a Muse
+        // BYOK config without an explicit URL must not fall through to Ollama.
+        "muse" => "https://api.meta.ai/v1".to_string(),
         _ => "http://localhost:11434/v1".to_string(),
     }
 }
@@ -7446,6 +7449,19 @@ mod tests {
         let provider = build_oauth_provider("claude-oauth", &token)
             .expect("Claude OAuth must register a runtime provider");
         assert_eq!(provider.provider_name(), "claude-oauth");
+    }
+
+    #[test]
+    fn muse_byok_defaults_to_the_meta_model_api() {
+        // Muse is a BYOK provider built from a saved config. When the user does
+        // not type a base URL, the fallback must be Meta's Model API; an unknown
+        // id otherwise falls through to the Ollama URL and silently points the
+        // provider at localhost.
+        assert_eq!(default_base_url_for("muse"), "https://api.meta.ai/v1");
+        assert_ne!(
+            default_base_url_for("muse"),
+            default_base_url_for("some-unknown-provider")
+        );
     }
 }
 
