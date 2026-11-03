@@ -440,7 +440,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           provider: providerId,
           authUrl: resp.auth_url,
         });
-        window.open(resp.auth_url, '_blank');
+        try {
+          // Installed Tauri apps must use the operating system browser so the
+          // localhost callback reaches odond. Browser development keeps the
+          // normal fallback.
+          const { openUrl } = await import('@tauri-apps/plugin-opener');
+          await openUrl(resp.auth_url);
+        } catch {
+          window.open(resp.auth_url, '_blank', 'noopener,noreferrer');
+        }
       }
 
       if (resp.account) {

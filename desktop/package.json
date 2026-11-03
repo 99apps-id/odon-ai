@@ -8,8 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "stage:sidecar": "node ../scripts/stage-sidecar.mjs",
+    "tauri:dev": "pnpm stage:sidecar && tauri dev",
+    "tauri:build": "pnpm stage:sidecar && tauri build"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.7",
     "@tauri-apps/cli": "^2.12.4",
+    "@tauri-apps/plugin-opener": "^2.5.2",
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
