@@ -111,4 +111,40 @@ mod tests {
         assert!(resolve_write(&root_str, "/etc/passwd-odon-test").is_err());
         std::fs::remove_dir_all(root).ok();
     }
+
+    #[test]
+    fn rejects_parent_dir_chains_and_symlink_escape() {
+        let base = std::env::temp_dir();
+        let root = base.join(format!("odon-guard-root-{}", std::process::id()));
+        let outside = base.join(format!("odon-guard-outside-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        let root_str = root.to_string_lossy().to_string();
+
+        // Starts inside the workspace but resolves back out: the canonicalized
+        // ancestor must still be rejected.
+        assert!(resolve_write(&root_str, "nested/../../outside/evil.txt").is_err());
+        assert!(resolve_existing(&root_str, "nested/../../outside/secret.txt").is_err());
+
+        // A symlink planted inside the workspace must not become a trampoline.
+        let link = root.join("escape");
+        let linked = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside, &link).is_ok()
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(&outside, &link).is_ok()
+            }
+        };
+        if linked {
+            assert!(resolve_existing(&root_str, "escape/secret.txt").is_err());
+            assert!(resolve_write(&root_str, "escape/new.txt").is_err());
+        }
+
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(outside).ok();
+    }
 }
