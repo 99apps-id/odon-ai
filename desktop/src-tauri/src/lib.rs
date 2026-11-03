@@ -43,6 +43,16 @@ fn daemon_reachable() -> bool {
     TcpStream::connect(DAEMON_ADDR).is_ok()
 }
 
+fn daemon_stably_reachable() -> bool {
+    for _ in 0..3 {
+        if !daemon_reachable() {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
 /// Waits briefly for the daemon to accept connections, reporting
 /// whether it came up. The window loads the embedded frontend
 /// meanwhile; only the first API calls depend on this.
@@ -73,7 +83,7 @@ fn sidecar_path() -> Option<PathBuf> {
 /// leave the window talking to nothing. Every outcome lands in the log.
 fn spawn_daemon(app: &tauri::App) {
     let handle = app.handle().clone();
-    if daemon_reachable() {
+    if daemon_stably_reachable() {
         log_line(&handle, "daemon already answering on 127.0.0.1:4096; not spawning");
         return;
     }

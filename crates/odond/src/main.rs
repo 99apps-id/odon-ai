@@ -6902,4 +6902,21 @@ mod tests {
         assert_eq!(safe_skill_slug("My Skill"), "my-skill");
         assert_eq!(safe_skill_slug(""), "skill");
     }
+
+    #[test]
+    fn claude_oauth_token_builds_a_usable_anthropic_provider() {
+        let token = odon_provider::OAuthToken {
+            provider: "claude-oauth".to_string(),
+            access_token: "test-access-token".to_string(),
+            refresh_token: Some("test-refresh-token".to_string()),
+            expires_at: None,
+            account_id: None,
+            id_token: None,
+            email: None,
+            plan: Some("Claude OAuth".to_string()),
+        };
+        let provider = build_oauth_provider("claude-oauth", &token)
+            .expect("Claude OAuth must register a runtime provider");
+        assert_eq!(provider.provider_name(), "claude-oauth");
+    }
 }

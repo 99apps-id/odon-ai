@@ -603,8 +603,10 @@ export default function App() {
           toolsLoadedRef.current = true;
         }
       }
+      return true;
     } catch {
       setDaemonOnline(false);
+      return false;
     }
   };
 
@@ -628,7 +630,15 @@ export default function App() {
 
   // Initial setup & SSE subscription
   useEffect(() => {
-    checkDaemonStatus();
+    let statusTimer: number | undefined;
+    let statusPollingStopped = false;
+    const pollDaemonStatus = async () => {
+      const online = await checkDaemonStatus();
+      if (!statusPollingStopped) {
+        statusTimer = window.setTimeout(pollDaemonStatus, online ? 5000 : 250);
+      }
+    };
+    void pollDaemonStatus();
     loadSessions();
     api.getTools().then((tools) => {
       if (tools.length > 0) {
@@ -656,8 +666,6 @@ export default function App() {
     }).catch(() => {
       // Use fallback
     });
-
-    const statusInterval = setInterval(checkDaemonStatus, 5000);
 
     const unsubscribe = api.subscribeEvents((event) => {
       const eventSession = 'session_id' in event.payload ? event.payload.session_id : null;
@@ -707,7 +715,8 @@ export default function App() {
     });
 
     return () => {
-      clearInterval(statusInterval);
+      statusPollingStopped = true;
+      if (statusTimer !== undefined) window.clearTimeout(statusTimer);
       unsubscribe();
     };
   }, [currentSessionId]);
