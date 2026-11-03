@@ -473,7 +473,9 @@ fn find_server(server: &str) -> Result<McpServerConfig> {
 }
 
 enum McpClient {
-    Stdio(StdioMcpClient),
+    // Boxed: the stdio client carries the child-process handles and buffers
+    // that make it ~6x larger than the SSE variant.
+    Stdio(Box<StdioMcpClient>),
     Sse(SseMcpClient),
 }
 
@@ -514,7 +516,9 @@ fn config_key(config: &McpServerConfig) -> String {
 async fn reconnect(config: &McpServerConfig) -> Result<Arc<Mutex<McpClient>>> {
     let client = timeout(MCP_REQUEST_TIMEOUT, async {
         match config.transport.to_ascii_lowercase().as_str() {
-            "stdio" => StdioMcpClient::connect(config).await.map(McpClient::Stdio),
+            "stdio" => StdioMcpClient::connect(config)
+                .await
+                .map(|client| McpClient::Stdio(Box::new(client))),
             "sse" | "http+sse" | "http_sse" => {
                 SseMcpClient::connect(config).await.map(McpClient::Sse)
             }

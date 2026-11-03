@@ -1253,3 +1253,64 @@ impl Tool for GitHubWorkflowRunTool {
         )
     }
 }
+// These GitHub connectors are stateless: `new()` is the only constructor and
+// takes no arguments, so `Default` is a plain delegation.
+impl Default for GitHubApiClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubCreateReviewTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubListCommentsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubMergePrTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubWorkflowRunsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubWorkflowJobsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubWorkflowLogsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubPrFilesTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubWorkflowListTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubWorkflowRunTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}

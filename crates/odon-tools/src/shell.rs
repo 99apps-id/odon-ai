@@ -83,7 +83,7 @@ impl Tool for ShellExecTool {
                 c.arg("/C").arg(cmd_str);
                 c
             }
-            "powershell" | "auto" | _ => {
+            _ => {
                 let mut c = Command::new("powershell");
                 c.arg("-NoProfile").arg("-Command").arg(cmd_str);
                 c

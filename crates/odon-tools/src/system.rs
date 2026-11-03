@@ -203,10 +203,10 @@ fn parse_primary(
             chars.next();
             parse_primary(chars)
         }
-        Some(c) if c.is_digit(10) || *c == '.' => {
+        Some(c) if c.is_ascii_digit() || *c == '.' => {
             let mut num_str = String::new();
             while let Some(&ch) = chars.peek() {
-                if ch.is_digit(10) || ch == '.' {
+                if ch.is_ascii_digit() || ch == '.' {
                     num_str.push(ch);
                     chars.next();
                 } else {
@@ -381,7 +381,7 @@ impl Tool for DiskUsageTool {
             .get("max_entries")
             .and_then(Value::as_u64)
             .unwrap_or(20_000)
-            .clamp(1, 200_000) as u64;
+            .clamp(1, 200_000);
         let root = std::path::Path::new(&ctx.workspace_root).to_path_buf();
         let mut stack = vec![root.clone()];
         let mut files = 0u64;

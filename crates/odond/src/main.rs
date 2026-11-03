@@ -406,6 +406,10 @@ impl Drop for BridgeChild {
     }
 }
 
+/// Shared handle to the bridge process this daemon spawned: its argv and whether
+/// it has already exited.
+type SpawnedBridge = Arc<std::sync::Mutex<Option<(Vec<String>, bool)>>>;
+
 /// Local manager for the Node/Baileys WhatsApp Web bridge.
 #[derive(Clone)]
 struct WhatsAppBridge {
@@ -418,7 +422,7 @@ struct WhatsAppBridge {
     daemon_url: String,
     api_token: Option<String>,
     log_path: PathBuf,
-    spawned: Arc<std::sync::Mutex<Option<(Vec<String>, bool)>>>,
+    spawned: SpawnedBridge,
 }
 
 impl WhatsAppBridge {
@@ -1182,7 +1186,7 @@ fn cron_field_matches(field: &str, value: u32, min: u32) -> bool {
             step.parse::<u32>()
                 .ok()
                 .filter(|step| *step > 0)
-                .map(|step| value >= min && (value - min) % step == 0)
+                .map(|step| value >= min && (value - min).is_multiple_of(step))
                 .unwrap_or(false)
         } else if let Some((start, end)) = part.split_once('-') {
             match (start.parse::<u32>(), end.parse::<u32>()) {
@@ -2835,7 +2839,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 fn hex_decode(input: &str) -> std::result::Result<Vec<u8>, ()> {
     let bytes = input.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(());
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);
@@ -3098,7 +3102,7 @@ async fn browse_workspaces(
             });
         }
     }
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|entry| entry.name.to_lowercase());
 
     let parent = canonical.parent().map(display_path);
 
@@ -3131,7 +3135,7 @@ async fn browse_workspaces(
     }
     // Also expose the filesystem root of every allowed workspace.
     for workspace in workspace_roots(&state).await {
-        let mut root = PathBuf::from(workspace);
+        let mut root = workspace;
         while let Some(parent) = root.parent() {
             root = parent.to_path_buf();
         }
@@ -4231,7 +4235,7 @@ async fn execute_terminal(
         }
     }
 
-    return (
+    (
         StatusCode::OK,
         Json(json!({
             "exit_code": exit_code,
@@ -4240,7 +4244,7 @@ async fn execute_terminal(
             "cwd": updated_cwd,
             "success": exit_code == 0,
         })),
-    );
+    )
 }
 
 #[derive(Deserialize)]
@@ -6857,7 +6861,7 @@ async fn get_skills_list() -> impl IntoResponse {
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.extension().map_or(false, |ext| ext == "md") {
+            if p.extension().is_some_and(|ext| ext == "md") {
                 let name = p
                     .file_stem()
                     .unwrap_or_default()

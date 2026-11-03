@@ -158,7 +158,7 @@ fn binary_on_path(binary: &str) -> bool {
     };
     ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
         .iter()
-        .filter_map(|name| std::env::var_os(name))
+        .filter_map(std::env::var_os)
         .map(std::path::PathBuf::from)
         .any(|base| {
             base.join(vendor)
@@ -223,12 +223,12 @@ impl ToolRegistry {
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<&Box<dyn Tool>> {
+    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         if let Some(tool) = self.tools.get(name) {
-            return Some(tool);
+            return Some(tool.as_ref());
         }
         let norm = Self::normalize_name(name);
-        self.tools.get(&norm)
+        self.tools.get(&norm).map(|tool| tool.as_ref())
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -258,7 +258,7 @@ impl ToolRegistry {
         .unwrap_or(ToolVisibility::Model)
     }
 
-    fn schema_for(tool: &Box<dyn Tool>) -> ToolSchema {
+    fn schema_for(tool: &dyn Tool) -> ToolSchema {
         ToolSchema {
             name: tool.name().to_string(),
             description: tool.description().to_string(),
@@ -276,7 +276,7 @@ impl ToolRegistry {
         let mut schemas = self
             .tools
             .values()
-            .map(Self::schema_for)
+            .map(|tool| Self::schema_for(tool.as_ref()))
             .filter(|schema| schema.visibility == ToolVisibility::Model)
             .collect::<Vec<_>>();
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
@@ -288,7 +288,7 @@ impl ToolRegistry {
         let mut schemas = self
             .tools
             .values()
-            .map(Self::schema_for)
+            .map(|tool| Self::schema_for(tool.as_ref()))
             .collect::<Vec<_>>();
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
         schemas
@@ -412,7 +412,7 @@ impl ToolRegistry {
             .approval_engine
             .evaluate_and_request(&ctx.session_id, canonical_name, &args, &desc)
             .await
-            .map_err(|e| OdonError::Security(e))?;
+            .map_err(OdonError::Security)?;
 
         match decision {
             ApprovalDecision::Approved

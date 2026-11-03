@@ -330,3 +330,34 @@ impl Tool for GitHubListPullRequestsTool {
         Ok(json!({ "pull_requests": body }))
     }
 }
+// These GitHub connectors are stateless: `new()` is the only constructor and
+// takes no arguments, so `Default` is a plain delegation.
+impl Default for GitHubClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubGetRepoTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubListIssuesTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubCreateIssueTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GitHubListPullRequestsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}

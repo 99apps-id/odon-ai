@@ -187,7 +187,7 @@ impl Tool for MemorySearchTool {
                 }
             }
 
-            scored_matches.sort_by(|a, b| b.0.cmp(&a.0));
+            scored_matches.sort_by_key(|item| std::cmp::Reverse(item.0));
 
             let results: Vec<Value> = scored_matches
                 .into_iter()

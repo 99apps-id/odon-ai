@@ -1106,7 +1106,7 @@ impl AgentRuntime {
                 .unwrap_or_else(|| model.to_string());
 
             join_set.spawn(async move {
-                let _ = AgentRuntime::publish_child_event(
+                AgentRuntime::publish_child_event(
                     &approval,
                     &child_session_id,
                     AgentState::Thinking,
@@ -1130,7 +1130,7 @@ impl AgentRuntime {
 
                 let result = match worktree {
                     Ok(worktree_path) => {
-                        let _ = AgentRuntime::update_child_workspace(
+                        AgentRuntime::update_child_workspace(
                             &child_session_id,
                             Some(worktree_path.to_string_lossy().to_string()),
                             storage.clone(),
@@ -1165,7 +1165,7 @@ impl AgentRuntime {
                     Err(error) => Err(error),
                 };
 
-                let _ = AgentRuntime::publish_child_event(
+                AgentRuntime::publish_child_event(
                     &approval,
                     &child_session_id,
                     AgentState::Completed,
@@ -1220,10 +1220,10 @@ impl AgentRuntime {
         let overall_error = completed_errors.first().map(|item| item.2.clone());
 
         let provider_display = provider_override
-            .or_else(|| parent_model_override.as_deref())
+            .or(parent_model_override.as_deref())
             .unwrap_or(model);
         let model_display = requested_model
-            .or_else(|| parent_model_override.as_deref())
+            .or(parent_model_override.as_deref())
             .unwrap_or(model);
 
         if child_count > 1 {
@@ -1286,7 +1286,7 @@ impl AgentRuntime {
             })
     }
 
-    async fn publish_child_event(
+    fn publish_child_event(
         approval: &Arc<ApprovalEngine>,
         child_session_id: &str,
         state: AgentState,
@@ -1376,7 +1376,7 @@ impl AgentRuntime {
         Ok(worktree)
     }
 
-    async fn update_child_workspace(
+    fn update_child_workspace(
         child_session_id: &str,
         worktree: Option<String>,
         storage: Arc<StorageEngine>,
@@ -1399,6 +1399,9 @@ impl AgentRuntime {
     /// Runs one delegated child turn on a runtime that shares the parent's
     /// storage, tools, providers and approval gates. The child session is
     /// pre-created with the delegated workspace so its tools run there.
+    // Nine parameters is acceptable here: this is a private single-call-site
+    // helper whose arguments are already flat scalars describing one turn.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_child_turn(
         &self,
         child_session_id: &str,

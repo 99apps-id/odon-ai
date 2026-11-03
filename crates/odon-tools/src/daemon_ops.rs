@@ -93,7 +93,7 @@ impl Tool for ToolDiagnosticsTool {
             .unwrap_or(false);
         let mut diagnostics = crate::build_full_tool_registry().diagnostics();
         diagnostics.retain(|item| {
-            filter.map_or(true, |name| item.name == name) && (!only_issues || !item.ready)
+            filter.is_none_or(|name| item.name == name) && (!only_issues || !item.ready)
         });
         Ok(json!({
             "count": diagnostics.len(),

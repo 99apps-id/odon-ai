@@ -114,13 +114,13 @@ impl Tool for FsStatTool {
             message: format!("Failed to read metadata for {rel}: {e}"),
         })?;
 
-        let modified = meta.modified().ok().and_then(|t| {
+        let modified = meta.modified().ok().map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
-            Some(dt.to_rfc3339())
+            dt.to_rfc3339()
         });
-        let created = meta.created().ok().and_then(|t| {
+        let created = meta.created().ok().map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
-            Some(dt.to_rfc3339())
+            dt.to_rfc3339()
         });
 
         Ok(json!({
@@ -742,11 +742,11 @@ impl Tool for FsFindTool {
                     } else if p.is_file() {
                         let matches_name = name_f
                             .as_ref()
-                            .map_or(true, |n| file_name.to_lowercase().contains(n));
-                        let matches_ext = ext_f.as_ref().map_or(true, |e| {
+                            .is_none_or(|n| file_name.to_lowercase().contains(n));
+                        let matches_ext = ext_f.as_ref().is_none_or(|e| {
                             p.extension()
                                 .and_then(|ext| ext.to_str())
-                                .map_or(false, |ext| ext.eq_ignore_ascii_case(e))
+                                .is_some_and(|ext| ext.eq_ignore_ascii_case(e))
                         });
 
                         if matches_name && matches_ext {

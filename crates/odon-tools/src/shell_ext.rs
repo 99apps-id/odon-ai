@@ -862,58 +862,6 @@ impl Tool for CronRemoveTool {
     }
 }
 
-#[cfg(test)]
-mod background_tests {
-    use super::*;
-    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
-
-    fn test_context() -> ToolContext {
-        ToolContext {
-            session_id: "bg-test".to_string(),
-            workspace_root: std::env::current_dir()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
-            audit_logger: Arc::new(AuditLogger::new()),
-            storage: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn background_task_streams_output_and_finishes() {
-        let ctx = test_context();
-        let spawn = ExecBackgroundTool
-            .execute(&ctx, json!({ "command": "echo bg-test" }))
-            .await
-            .expect("spawn");
-        let task_id = spawn["task_id"].as_str().expect("task id").to_string();
-
-        let listed = ExecBackgroundListTool
-            .execute(&ctx, json!({}))
-            .await
-            .expect("list");
-        assert!(listed["count"].as_u64().unwrap_or(0) >= 1);
-
-        for _ in 0..40 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let poll = ExecStreamStdoutTool
-                .execute(&ctx, json!({ "task_id": task_id }))
-                .await
-                .expect("poll");
-            if poll["running"] == false {
-                assert!(
-                    poll["stdout"].as_str().unwrap_or("").contains("bg-test"),
-                    "stdout was {:?}",
-                    poll["stdout"]
-                );
-                return;
-            }
-        }
-        panic!("background task did not finish");
-    }
-}
-
 pub struct FileHashTool;
 #[async_trait]
 impl Tool for FileHashTool {
@@ -1388,5 +1336,58 @@ impl Tool for ProcessWaitTool {
             "stderr": stderr,
             "elapsed_seconds": start.elapsed().as_secs()
         }))
+    }
+}
+
+
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+
+    fn test_context() -> ToolContext {
+        ToolContext {
+            session_id: "bg-test".to_string(),
+            workspace_root: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn background_task_streams_output_and_finishes() {
+        let ctx = test_context();
+        let spawn = ExecBackgroundTool
+            .execute(&ctx, json!({ "command": "echo bg-test" }))
+            .await
+            .expect("spawn");
+        let task_id = spawn["task_id"].as_str().expect("task id").to_string();
+
+        let listed = ExecBackgroundListTool
+            .execute(&ctx, json!({}))
+            .await
+            .expect("list");
+        assert!(listed["count"].as_u64().unwrap_or(0) >= 1);
+
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let poll = ExecStreamStdoutTool
+                .execute(&ctx, json!({ "task_id": task_id }))
+                .await
+                .expect("poll");
+            if poll["running"] == false {
+                assert!(
+                    poll["stdout"].as_str().unwrap_or("").contains("bg-test"),
+                    "stdout was {:?}",
+                    poll["stdout"]
+                );
+                return;
+            }
+        }
+        panic!("background task did not finish");
     }
 }

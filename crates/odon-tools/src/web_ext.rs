@@ -53,54 +53,6 @@ fn safe_workspace_path(root: &str, relative: &str) -> Result<PathBuf> {
     Ok(joined)
 }
 
-#[cfg(test)]
-mod path_tests {
-    use super::safe_workspace_path;
-    use std::fs;
-    use std::path::PathBuf;
-
-    fn test_dir(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "odon-web-ext-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    #[test]
-    fn workspace_path_allows_children_and_rejects_parent_traversal() {
-        let root = test_dir("inside");
-        fs::create_dir_all(root.join("nested")).unwrap();
-        assert!(safe_workspace_path(root.to_str().unwrap(), "nested/file.txt").is_ok());
-        assert!(safe_workspace_path(root.to_str().unwrap(), "../outside.txt").is_err());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn workspace_path_rejects_link_to_outside() {
-        let root = test_dir("root");
-        let outside = test_dir("outside");
-        let link = root.join("escape");
-
-        #[cfg(unix)]
-        let linked = std::os::unix::fs::symlink(&outside, &link).is_ok();
-        #[cfg(windows)]
-        let linked = std::os::windows::fs::symlink_dir(&outside, &link).is_ok();
-
-        if linked {
-            assert!(safe_workspace_path(root.to_str().unwrap(), "escape/secret.txt").is_err());
-            fs::remove_dir_all(&link).ok();
-        }
-        fs::remove_dir_all(root).ok();
-        fs::remove_dir_all(outside).ok();
-    }
-}
-
 pub struct HttpPutTool;
 #[async_trait]
 impl Tool for HttpPutTool {
@@ -892,5 +844,54 @@ impl Tool for UrlPreviewTool {
             "status": fetched.get("status").cloned().unwrap_or(json!(null)),
             "content": fetched.get("content").cloned().unwrap_or(json!(""))
         }))
+    }
+}
+
+
+#[cfg(test)]
+mod path_tests {
+    use super::safe_workspace_path;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn test_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "odon-web-ext-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn workspace_path_allows_children_and_rejects_parent_traversal() {
+        let root = test_dir("inside");
+        fs::create_dir_all(root.join("nested")).unwrap();
+        assert!(safe_workspace_path(root.to_str().unwrap(), "nested/file.txt").is_ok());
+        assert!(safe_workspace_path(root.to_str().unwrap(), "../outside.txt").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_path_rejects_link_to_outside() {
+        let root = test_dir("root");
+        let outside = test_dir("outside");
+        let link = root.join("escape");
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside, &link).is_ok();
+
+        if linked {
+            assert!(safe_workspace_path(root.to_str().unwrap(), "escape/secret.txt").is_err());
+            fs::remove_dir_all(&link).ok();
+        }
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(outside).ok();
     }
 }

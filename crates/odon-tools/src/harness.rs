@@ -389,8 +389,10 @@ mod tests {
         let storage = Arc::new(odon_storage::StorageEngine::new_in_memory().unwrap());
         let dir = std::env::temp_dir().join(format!("odon-plan-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut policy = SecurityPolicy::default();
-        policy.mode = odon_security::ExecutionMode::Autonomous;
+        let policy = SecurityPolicy {
+            mode: odon_security::ExecutionMode::Autonomous,
+            ..Default::default()
+        };
         let ctx = crate::registry::ToolContext {
             session_id: "s1".to_string(),
             workspace_root: dir.to_string_lossy().to_string(),

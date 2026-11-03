@@ -233,10 +233,10 @@ impl Tool for AuditSearchTool {
         let selected: Vec<Value> = events
             .iter()
             .filter(|event| {
-                tool_filter.map_or(true, |filter| event.tool_name == filter)
-                    && success.map_or(true, |filter| event.success == filter)
-                    && approved.map_or(true, |filter| event.approved == filter)
-                    && query.as_ref().map_or(true, |filter| {
+                tool_filter.is_none_or(|filter| event.tool_name == filter)
+                    && success.is_none_or(|filter| event.success == filter)
+                    && approved.is_none_or(|filter| event.approved == filter)
+                    && query.as_ref().is_none_or(|filter| {
                         event.description.to_lowercase().contains(filter)
                     })
             })
@@ -312,9 +312,9 @@ impl Tool for ApprovalHistoryTool {
         let mut filtered: Vec<Value> = records
             .iter()
             .filter(|record| {
-                tool_filter.map_or(true, |filter| record.tool_name == filter)
-                    && session_filter.map_or(true, |filter| record.session_id == filter)
-                    && decision_filter.map_or(true, |filter| record.decision == filter)
+                tool_filter.is_none_or(|filter| record.tool_name == filter)
+                    && session_filter.is_none_or(|filter| record.session_id == filter)
+                    && decision_filter.is_none_or(|filter| record.decision == filter)
             })
             .take(limit)
             .map(|record| {
@@ -847,7 +847,7 @@ impl Tool for AutomationLogsTool {
             .unwrap_or_default()
             .into_iter()
             .filter(|log| {
-                automation_id.map_or(true, |filter| {
+                automation_id.is_none_or(|filter| {
                     log.get("automation_id").and_then(Value::as_str) == Some(filter)
                 })
             })
