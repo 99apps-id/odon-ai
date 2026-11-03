@@ -37,7 +37,7 @@ impl Tool for ShellExecTool {
             "properties": {
                 "command": { "type": "string", "description": "Command string to run" },
                 "cwd": { "type": "string", "description": "Workspace-relative working directory (default: workspace root)" },
-                "shell": { "type": "string", "enum": ["auto", "powershell", "cmd", "sh"], "description": "Shell to use on Windows; auto uses PowerShell" },
+                "shell": { "type": "string", "enum": ["auto", "powershell", "cmd", "sh"], "description": "Shell to use: auto picks the platform default (PowerShell on Windows, sh on Linux/macOS); powershell and cmd only exist on Windows" },
                 "timeout_secs": { "type": "integer", "description": "Execution timeout in seconds (default: 120, max: 900)" }
             },
             "required": ["command"]

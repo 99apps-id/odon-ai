@@ -24,15 +24,45 @@ interface TerminalViewProps {
   onSendToAgent?: (text: string) => void;
 }
 
+/**
+ * Shells offered for new tabs, per host platform. The daemon spawns the
+ * tab's shell name as a program, so offering Windows shells on Linux or
+ * macOS makes every tab fail to start; the default tab is the first
+ * entry, which is the platform's normal shell.
+ */
+const IS_WINDOWS =
+  typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+
+interface ShellOption {
+  id: string;
+  name: string;
+  hint: string;
+}
+
+const SHELL_OPTIONS: ShellOption[] = IS_WINDOWS
+  ? [
+      { id: 'powershell', name: 'PowerShell', hint: 'Default' },
+      { id: 'cmd', name: 'Command Prompt', hint: 'CMD' },
+      { id: 'wsl', name: 'WSL / Linux', hint: 'Bash' },
+      { id: 'bash', name: 'Git Bash', hint: 'sh' },
+    ]
+  : [
+      { id: 'bash', name: 'Bash', hint: 'Default' },
+      { id: 'zsh', name: 'Zsh', hint: 'zsh' },
+      { id: 'sh', name: 'POSIX sh', hint: 'sh' },
+    ];
+
 export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAgent }) => {
   const [tabs, setTabs] = useState<TerminalTab[]>([
     {
-      id: 'tab-ps-1',
-      title: 'PowerShell #1',
-      shell: 'powershell',
+      id: `tab-${SHELL_OPTIONS[0].id}-1`,
+      title: `${SHELL_OPTIONS[0].name} #1`,
+      shell: SHELL_OPTIONS[0].id,
     },
   ]);
-  const [activeTabId, setActiveTabId] = useState<string>('tab-ps-1');
+  const [activeTabId, setActiveTabId] = useState<string>(
+    `tab-${SHELL_OPTIONS[0].id}-1`,
+  );
   const [isAddMenuOpen, setIsAddMenuOpen] = useState<boolean>(false);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
@@ -109,34 +139,16 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAge
 
             {isAddMenuOpen && (
               <div className="absolute left-0 top-full mt-1 w-44 bg-[#1f242c] border border-neutral-700 rounded-xl shadow-xl p-1 z-30 text-xs font-mono text-neutral-200 space-y-0.5">
-                <button
-                  onClick={() => handleAddTab('powershell', 'PowerShell')}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
-                >
-                  <span>PowerShell</span>
-                  <span className="text-[10px] text-neutral-400 font-sans">Default</span>
-                </button>
-                <button
-                  onClick={() => handleAddTab('cmd', 'Command Prompt')}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
-                >
-                  <span>Command Prompt</span>
-                  <span className="text-[10px] text-neutral-400 font-sans">CMD</span>
-                </button>
-                <button
-                  onClick={() => handleAddTab('wsl', 'WSL / Linux')}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
-                >
-                  <span>WSL / Linux</span>
-                  <span className="text-[10px] text-neutral-400 font-sans">Bash</span>
-                </button>
-                <button
-                  onClick={() => handleAddTab('bash', 'Git Bash')}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
-                >
-                  <span>Git Bash</span>
-                  <span className="text-[10px] text-neutral-400 font-sans">sh</span>
-                </button>
+                {SHELL_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => handleAddTab(option.id, option.name)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                  >
+                    <span>{option.name}</span>
+                    <span className="text-[10px] text-neutral-400 font-sans">{option.hint}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -145,7 +157,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAge
         {/* Right Info Controls */}
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-mono text-neutral-400 bg-neutral-800/80 px-2 py-0.5 rounded-md hidden sm:inline">
-            Native ConPTY Engine
+            {IS_WINDOWS ? 'Native ConPTY Engine' : 'Native PTY Engine'}
           </span>
 
           {onClose && (
