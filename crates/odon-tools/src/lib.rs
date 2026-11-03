@@ -1,5 +1,6 @@
 pub mod artifact_gen;
 pub mod browser_session;
+pub mod browser_bridge;
 pub mod coding;
 pub mod daemon_ops;
 pub mod dev_server;

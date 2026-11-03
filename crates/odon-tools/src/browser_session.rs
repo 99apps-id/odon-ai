@@ -19,32 +19,32 @@ use tokio::{
 // ── Data ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Meta {
-    session_id: String,
-    profile_dir: String,
-    port: u16,
-    pid: u32,
-    url: String,
-    created_at: String,
-    last_used_at: String,
+pub(crate) struct Meta {
+    pub(crate) session_id: String,
+    pub(crate) profile_dir: String,
+    pub(crate) port: u16,
+    pub(crate) pid: u32,
+    pub(crate) url: String,
+    pub(crate) created_at: String,
+    pub(crate) last_used_at: String,
 }
 
-struct Live {
-    meta: Meta,
-    child: Child,
+pub(crate) struct Live {
+    pub(crate) meta: Meta,
+    pub(crate) child: Child,
 }
 
 // Live (running) sessions keyed by session_id.
 type LiveStore = Arc<Mutex<HashMap<String, Arc<Mutex<Live>>>>>;
 static LIVE: std::sync::OnceLock<LiveStore> = std::sync::OnceLock::new();
-fn live() -> &'static LiveStore {
+pub(crate) fn live() -> &'static LiveStore {
     LIVE.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
 }
 
 // Persisted (metadata-only, no running process) sessions keyed by session_id.
 type PersistedStore = Arc<Mutex<HashMap<String, Meta>>>;
 static PERSISTED: std::sync::OnceLock<PersistedStore> = std::sync::OnceLock::new();
-fn persisted() -> &'static PersistedStore {
+pub(crate) fn persisted() -> &'static PersistedStore {
     PERSISTED.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
 }
 
@@ -53,12 +53,12 @@ fn persisted() -> &'static PersistedStore {
 const METADATA_FILE: &str = "session.json";
 
 /// The root directory that holds all browser-session subdirectories.
-fn sessions_dir(workspace_root: &str) -> PathBuf {
+pub(crate) fn sessions_dir(workspace_root: &str) -> PathBuf {
     Path::new(workspace_root).join(".odon/browser-sessions")
 }
 
 /// Directory for a single session: `<sessions_dir>/<session_id>`.
-fn session_dir(workspace_root: &str, session_id: &str) -> PathBuf {
+pub(crate) fn session_dir(workspace_root: &str, session_id: &str) -> PathBuf {
     sessions_dir(workspace_root).join(session_id)
 }
 
@@ -68,7 +68,7 @@ fn session_dir(workspace_root: &str, session_id: &str) -> PathBuf {
 /// in-memory persisted store.  Called once from `store_init()` so that
 /// `browser_session_resume` and `browser_session_list` can discover sessions
 /// from a previous process lifetime.
-async fn load_persisted_sessions(workspace_root: &str) {
+pub(crate) async fn load_persisted_sessions(workspace_root: &str) {
     let dir = sessions_dir(workspace_root);
     let mut entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
@@ -88,7 +88,7 @@ async fn load_persisted_sessions(workspace_root: &str) {
 }
 
 /// Persist a `Meta` record to `<session_dir>/session.json`.
-fn save_meta(workspace_root: &str, meta: &Meta) -> Result<()> {
+pub(crate) fn save_meta(workspace_root: &str, meta: &Meta) -> Result<()> {
     let dir = session_dir(workspace_root, &meta.session_id);
     std::fs::create_dir_all(&dir).map_err(|e| err(e.to_string()))?;
     std::fs::write(
@@ -100,7 +100,7 @@ fn save_meta(workspace_root: &str, meta: &Meta) -> Result<()> {
 
 /// Return the persisted `Meta` for `session_id` if present on disk, without
 /// touching the in-memory stores.
-fn find_persisted_meta(workspace_root: &str, session_id: &str) -> Result<Meta> {
+pub(crate) fn find_persisted_meta(workspace_root: &str, session_id: &str) -> Result<Meta> {
     let path = session_dir(workspace_root, session_id).join(METADATA_FILE);
     let bytes = std::fs::read(&path).map_err(|_| err("session metadata not found"))?;
     serde_json::from_slice(&bytes).map_err(|e| err(e.to_string()))
@@ -108,18 +108,18 @@ fn find_persisted_meta(workspace_root: &str, session_id: &str) -> Result<Meta> {
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 
-fn err(msg: impl Into<String>) -> OdonError {
+pub(crate) fn err(msg: impl Into<String>) -> OdonError {
     OdonError::Tool {
         tool: "browser_session".into(),
         message: msg.into(),
     }
 }
 
-fn sid() -> String {
+pub(crate) fn sid() -> String {
     format!("session_{}", chrono::Utc::now().timestamp_millis())
 }
 
-fn validate_session_id(id: &str) -> Result<&str> {
+pub(crate) fn validate_session_id(id: &str) -> Result<&str> {
     if id.is_empty()
         || id.len() > 96
         || !id
@@ -133,7 +133,7 @@ fn validate_session_id(id: &str) -> Result<&str> {
     Ok(id)
 }
 
-fn browser() -> Result<PathBuf> {
+pub(crate) fn browser() -> Result<PathBuf> {
     let mut p = Vec::new();
     if cfg!(windows) {
         for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)"] {
@@ -158,14 +158,14 @@ fn browser() -> Result<PathBuf> {
         .ok_or_else(|| err("Chrome/Chromium/Edge executable not found"))
 }
 
-async fn port() -> Result<u16> {
+pub(crate) async fn port() -> Result<u16> {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| err(e.to_string()))?;
     Ok(l.local_addr().map_err(|e| err(e.to_string()))?.port())
 }
 
-async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> {
+pub(crate) async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> {
     let live = live()
         .lock()
         .await
@@ -206,11 +206,11 @@ async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> {
     }
 }
 
-fn schema(props: Value, req: Value) -> Value {
+pub(crate) fn schema(props: Value, req: Value) -> Value {
     json!({ "type": "object", "properties": props, "required": req })
 }
 
-async fn evaluate_js(id: &str, expression: &str) -> Result<Value> {
+pub(crate) async fn evaluate_js(id: &str, expression: &str) -> Result<Value> {
     let response = cdp(
         id,
         "Runtime.evaluate",
@@ -285,46 +285,55 @@ impl Tool for BrowserSessionCreateTool {
         }
     }
     async fn execute(&self, ctx: &ToolContext, a: Value) -> Result<Value> {
-        let id = sid();
-        let root = session_dir(&ctx.workspace_root, &id);
-        std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
-        let p = port().await?;
         let url = a
             .get("url")
             .and_then(Value::as_str)
             .unwrap_or("about:blank");
-        let mut c = Command::new(browser()?);
-        c.args([
-            "--headless=new",
-            "--disable-gpu",
-            "--no-first-run",
-            "--no-default-browser-check",
-            &format!("--remote-debugging-port={p}"),
-            &format!("--user-data-dir={}", root.display()),
-            url,
-        ]);
-        let child = c.spawn().map_err(|e| err(e.to_string()))?;
-        let now = chrono::Utc::now().to_rfc3339();
-        let m = Meta {
-            session_id: id.clone(),
-            profile_dir: root.display().to_string(),
-            port: p,
-            pid: child.id().unwrap_or(0),
-            url: url.into(),
-            created_at: now.clone(),
-            last_used_at: now,
-        };
-        // Persist metadata so the session survives a process restart.
-        save_meta(&ctx.workspace_root, &m)?;
-        live().lock().await.insert(
-            id.clone(),
-            Arc::new(Mutex::new(Live {
-                meta: m.clone(),
-                child,
-            })),
-        );
+        let m = create_session(&ctx.workspace_root, url).await?;
         Ok(json!(m))
     }
+}
+
+/// Spawn a Chromium session and register it in the shared live store.
+///
+/// Shared by the `browser_session_create` tool and the daemon bridge so the
+/// panel and the agent drive the exact same browser.
+pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Meta> {
+    let id = sid();
+    let root = session_dir(workspace_root, &id);
+    std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
+    let p = port().await?;
+    let mut c = Command::new(browser()?);
+    c.args([
+        "--headless=new",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        &format!("--remote-debugging-port={p}"),
+        &format!("--user-data-dir={}", root.display()),
+        url,
+    ]);
+    let child = c.spawn().map_err(|e| err(e.to_string()))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let m = Meta {
+        session_id: id.clone(),
+        profile_dir: root.display().to_string(),
+        port: p,
+        pid: child.id().unwrap_or(0),
+        url: url.into(),
+        created_at: now.clone(),
+        last_used_at: now,
+    };
+    // Persist metadata so the session survives a process restart.
+    save_meta(workspace_root, &m)?;
+    live().lock().await.insert(
+        id.clone(),
+        Arc::new(Mutex::new(Live {
+            meta: m.clone(),
+            child,
+        })),
+    );
+    Ok(m)
 }
 
 pub struct BrowserSessionListTool;

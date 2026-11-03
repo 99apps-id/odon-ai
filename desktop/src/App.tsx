@@ -59,6 +59,7 @@ import { SshTerminalView } from './components/SshTerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { MarkdownView } from './components/MarkdownView';
 import { DiffView } from './components/DiffView';
+import { TerminalPeek, commandOf, isTerminalTool, outputToText, type TerminalEntry } from './components/TerminalPeek';
 import { ApprovalCard } from './components/ApprovalCard';
 import { ApprovalCenterModal } from './components/ApprovalCenterModal';
 import { GitHubView } from './components/GitHubView';
@@ -77,6 +78,7 @@ interface ChatMessage {
   showAppCard?: boolean;
   thought?: string;
   toolCalls?: string[];
+  terminal?: TerminalEntry[];
   attachments?: MessageAttachment[];
 }
 
@@ -85,6 +87,22 @@ function formatSessionTimestamp(value: string): string {
   return Number.isNaN(date.getTime())
     ? ''
     : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Terminal commands an assistant turn actually ran, taken from the persisted
+// tool calls so the chat can show a peek of the real output (never a mock).
+function terminalEntriesOf(messages: Message[]): TerminalEntry[] {
+  const entries: TerminalEntry[] = [];
+  for (const message of messages) {
+    for (const call of message.content.tool_calls || []) {
+      if (!isTerminalTool(call.tool_name)) continue;
+      const cmd = commandOf(call.arguments);
+      const output = outputToText(call.output);
+      if (!cmd && !output) continue;
+      entries.push({ cmd, output, isError: Boolean(call.is_error) });
+    }
+  }
+  return entries.slice(-6);
 }
 
 // Persisted agent history contains intermediate assistant/tool records required
@@ -132,6 +150,7 @@ function normalizeSessionHistory(history: Message[]): ChatMessage[] {
           toolCalls.length > 0,
         thought: finalAssistant.content.thought,
         toolCalls,
+        terminal: terminalEntriesOf(currentAssistants),
         attachments: finalAssistant.content.attachments || [],
       });
     }
@@ -564,6 +583,8 @@ export default function App() {
   const [streamingTool, setStreamingTool] = useState<string | null>(null);
   const [chatDiffs, setChatDiffs] = useState<{ id: string; title: string; diff: string }[]>([]);
   const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null);
+  const [liveTerminal, setLiveTerminal] = useState<TerminalEntry[]>([]);
+  const pendingTerminalRef = useRef<Map<string, TerminalEntry>>(new Map());
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [steerCards, setSteerCards] = useState<SteerCard[]>([]);
   const steerCardsRef = useRef<SteerCard[]>([]);
@@ -693,6 +714,14 @@ export default function App() {
         setStreamingTool(toolName);
         if (['terminal_exec', 'bash_run', 'shell_exec', 'exec_background', 'exec_stream_stdout'].includes(toolName)) {
           window.dispatchEvent(new CustomEvent('odon:agent-terminal-event', { detail: event.payload }));
+          if (isTerminalTool(toolName)) {
+            pendingTerminalRef.current.set(event.payload.call_id, {
+              cmd: commandOf(event.payload.arguments),
+              output: '',
+              isError: false,
+            });
+            setLiveTerminal(Array.from(pendingTerminalRef.current.values()).slice(-4));
+          }
         } else if (['browser_open', 'url_preview', 'probe_url', 'web_fetch'].includes(toolName)) {
           const u = event.payload.arguments?.url;
           if (u) {
@@ -701,6 +730,12 @@ export default function App() {
         }
       } else if (event.type === 'tool_call_finished') {
         setStreamingTool(null);
+        const pending = pendingTerminalRef.current.get(event.payload.call_id);
+        if (pending) {
+          pending.output = outputToText(event.payload.output);
+          pending.isError = Boolean(event.payload.is_error);
+          setLiveTerminal(Array.from(pendingTerminalRef.current.values()).slice(-4));
+        }
       } else if (event.type === 'artifact_created') {
         setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
         const art = event.payload.artifact;
@@ -1085,6 +1120,8 @@ export default function App() {
     setStreamingText('');
     setStreamingThought('');
     setStreamingTool(null);
+    pendingTerminalRef.current.clear();
+    setLiveTerminal([]);
 
     let sid = currentSessionId;
 
@@ -1136,6 +1173,7 @@ export default function App() {
           showAppCard: resMsg.content.artifact_ids?.length > 0 || resMsg.content.text.includes('```'),
           thought: resMsg.content.thought,
           toolCalls: resMsg.content.tool_calls?.map((t) => t.tool_name),
+          terminal: terminalEntriesOf([resMsg]),
         };
 
         setMessages((prev) => [...prev, assistantMsg]);
@@ -1343,6 +1381,12 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       content: f.content,
     }))
     : undefined;
+
+  const selectedPatchDiff = (() => {
+    const art = selectedPatchId ? artifacts.find((a) => a.id === selectedPatchId) : undefined;
+    const payload = art?.payload;
+    return payload && payload.type === 'patch' ? payload.data.diff : undefined;
+  })();
 
   // Session list to render
   const recentItems = (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
@@ -1783,6 +1827,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
               <CodeEditorView
                 files={codeFiles}
+                diff={selectedPatchDiff}
                 onRunPreview={() => {
                   setRightPanelView('browser');
                   setIsRightPanelOpen(true);
@@ -1875,6 +1920,18 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                             <MarkdownView content={msg.thought} dense />
                           </div>
                         </details>
+                      </div>
+                    )}
+
+                    {msg.terminal && msg.terminal.length > 0 && (
+                      <div className="ml-7">
+                        <TerminalPeek
+                          entries={msg.terminal}
+                          onOpenTerminal={() => {
+                            setRightPanelView('terminal');
+                            setIsRightPanelOpen(true);
+                          }}
+                        />
                       </div>
                     )}
 
@@ -2121,6 +2178,18 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       <div className="ml-7 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60 text-[11px] font-medium animate-pulse">
                         <Terminal className="w-3 h-3" />
                         <span>Running tool: {streamingTool}...</span>
+                      </div>
+                    )}
+
+                    {liveTerminal.length > 0 && (
+                      <div className="ml-7">
+                        <TerminalPeek
+                          entries={liveTerminal}
+                          onOpenTerminal={() => {
+                            setRightPanelView('terminal');
+                            setIsRightPanelOpen(true);
+                          }}
+                        />
                       </div>
                     )}
 
@@ -2476,6 +2545,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <div className="flex-1 overflow-hidden">
                     <CodeEditorView
                       files={codeFiles}
+                      diff={selectedPatchDiff}
                       onRunPreview={() => setRightPanelView('browser')}
                       onOpenTerminal={() => setRightPanelView('terminal')}
                     />
