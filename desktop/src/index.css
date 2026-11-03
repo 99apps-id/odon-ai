@@ -84,6 +84,63 @@
   --color-amber-600: #b45309;
 }
 
+/* Approval card options: a slow, low-contrast light sweep so the choices read
+ * as live affordances without competing with the tool description above them.
+ * The sweep is a plain gradient overlay - no box-shadow animation, which would
+ * repaint on every frame - and it stops entirely under reduced motion. */
+@keyframes approval-sheen {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+.approval-option {
+  position: relative;
+  overflow: hidden;
+}
+
+.approval-option::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(
+    100deg,
+    transparent 34%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 66%
+  );
+  transform: translateX(-120%);
+  animation: approval-sheen 3.8s ease-in-out infinite;
+}
+
+/* Stagger so the stack sweeps in sequence rather than flashing as one block. */
+.approval-option:nth-child(2)::after {
+  animation-delay: 0.5s;
+}
+.approval-option:nth-child(3)::after {
+  animation-delay: 1s;
+}
+.approval-option:nth-child(4)::after {
+  animation-delay: 1.5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .approval-option::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 @layer base {
   body {
     margin: 0;

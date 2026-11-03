@@ -30,8 +30,16 @@ export interface ApprovalCardProps {
   ) => void | Promise<void>;
 }
 
-const optionRowClass =
-  'group flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/60 px-3 py-2 text-left text-xs text-neutral-800 dark:text-neutral-200 transition-colors hover:border-blue-400 hover:bg-blue-50/60 dark:hover:border-blue-500 dark:hover:bg-blue-950/30 cursor-pointer';
+/* Every option shares one geometry so the stack lines up: same width, padding,
+ * radius and centred row. Only colour and elevation differ per intent. */
+const optionBase =
+  'approval-option group flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-xs transition-[background-color,border-color,box-shadow,transform] duration-150 active:translate-y-px cursor-pointer';
+
+const optionRowClass = `${optionBase} border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/60 text-neutral-800 dark:text-neutral-200 shadow-[0_1px_2px_rgba(34,31,28,0.05),0_3px_10px_-4px_rgba(34,31,28,0.10)] hover:border-blue-300 dark:hover:border-blue-500 hover:bg-blue-50/60 dark:hover:bg-blue-950/30 hover:shadow-[0_2px_4px_rgba(34,31,28,0.06),0_6px_16px_-6px_rgba(63,91,112,0.30)]`;
+
+const primaryRowClass = `${optionBase} border border-blue-600 bg-blue-600 font-medium text-white shadow-[0_1px_2px_rgba(34,31,28,0.12),0_4px_12px_-4px_rgba(63,91,112,0.45)] hover:bg-blue-500 hover:shadow-[0_2px_6px_rgba(34,31,28,0.14),0_8px_20px_-6px_rgba(63,91,112,0.55)]`;
+
+const denyRowClass = `${optionBase} border border-clay-200 dark:border-clay-800/60 bg-clay-50 dark:bg-clay-950/30 font-medium text-clay-700 dark:text-clay-300 shadow-[0_1px_2px_rgba(34,31,28,0.05),0_3px_10px_-4px_rgba(93,61,48,0.16)] hover:border-clay-300 dark:hover:border-clay-700 hover:bg-clay-100 dark:hover:bg-clay-900/40 hover:shadow-[0_2px_4px_rgba(34,31,28,0.06),0_6px_16px_-6px_rgba(93,61,48,0.30)]`;
 
 const kbdClass =
   'inline-flex h-5 min-w-5 items-center justify-center rounded border border-neutral-300 dark:border-neutral-600 bg-neutral-100 dark:bg-neutral-900 px-1 font-mono text-[10px] text-neutral-500 dark:text-neutral-400';
@@ -208,7 +216,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
         <button
           type="button"
           onClick={() => onDecide('approve_once')}
-          className="flex w-full items-center justify-between gap-3 rounded-lg bg-blue-600 px-3 py-2 text-left text-xs font-medium text-white transition-colors hover:bg-blue-500 cursor-pointer"
+          className={primaryRowClass}
         >
           <span className="inline-flex items-center gap-2">
             <Check className="w-3.5 h-3.5" />
@@ -264,7 +272,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               setShowDenyFeedback(true);
               requestAnimationFrame(() => feedbackRef.current?.focus());
             }}
-            className="flex w-full items-center justify-between gap-3 rounded-lg border border-clay-200 dark:border-clay-800/60 bg-clay-50 dark:bg-clay-950/30 px-3 py-2 text-left text-xs font-medium text-clay-700 dark:text-clay-300 transition-colors hover:bg-clay-100 dark:hover:bg-clay-900/40 cursor-pointer"
+            className={denyRowClass}
           >
             <span className="inline-flex items-center gap-2">
               <XCircle className="w-3.5 h-3.5" />

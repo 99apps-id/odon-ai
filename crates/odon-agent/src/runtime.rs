@@ -2027,7 +2027,11 @@ mod tests {
         assert_eq!(normalize_step_cap(DEFAULT_MAX_TURN_ITERATIONS), 500);
         // A subagent may outlive a metered parent turn, but never the
         // subscription ceiling, and it always stays inside the clamp.
-        assert!(SUBAGENT_MAX_ITERATIONS > DEFAULT_MAX_TURN_ITERATIONS);
+        // Both bounds are constants, so assert at compile time: a regression
+        // now fails the build instead of only the test run.
+        const {
+            assert!(SUBAGENT_MAX_ITERATIONS > DEFAULT_MAX_TURN_ITERATIONS);
+        }
         assert_eq!(
             normalize_step_cap(SUBAGENT_MAX_ITERATIONS),
             SUBAGENT_MAX_ITERATIONS
