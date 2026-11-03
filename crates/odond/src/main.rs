@@ -938,7 +938,7 @@ fn build_oauth_provider(
     catalog_id: &str,
     token: &odon_provider::OAuthToken,
 ) -> Option<Arc<dyn odon_provider::ModelProvider>> {
-    use odon_provider::{MuseProvider, OpenAiCodexProvider};
+    use odon_provider::{AnthropicProvider, MuseProvider, OpenAiCodexProvider};
     match catalog_id {
         "chatgpt" => Some(Arc::new(OpenAiCodexProvider::new(
             token.access_token.clone(),
@@ -949,6 +949,34 @@ fn build_oauth_provider(
             token.access_token.clone(),
             None,
         ))),
+        "claude-oauth" => {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                "anthropic-beta",
+                reqwest::header::HeaderValue::from_static(
+                    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14",
+                ),
+            );
+            headers.insert(
+                "anthropic-dangerous-direct-browser-access",
+                reqwest::header::HeaderValue::from_static("true"),
+            );
+            headers.insert("x-app", reqwest::header::HeaderValue::from_static("cli"));
+            headers.insert(
+                reqwest::header::USER_AGENT,
+                reqwest::header::HeaderValue::from_static(
+                    "claude-cli/2.1.280 (external, sdk-cli)",
+                ),
+            );
+            Some(Arc::new(
+                AnthropicProvider::with_bearer_auth(
+                    token.access_token.clone(),
+                    "https://api.anthropic.com/v1",
+                )
+                .with_label("claude-oauth")
+                .with_extra_headers(headers),
+            ))
+        }
         "antigravity" => Some(Arc::new(odon_provider::AntigravityProvider::new(
             token.access_token.clone(),
             token.account_id.clone(),
@@ -4473,15 +4501,14 @@ async fn register_oauth_provider(
     catalog_id: &'static str,
     token: odon_provider::OAuthToken,
 ) {
-    // No runtime adapter for Anthropic's messages API yet: the account is
-    // recorded but is reported as not usable instead of silently falling back.
     let registered = build_oauth_provider(catalog_id, &token);
     let usable = registered.is_some();
     if let Some(p) = registered {
         state.runtime.register_provider(catalog_id, p, false).await;
-        // Persist the login so it survives a daemon restart.
-        save_oauth_token(catalog_id, &token);
     }
+    // Persist every successful login. A provider without a runtime adapter is
+    // still a valid account and must not disappear when odond restarts.
+    save_oauth_token(catalog_id, &token);
 
     let account = token.account();
     state.oauth_accounts.write().await.insert(
