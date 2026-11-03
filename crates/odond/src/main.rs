@@ -2431,6 +2431,7 @@ async fn main() -> anyhow::Result<()> {
 
             let mut app = Router::new()
                 .route("/api/status", get(get_status))
+                .route("/api/health", get(get_health))
                 .route("/api/metrics", get(get_metrics))
                 .route("/api/sessions", get(list_sessions).post(create_session))
                 .route(
@@ -2704,6 +2705,17 @@ async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
             "telegram": state.telegram_online.load(std::sync::atomic::Ordering::SeqCst),
             "whatsapp": state.whatsapp_online.load(std::sync::atomic::Ordering::SeqCst)
         }
+    }))
+}
+
+/// Unauthenticated by design (see `require_api_token`): lets a client discover
+/// whether this daemon demands a token before it has one to send. Reports only
+/// a boolean, never the token itself.
+async fn get_health(State(state): State<AppState>) -> impl IntoResponse {
+    Json(json!({
+        "status": "online",
+        "version": env!("CARGO_PKG_VERSION"),
+        "auth_required": state.api_token.is_some(),
     }))
 }
 

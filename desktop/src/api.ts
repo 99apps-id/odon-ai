@@ -149,6 +149,26 @@ export const api = {
     else localStorage.removeItem('odon_api_token');
   },
 
+  /**
+   * Asks the daemon, without sending any token, whether it requires one.
+   * Uses /api/health, which the daemon exempts from token auth on purpose, so
+   * the reply is readable even when the configured token is wrong or missing.
+   * `tokenRequired: null` means the daemon answered but did not report the flag.
+   */
+  async probeAuthMode(): Promise<{ reachable: boolean; tokenRequired: boolean | null }> {
+    try {
+      const res = await window.fetch(`${this.getBaseUrl()}/api/health`);
+      if (!res.ok) return { reachable: true, tokenRequired: null };
+      const data = await res.json().catch(() => null);
+      if (!data || typeof data.auth_required !== 'boolean') {
+        return { reachable: true, tokenRequired: null };
+      }
+      return { reachable: true, tokenRequired: data.auth_required };
+    } catch {
+      return { reachable: false, tokenRequired: null };
+    }
+  },
+
   isTrustedApiUrl(input: string | URL): boolean {
     if (typeof window === 'undefined') return false;
     try {

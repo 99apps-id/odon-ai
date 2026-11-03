@@ -34,6 +34,49 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, OAuthAccountInfo, OAuthLoginResponse, SshProfile, SkillItemInfo } from '../api';
+
+/** Presentation for the /api/health probe shown beside the API token field. */
+const AUTH_PROBE_PILLS = {
+  checking: {
+    label: 'Checking daemon',
+    dot: 'bg-neutral-400',
+    pill: 'text-neutral-600 bg-neutral-100 dark:bg-neutral-800 dark:text-neutral-400',
+  },
+  open: {
+    label: 'Token not required',
+    dot: 'bg-emerald-500',
+    pill: 'text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-400',
+  },
+  required: {
+    label: 'Token required',
+    dot: 'bg-amber-500',
+    pill: 'text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400',
+  },
+  unreachable: {
+    label: 'Daemon unreachable',
+    dot: 'bg-rose-500',
+    pill: 'text-rose-700 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-400',
+  },
+  unknown: {
+    label: 'Status unknown',
+    dot: 'bg-neutral-400',
+    pill: 'text-neutral-600 bg-neutral-100 dark:bg-neutral-800 dark:text-neutral-400',
+  },
+} as const;
+
+type AuthProbeKey = keyof typeof AUTH_PROBE_PILLS;
+
+const AUTH_PROBE_HINTS: Record<AuthProbeKey, (token: string) => string> = {
+  checking: () => 'Asking the daemon whether it requires a token…',
+  open: () => 'This daemon accepts unauthenticated loopback requests. Leave this empty.',
+  required: (token) =>
+    token
+      ? 'Make sure this matches ODON_API_TOKEN exactly, then press Save.'
+      : 'This daemon requires a token. Paste the same value it was started with: ODON_API_TOKEN=… odond serve',
+  unreachable: () => 'Cannot reach the daemon. Check the Daemon URL above and that odond is running.',
+  unknown: () =>
+    'Daemon did not report its auth mode (older build). Fill this only if the daemon was started with ODON_API_TOKEN.',
+};
 import { ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from '../types';
 import { ProviderLogo } from './ProviderLogo';
 import { RelaysPanel } from './RelaysPanel';
@@ -146,6 +189,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [activeProviderId]);
   const [daemonUrl, setDaemonUrl] = useState(api.getBaseUrl() || 'http://127.0.0.1:4096');
   const [apiToken, setApiToken] = useState<string>(() => api.getApiToken());
+  const [authProbe, setAuthProbe] = useState<{
+    reachable: boolean;
+    tokenRequired: boolean | null;
+  } | null>(null);
+
+  const authProbeKey: AuthProbeKey = !authProbe
+    ? 'checking'
+    : !authProbe.reachable
+      ? 'unreachable'
+      : authProbe.tokenRequired === true
+        ? 'required'
+        : authProbe.tokenRequired === false
+          ? 'open'
+          : 'unknown';
+  const authPill = AUTH_PROBE_PILLS[authProbeKey];
+  const authHint = AUTH_PROBE_HINTS[authProbeKey](apiToken.trim());
   const [daemonConnected, setDaemonConnected] = useState<boolean | null>(null);
 
   // OAuth Accounts State
@@ -365,6 +424,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     api.getStatus()
       .then(() => setDaemonConnected(true))
       .catch(() => setDaemonConnected(false));
+
+    api
+      .probeAuthMode()
+      .then(setAuthProbe)
+      .catch(() => setAuthProbe({ reachable: false, tokenRequired: null }));
 
     api.getModels().then((data) => {
       if (data?.providers?.length) {
@@ -2150,16 +2214,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <label className="flex items-center gap-1.5 font-semibold text-neutral-800 dark:text-neutral-200">
                 <Lock className="w-4 h-4 text-neutral-500" />
                 API Access Token
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className={`ml-auto inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-semibold ${authPill.pill}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${authPill.dot}`} aria-hidden="true" />
+                  {authPill.label}
+                </span>
               </label>
               <input
                 type="password"
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
                 placeholder="Required when the daemon is started with ODON_API_TOKEN"
+                aria-describedby="api-token-hint"
                 className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/80 text-neutral-900 dark:text-neutral-100 font-mono text-xs outline-none focus:border-blue-500"
               />
-              <p className="text-[11.5px] text-neutral-500">
-                Must match the daemon's <code>ODON_API_TOKEN</code>. Required for non-loopback binds.
+              <p id="api-token-hint" className="text-[11.5px] text-neutral-500">
+                {authHint}
               </p>
             </div>
 
@@ -2215,6 +2288,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               onClick={() => {
                 api.setBaseUrl(daemonUrl);
                 api.setApiToken(apiToken);
+                api
+                  .probeAuthMode()
+                  .then(setAuthProbe)
+                  .catch(() => setAuthProbe({ reachable: false, tokenRequired: null }));
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
