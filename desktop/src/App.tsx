@@ -23,7 +23,6 @@ import {
   Activity,
   ChevronRight,
   Video,
-  Minus,
   Square,
   X,
   Sparkles,
@@ -209,7 +208,7 @@ const REGISTERED_TOOLS = [
   { name: 'git_reset', category: 'Git', tier: 'Tier 2', desc: 'Reset HEAD to specified commit' },
 
   // Shell & Execution
-  { name: 'shell_exec', category: 'Execution', tier: 'Tier 2', desc: 'Run PowerShell / sh command' },
+  { name: 'shell_exec', category: 'Execution', tier: 'Tier 2', desc: 'Run a shell command' },
   { name: 'bash_run', category: 'Execution', tier: 'Tier 2', desc: 'Foreground command with timeout' },
   { name: 'terminal_exec', category: 'Execution', tier: 'Tier 2', desc: 'Direct terminal command run' },
 
@@ -1228,23 +1227,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
     }
   };
 
-  // Window control actions
-  const handleMinimize = () => {
-    setIsRightPanelOpen(false);
-  };
-
-  const handleMaximize = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => { });
-    } else {
-      document.exitFullscreen().catch(() => { });
-    }
-  };
-
-  const handleClose = () => {
-    handleNewChat();
-  };
-
   // Global shortcuts: Ctrl/Cmd+K search, Ctrl/Cmd+P command palette,
   // Ctrl/Cmd+N new chat, Escape closes lightweight overlays.
   useEffect(() => {
@@ -1378,33 +1360,12 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           </div>
         </div>
 
-        {/* Center: Draggable Spacer */}
+        {/* Center: Draggable Spacer. The right end of the header stays
+            empty on purpose: minimize, maximize and close belong to the
+            operating system's window frame (the Tauri decorations), and
+            drawing look-alike controls here made users guess which set
+            was real. */}
         <div className="flex-1 h-full mx-4" />
-
-        {/* Right: Window Controls */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleMinimize}
-            className="w-7 h-6 flex items-center justify-center rounded hover:bg-neutral-200/70 text-neutral-600 transition-colors cursor-pointer"
-            title="Collapse Panel"
-          >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={handleMaximize}
-            className="w-7 h-6 flex items-center justify-center rounded hover:bg-neutral-200/70 text-neutral-600 transition-colors cursor-pointer"
-            title="Toggle Fullscreen"
-          >
-            <Square className="w-3 h-3" />
-          </button>
-          <button
-            onClick={handleClose}
-            className="w-7 h-6 flex items-center justify-center rounded hover:bg-red-500 hover:text-white text-neutral-600 transition-colors cursor-pointer"
-            title="Reset to Home Screen"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
       </header>
 
       {/* ─────────────────────────────────────────────────────────────
@@ -2692,7 +2653,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                             <span className="text-[9px] px-1.5 py-0.2 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded font-normal">Active</span>
                           </div>
                           <div className="text-[10px] text-neutral-500 mt-0.5">
-                            PowerShell / sh • Sandbox CLI • 18 Tools
+                            Shell • Sandbox CLI • 18 Tools
                           </div>
                         </div>
                       </div>

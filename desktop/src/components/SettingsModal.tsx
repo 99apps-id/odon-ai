@@ -2114,7 +2114,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
               <p className="text-[12px] text-neutral-500">
-                The headless daemon (`odond serve`) provides SQLite state persistence, interactive PowerShell sessions, agent tool dispatch, and live SSE event distribution.
+                The headless daemon (`odond serve`) provides SQLite state persistence, interactive shell sessions, agent tool dispatch, and live SSE event distribution.
               </p>
             </div>
 
