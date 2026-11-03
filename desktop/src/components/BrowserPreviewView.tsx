@@ -20,6 +20,8 @@ import {
   Maximize2,
   FileText,
   Loader2,
+  Radio,
+  MousePointerClick,
 } from 'lucide-react';
 import { api } from '../api';
 import { MarkdownView } from './MarkdownView';
@@ -46,7 +48,7 @@ export function BrowserPreviewView({
   const [inputUrl, setInputUrl] = useState<string>(initialUrl);
   const [htmlContent, setHtmlContent] = useState<string | null>(initialHtml || null);
   const [markdownContent, setMarkdownContent] = useState<string>('');
-  const [mode, setMode] = useState<'iframe' | 'reader' | 'html' | 'markdown'>('iframe');
+  const [mode, setMode] = useState<'iframe' | 'reader' | 'html' | 'markdown' | 'live'>('iframe');
   const [viewportMode, setViewportMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [history, setHistory] = useState<string[]>([initialUrl]);
@@ -55,6 +57,14 @@ export function BrowserPreviewView({
   const [readerLoading, setReaderLoading] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [agentSent, setAgentSent] = useState<boolean>(false);
+  // Live bridge: the panel mirrors the same Chromium session the agent drives.
+  const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  const [livePng, setLivePng] = useState<string>('');
+  const [liveTitle, setLiveTitle] = useState<string>('');
+  const [liveUrl, setLiveUrl] = useState<string>('');
+  const [liveError, setLiveError] = useState<string>('');
+  const [liveBusy, setLiveBusy] = useState<boolean>(false);
+  const liveTimerRef = useRef<number | undefined>(undefined);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -169,6 +179,16 @@ export function BrowserPreviewView({
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (mode === 'live' && liveSessionId) {
+      const target = /^https?:/i.test(inputUrl) ? inputUrl : `https://${inputUrl}`;
+      setLiveBusy(true);
+      api
+        .browserNavigate(liveSessionId, target)
+        .then(() => refreshLive(liveSessionId))
+        .catch((err: any) => setLiveError(err?.message || 'Navigation failed'))
+        .finally(() => setLiveBusy(false));
+      return;
+    }
     navigateTo(inputUrl);
   };
 
@@ -189,6 +209,78 @@ export function BrowserPreviewView({
     navigator.clipboard.writeText(extractedText || url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const refreshLive = async (id: string) => {
+    try {
+      const png = await api.browserScreenshot(id);
+      if (png) setLivePng(png);
+      setLiveError('');
+      const state = await api.browserPageState(id);
+      if (state?.url) {
+        setLiveUrl(state.url);
+        setInputUrl(state.url);
+      }
+      setLiveTitle(state?.title || '');
+    } catch (e: any) {
+      setLiveError(e?.message || 'Live view unavailable');
+    }
+  };
+
+  const ensureLive = async () => {
+    setLiveBusy(true);
+    try {
+      const list = await api.browserSessions();
+      let id = liveSessionId || list.sessions?.[0]?.session_id || null;
+      if (!id) {
+        const target = /^https?:/i.test(url) ? url : 'about:blank';
+        const created = await api.browserOpenSession(target);
+        id = created.session_id;
+      }
+      setLiveSessionId(id);
+      await refreshLive(id);
+    } catch (e: any) {
+      setLiveError(e?.message || 'Cannot start a live browser session');
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (liveTimerRef.current !== undefined) {
+      window.clearInterval(liveTimerRef.current);
+      liveTimerRef.current = undefined;
+    }
+    if (mode !== 'live') return;
+    if (!liveSessionId) {
+      void ensureLive();
+      return;
+    }
+    void refreshLive(liveSessionId);
+    liveTimerRef.current = window.setInterval(() => {
+      void refreshLive(liveSessionId);
+    }, 900);
+    return () => {
+      if (liveTimerRef.current !== undefined) {
+        window.clearInterval(liveTimerRef.current);
+        liveTimerRef.current = undefined;
+      }
+    };
+  }, [mode, liveSessionId]);
+
+  const handleLiveClick = async (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!liveSessionId) return;
+    const img = e.currentTarget;
+    const rect = img.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const x = ((e.clientX - rect.left) / rect.width) * (img.naturalWidth || rect.width);
+    const y = ((e.clientY - rect.top) / rect.height) * (img.naturalHeight || rect.height);
+    try {
+      await api.browserAct(liveSessionId, { action: 'click', x, y });
+      await refreshLive(liveSessionId);
+    } catch (err: any) {
+      setLiveError(err?.message || 'Click failed');
+    }
   };
 
   return (
@@ -267,6 +359,16 @@ export function BrowserPreviewView({
                   <Eye className="w-3 h-3" />
                 )}
                 <span className="hidden sm:inline">Reader</span>
+              </span>
+            </button>
+            <button
+              onClick={() => setMode('live')}
+              className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${mode === 'live' ? 'bg-white text-blue-600 font-semibold shadow-2xs' : 'hover:text-neutral-900'}`}
+              title="Live CDP session shared with the agent"
+            >
+              <span className="flex items-center gap-1">
+                <Radio className={`w-3 h-3 ${mode === 'live' ? 'animate-pulse' : ''}`} />
+                <span className="hidden sm:inline">Live</span>
               </span>
             </button>
             {markdownContent && (
@@ -365,6 +467,73 @@ export function BrowserPreviewView({
               referrerPolicy="no-referrer"
               title="Browser Preview Viewport"
             />
+          </div>
+        )}
+
+        {mode === 'live' && (
+          <div
+            className={`bg-white rounded-xl shadow-xs border border-neutral-200/90 overflow-hidden flex flex-col transition-all duration-200 ${
+              viewportMode === 'mobile' ? 'w-[375px]' : viewportMode === 'tablet' ? 'w-[768px]' : 'w-full'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 border-b border-neutral-200/80 bg-[#f9fafb] text-[11px] shrink-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                    liveError ? 'bg-clay-600' : liveSessionId ? 'bg-emerald-600' : 'bg-neutral-300'
+                  }`}
+                />
+                <span className="font-mono text-neutral-600 truncate" title={liveUrl || url}>
+                  {liveTitle || liveUrl || 'No live session yet'}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="font-mono text-[10px] text-neutral-400" title="Session shared with agent tools">
+                  {liveSessionId || '—'}
+                </span>
+                <button
+                  onClick={() => void ensureLive()}
+                  disabled={liveBusy}
+                  className="px-1.5 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 text-neutral-600 disabled:opacity-50 cursor-pointer"
+                  title="Attach to the newest live session, or create one"
+                >
+                  {liveBusy ? 'Connecting…' : 'Attach'}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 relative bg-neutral-100/60 overflow-hidden">
+              {livePng ? (
+                <img
+                  src={`data:image/png;base64,${livePng}`}
+                  onClick={handleLiveClick}
+                  alt="Live browser viewport"
+                  className="w-full h-full object-contain cursor-crosshair select-none"
+                  draggable={false}
+                />
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-neutral-500 text-xs p-6 text-center">
+                  <Radio className="w-5 h-5 text-neutral-400" />
+                  <span>
+                    {liveError
+                      ? liveError
+                      : liveBusy
+                        ? 'Starting a Chromium session…'
+                        : 'No live session. Press Attach to open one the agent can drive too.'}
+                  </span>
+                </div>
+              )}
+              {liveError && livePng && (
+                <div className="absolute bottom-2 left-2 right-2 px-2 py-1 rounded bg-clay-50 border border-clay-200 text-[11px] text-clay-800">
+                  {liveError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-2.5 py-1 border-t border-neutral-200/80 bg-white text-[10px] text-neutral-500 flex items-center gap-1.5 shrink-0">
+              <MousePointerClick className="w-3 h-3" />
+              <span>Click the page to drive it. The agent sees and clicks this same tab.</span>
+            </div>
           </div>
         )}
 

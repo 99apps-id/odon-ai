@@ -2508,6 +2508,24 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/models", get(get_models))
                 .route("/api/browser/read", get(browser_read_page))
                 .route(
+                    "/api/browser/sessions",
+                    get(browser_sessions_list).post(browser_session_open),
+                )
+                .route(
+                    "/api/browser/sessions/{id}/navigate",
+                    post(browser_session_navigate),
+                )
+                .route("/api/browser/sessions/{id}/state", get(browser_session_state))
+                .route(
+                    "/api/browser/sessions/{id}/screenshot",
+                    get(browser_session_screenshot),
+                )
+                .route("/api/browser/sessions/{id}/act", post(browser_session_act))
+                .route(
+                    "/api/browser/sessions/{id}",
+                    axum::routing::delete(browser_session_close),
+                )
+                .route(
                     "/api/providers/config",
                     get(get_provider_configs).post(save_provider_config),
                 )
@@ -5411,6 +5429,143 @@ fn inject_preview_base(html: &str, base_url: &reqwest::Url) -> String {
         }
     }
     format!("{tag}{html}")
+}
+
+// ── Live browser bridge ─────────────────────────────────────────────────────
+//
+// These routes expose the exact Chromium sessions the agent tools drive, so the
+// browser panel shows what the agent sees and the user can click in it.
+
+fn bridge_error(e: odon_core::error::OdonError) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": e.to_string() })),
+    )
+        .into_response()
+}
+
+async fn browser_sessions_list(State(state): State<AppState>) -> impl IntoResponse {
+    match odon_tools::browser_bridge::list_sessions(&state.workspace_root).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bridge_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct BrowserOpenRequest {
+    #[serde(default)]
+    url: String,
+}
+
+async fn browser_session_open(
+    State(state): State<AppState>,
+    Json(req): Json<BrowserOpenRequest>,
+) -> impl IntoResponse {
+    match odon_tools::browser_bridge::open_session(&state.workspace_root, &req.url).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bridge_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct BrowserNavigateRequest {
+    url: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+async fn browser_session_navigate(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<BrowserNavigateRequest>,
+) -> impl IntoResponse {
+    match odon_tools::browser_bridge::navigate(
+        &state.workspace_root,
+        &id,
+        &req.url,
+        req.timeout_ms.unwrap_or(10_000),
+    )
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bridge_error(e),
+    }
+}
+
+async fn browser_session_state(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let _ = state;
+    match odon_tools::browser_bridge::page_state(&id).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bridge_error(e),
+    }
+}
+
+async fn browser_session_screenshot(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let _ = state;
+    match odon_tools::browser_bridge::screenshot(&id).await {
+        Ok(png) => Json(json!({ "session_id": id, "png_base64": png })).into_response(),
+        Err(e) => bridge_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct BrowserActRequest {
+    action: String,
+    #[serde(default)]
+    x: Option<f64>,
+    #[serde(default)]
+    y: Option<f64>,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+async fn browser_session_act(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<BrowserActRequest>,
+) -> impl IntoResponse {
+    let _ = state;
+    let result = match req.action.as_str() {
+        "click" => match (req.x, req.y) {
+            (Some(x), Some(y)) => odon_tools::browser_bridge::click(&id, x, y).await,
+            _ => Err(odon_core::error::OdonError::Tool {
+                tool: "browser".into(),
+                message: "click requires x and y".into(),
+            }),
+        },
+        "type" => match req.text {
+            Some(text) => odon_tools::browser_bridge::type_text(&id, &text).await,
+            None => Err(odon_core::error::OdonError::Tool {
+                tool: "browser".into(),
+                message: "type requires text".into(),
+            }),
+        },
+        other => Err(odon_core::error::OdonError::Tool {
+            tool: "browser".into(),
+            message: format!("unsupported action '{other}'"),
+        }),
+    };
+    match result {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => bridge_error(e),
+    }
+}
+
+async fn browser_session_close(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let _ = state;
+    match odon_tools::browser_bridge::close(&id).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => bridge_error(e),
+    }
 }
 
 /// Read a page for the in-app browser reader. The request goes through the

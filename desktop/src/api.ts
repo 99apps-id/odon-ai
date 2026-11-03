@@ -28,6 +28,15 @@ export interface OAuthLoginResponse {
   account?: OAuthAccountInfo;
 }
 
+export interface BrowserSessionInfo {
+  session_id: string;
+  url: string;
+  created_at?: string;
+  port?: number;
+  pid?: number;
+  live?: boolean;
+}
+
 export interface FsEntryItem {
   name: string;
   path: string;
@@ -236,6 +245,83 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
     return data;
+  },
+
+  // ── Live browser bridge ────────────────────────────────────────────────
+  // These hit the daemon routes that drive the same Chromium session the agent
+  // tools use, so the panel mirrors the agent and can be clicked by the user.
+  async browserSessions(): Promise<{ sessions: BrowserSessionInfo[]; browser: boolean }> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/browser/sessions`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
+    return data;
+  },
+
+  async browserOpenSession(url: string): Promise<BrowserSessionInfo> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/browser/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
+    return data;
+  },
+
+  async browserNavigate(id: string, url: string): Promise<{ url: string; title: string; ready: boolean }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/browser/sessions/${encodeURIComponent(id)}/navigate`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
+    return data;
+  },
+
+  async browserPageState(id: string): Promise<{ url: string; title: string; text: string; links: string[] }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/browser/sessions/${encodeURIComponent(id)}/state`,
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
+    return data;
+  },
+
+  async browserScreenshot(id: string): Promise<string> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/browser/sessions/${encodeURIComponent(id)}/screenshot`,
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
+    return data.png_base64 || '';
+  },
+
+  async browserAct(
+    id: string,
+    action: { action: 'click' | 'type'; x?: number; y?: number; text?: string },
+  ): Promise<void> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/browser/sessions/${encodeURIComponent(id)}/act`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(action),
+      },
+    );
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP error ${res.status}`);
+    }
+  },
+
+  async browserCloseSession(id: string): Promise<void> {
+    await this.fetchApi(`${this.getBaseUrl()}/api/browser/sessions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }).catch(() => undefined);
   },
 
   async getTools(): Promise<any[]> {
