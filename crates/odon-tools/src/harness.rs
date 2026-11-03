@@ -462,6 +462,12 @@ mod tests {
     #[test]
     fn todos_round_trip_through_storage() {
         let storage = odon_storage::StorageEngine::new_in_memory().unwrap();
+        // Todos carry a foreign key to their session, and the runtime
+        // always creates the session before a turn can write a plan, so
+        // the round trip starts from a stored session too.
+        let mut session = odon_core::Session::new("t", odon_core::SessionMode::General, "m");
+        session.id = "s1".to_string();
+        storage.save_session(&session).unwrap();
         let items = normalize_todos(
             "todo_write",
             &json!([{ "title": "x", "status": "pending" }]),

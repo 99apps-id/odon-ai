@@ -1,12 +1,13 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use odon_core::{
-    AgentEvent, AgentState, Artifact, Message, MessageAttachment, OdonError, Result, Session,
-    SessionMode, ToolCallInfo,
+    AgentEvent, AgentState, Artifact, Message, MessageAttachment, MessageRole, OdonError, Result,
+    Session, SessionMode, ToolCallInfo,
 };
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent, ToolDefinition};
 use odon_security::{ApprovalEngine, AuditLogger};
@@ -22,6 +23,37 @@ struct AccumulatedToolCall {
     arguments: String,
 }
 
+/// Default per-turn step cap. Deliberately Codex-scale rather than a
+/// small fixed number: a coding turn legitimately needs dozens of tool
+/// steps, and the cap exists to stop a runaway loop, not normal work.
+/// Override with `ODON_MAX_TURN_ITERATIONS` or `set_max_turn_iterations`.
+pub const DEFAULT_MAX_TURN_ITERATIONS: usize = 100;
+
+/// Default context budget in estimated tokens for one provider request.
+/// History beyond it is compacted (see `compact_history`). Override with
+/// `ODON_CONTEXT_BUDGET_TOKENS` or `set_context_budget_tokens`.
+pub const DEFAULT_CONTEXT_BUDGET_TOKENS: usize = 120_000;
+
+/// Most tool schemas one request may carry inline. Past this the runtime
+/// sends a core set plus `find_tools` and loads the rest on demand; the
+/// number is the documented function-calling limit of the strictest
+/// provider family this runtime talks to.
+pub const MAX_INLINE_TOOL_SCHEMAS: usize = 128;
+
+/// How many independent tool calls from one step may run at once.
+const MAX_PARALLEL_TOOLS: usize = 4;
+
+/// Step cap for a delegated subagent run.
+const SUBAGENT_MAX_ITERATIONS: usize = 25;
+
+fn env_usize(name: &str, default: usize, min: usize, max: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value >= min && *value <= max)
+        .unwrap_or(default)
+}
+
 pub struct AgentRuntime {
     storage: Arc<StorageEngine>,
     tools: Arc<ToolRegistry>,
@@ -31,6 +63,8 @@ pub struct AgentRuntime {
     default_provider: Arc<RwLock<String>>,
     event_tx: broadcast::Sender<AgentEvent>,
     workspace_root: String,
+    max_turn_iterations: AtomicUsize,
+    context_budget_tokens: AtomicUsize,
 }
 
 impl AgentRuntime {
@@ -51,7 +85,41 @@ impl AgentRuntime {
             default_provider: Arc::new(RwLock::new("default".to_string())),
             event_tx,
             workspace_root,
+            max_turn_iterations: AtomicUsize::new(env_usize(
+                "ODON_MAX_TURN_ITERATIONS",
+                DEFAULT_MAX_TURN_ITERATIONS,
+                1,
+                10_000,
+            )),
+            context_budget_tokens: AtomicUsize::new(env_usize(
+                "ODON_CONTEXT_BUDGET_TOKENS",
+                DEFAULT_CONTEXT_BUDGET_TOKENS,
+                8_000,
+                10_000_000,
+            )),
         }
+    }
+
+    /// The per-turn step cap currently in force.
+    pub fn max_turn_iterations(&self) -> usize {
+        self.max_turn_iterations.load(Ordering::Relaxed)
+    }
+
+    /// Sets the per-turn step cap (clamped to 1..=10000).
+    pub fn set_max_turn_iterations(&self, value: usize) {
+        self.max_turn_iterations
+            .store(value.clamp(1, 10_000), Ordering::Relaxed);
+    }
+
+    /// The context budget in estimated tokens currently in force.
+    pub fn context_budget_tokens(&self) -> usize {
+        self.context_budget_tokens.load(Ordering::Relaxed)
+    }
+
+    /// Sets the context budget in estimated tokens (clamped at 8000+).
+    pub fn set_context_budget_tokens(&self, value: usize) {
+        self.context_budget_tokens
+            .store(value.max(8_000), Ordering::Relaxed);
     }
 
     pub fn storage(&self) -> Arc<StorageEngine> {
@@ -155,9 +223,42 @@ impl AgentRuntime {
              2. Do NOT output bureaucratic turn counters or terminal loop spam (e.g. 'Turn 1/30').\n\
              3. Formulate well-structured answers using clean Markdown with headers, bullet points, and code blocks.\n\
              4. When creating code, documents (PRDs, specs), or images, invoke the dedicated artifact tools (artifact_create_code, artifact_create_document, artifact_create_image) so they appear as first-class visual components.\n\
-             5. When asked to inspect, read, search, or edit files, execute the corresponding filesystem or git tools directly.",
+             5. When asked to inspect, read, search, or edit files, execute the corresponding filesystem or git tools directly.\\n\
+             6. For any task with three or more distinct steps, plan before acting: write the steps with todo_write (exactly one in_progress at a time), start each step by marking it in_progress, and mark it completed as soon as it is done. Keep the plan current instead of narrating progress only in prose, and do not finish while plan items remain open unless you say why.",
             now, os, arch, workspace_root, memories_text
         )
+    }
+
+    /// Renders the session's stored todo plan for the system harness.
+    /// The plan is the agent's own working memory for a large task: by
+    /// showing it back at the start of every turn (and after compaction,
+    /// since the harness is rebuilt per step), the model resumes the
+    /// plan instead of relying on having read it earlier. Empty when no
+    /// plan exists yet.
+    pub fn session_plan_harness(&self, session_id: &str) -> String {
+        let todos = self.storage.get_todos(session_id).unwrap_or_default();
+        let Some(items) = todos.as_array().filter(|items| !items.is_empty()) else {
+            return String::new();
+        };
+        let mut out = String::from(
+            "\n### Current Session Plan (your todo list; keep it updated with todo_write):\n",
+        );
+        for item in items {
+            let title = item
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if title.trim().is_empty() {
+                continue;
+            }
+            let marker = match item.get("status").and_then(|v| v.as_str()) {
+                Some("completed") => "[x]",
+                Some("in_progress") => "[>]",
+                _ => "[ ]",
+            };
+            out.push_str(&format!("- {marker} {title}\n"));
+        }
+        out
     }
 
     /// Primary conversational execution entry point.
@@ -234,6 +335,38 @@ impl AgentRuntime {
         steer: Option<SteerQueue>,
         extra_system_prompt: Option<&str>,
     ) -> Result<Message> {
+        self.execute_turn_inner(
+            session_id,
+            user_prompt,
+            attachments,
+            model_override,
+            effort,
+            cancellation,
+            steer,
+            extra_system_prompt,
+            0,
+            None,
+        )
+        .await
+    }
+
+    /// The turn loop. `depth` counts subagent nesting (a delegated run may
+    /// not delegate further), and `iteration_cap` overrides the configured
+    /// step cap for bounded child runs.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_turn_inner(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+        steer: Option<SteerQueue>,
+        extra_system_prompt: Option<&str>,
+        depth: u32,
+        iteration_cap: Option<usize>,
+    ) -> Result<Message> {
         info!("Executing agent turn for session: {}", session_id);
 
         // 0. Ensure session exists in storage
@@ -305,6 +438,12 @@ impl AgentRuntime {
 
         let workspace_root = self.session_workspace(session_id);
         let system_harness = self.build_system_harness(&workspace_root);
+        let plan = self.session_plan_harness(session_id);
+        let system_harness = if plan.is_empty() {
+            system_harness
+        } else {
+            format!("{system_harness}\n{plan}")
+        };
         let system_harness = match extra_system_prompt {
             Some(extra) if !extra.trim().is_empty() => format!(
                 "{system_harness}\n\n## Operator Persona & Custom Instructions\n{}",
@@ -316,8 +455,18 @@ impl AgentRuntime {
         let mut total_accumulated_text = String::new();
         let mut total_accumulated_thought = String::new();
 
-        let max_turn_iterations = 10;
+        // Tool schemas for this turn: the registry catalogue, capped at
+        // MAX_INLINE_TOOL_SCHEMAS. Past the cap a core set goes inline
+        // with `find_tools`, and the model loads the rest on demand; the
+        // runtime's own tools (find_tools, run_subagent) ride along.
+        let subagent_enabled = depth == 0;
+        let mut active_tools = initial_active_tools(&tool_defs, subagent_enabled);
+
+        let max_turn_iterations = iteration_cap
+            .unwrap_or_else(|| self.max_turn_iterations())
+            .max(1);
         let mut current_iteration = 0;
+        let mut hit_step_cap = false;
 
         // 5. Multi-Step Agentic Loop (ReAct / Tool-Use Loop)
         while current_iteration < max_turn_iterations {
@@ -348,17 +497,19 @@ impl AgentRuntime {
                 }
             }
 
-            // Load fresh history from storage
+            // Load fresh history from storage. The stored history stays
+            // whole; only the request copy is compacted to the budget.
             let history = self
                 .storage
                 .list_messages(session_id)
                 .unwrap_or_else(|_| vec![user_msg.clone()]);
+            let history = compact_history(history, self.context_budget_tokens());
 
             let chat_req = ChatRequest {
                 messages: history,
                 model: requested_model.to_string(),
                 system_prompt: Some(system_harness.clone()),
-                tools: tool_defs.clone(),
+                tools: active_tools.clone(),
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
                 effort: effort
@@ -495,17 +646,35 @@ impl AgentRuntime {
                 break;
             }
 
-            // Execute Tools
+            // Execute Tools. The runtime's own tools (find_tools,
+            // run_subagent) run inline; registry tools run with bounded
+            // parallelism, because the calls in one step are independent
+            // by protocol. Every result is collected before anything is
+            // persisted, so history order never depends on finish order.
             let _ = self.event_tx.send(AgentEvent::StateChanged {
                 session_id: session_id.to_string(),
                 state: AgentState::ExecutingTool,
             });
 
-            let mut executed_tools_info = Vec::new();
-            let mut tool_result_msgs: Vec<(String, String, String)> = Vec::new();
+            #[derive(Clone)]
+            struct PendingCall {
+                index: usize,
+                call_id: String,
+                name: String,
+                args: serde_json::Value,
+            }
+            struct ExecutedCall {
+                index: usize,
+                call_id: String,
+                name: String,
+                args: serde_json::Value,
+                output: serde_json::Value,
+                is_error: bool,
+            }
+
             let mut sorted_indices: Vec<_> = tool_accumulator.keys().cloned().collect();
             sorted_indices.sort_unstable();
-
+            let mut pending: Vec<PendingCall> = Vec::new();
             for idx in sorted_indices {
                 if let Some(tool_call) = tool_accumulator.get(&idx) {
                     let call_id = if tool_call.id.is_empty() {
@@ -513,113 +682,185 @@ impl AgentRuntime {
                     } else {
                         tool_call.id.clone()
                     };
-
                     let args_val: serde_json::Value = serde_json::from_str(&tool_call.arguments)
                         .unwrap_or_else(|_| serde_json::json!({}));
-
-                    let _ = self.event_tx.send(AgentEvent::ToolCallStarted {
-                        session_id: session_id.to_string(),
-                        call_id: call_id.clone(),
-                        tool_name: tool_call.name.clone(),
-                        arguments: args_val.clone(),
-                    });
-
-                    // Prepare context
-                    let tool_ctx = ToolContext {
-                        session_id: session_id.to_string(),
-                        workspace_root: workspace_root.clone(),
-                        approval_engine: self.approval.clone(),
-                        audit_logger: self.audit.clone(),
-                        storage: Some(self.storage.clone()),
-                    };
-
-                    // Execute tool, but let a Stop request interrupt it while
-                    // keeping the history valid with a synthetic tool result.
-                    let start = std::time::Instant::now();
-                    let tool_future =
-                        self.tools
-                            .execute_tool(&tool_call.name, &tool_ctx, args_val.clone());
-                    tokio::pin!(tool_future);
-                    let tool_res = tokio::select! {
-                        _ = cancellation.cancelled() => {
-                            let cancelled = serde_json::json!({
-                                "error": "Tool execution cancelled by user"
-                            });
-                            let _ = self.event_tx.send(AgentEvent::ToolCallFinished {
-                                session_id: session_id.to_string(),
-                                call_id: call_id.clone(),
-                                output: cancelled.clone(),
-                                is_error: true,
-                            });
-                            executed_tools_info.push(ToolCallInfo {
-                                call_id: call_id.clone(),
-                                tool_name: tool_call.name.clone(),
-                                arguments: args_val.clone(),
-                                output: Some(cancelled.clone()),
-                                is_error: true,
-                                requires_approval: false,
-                                is_approved: Some(true),
-                            });
-                            tool_result_msgs.push((
-                                call_id.clone(),
-                                tool_call.name.clone(),
-                                cancelled.to_string(),
-                            ));
-                            break;
-                        }
-                        res = &mut tool_future => res,
-                    };
-                    let _duration = start.elapsed().as_millis() as u64;
-
-                    let (output_val, is_err) = match tool_res {
-                        Ok(val) => {
-                            // Check if an artifact was synthesized
-                            if let Some(art_val) = val.get("artifact") {
-                                if let Ok(artifact) =
-                                    serde_json::from_value::<Artifact>(art_val.clone())
-                                {
-                                    let _ = self.storage.save_artifact(&artifact);
-                                    let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
-                                        session_id: session_id.to_string(),
-                                        artifact: artifact.clone(),
-                                    });
-                                    active_artifacts.push(artifact.id.clone());
-                                }
-                            }
-                            (val, false)
-                        }
-                        Err(e) => {
-                            error!("Tool {} execution failed: {}", tool_call.name, e);
-                            (serde_json::json!({ "error": e.to_string() }), true)
-                        }
-                    };
-
-                    let _ = self.event_tx.send(AgentEvent::ToolCallFinished {
-                        session_id: session_id.to_string(),
-                        call_id: call_id.clone(),
-                        output: output_val.clone(),
-                        is_error: is_err,
-                    });
-
-                    executed_tools_info.push(ToolCallInfo {
-                        call_id: call_id.clone(),
-                        tool_name: tool_call.name.clone(),
-                        arguments: args_val,
-                        output: Some(output_val.clone()),
-                        is_error: is_err,
-                        requires_approval: false,
-                        is_approved: Some(true),
-                    });
-
-                    // Tool results are persisted AFTER the assistant message that
-                    // declares the calls (below): providers reject a tool message
-                    // that does not follow the matching tool_calls message.
-                    tool_result_msgs.push((
+                    pending.push(PendingCall {
+                        index: idx,
                         call_id,
-                        tool_call.name.clone(),
-                        output_val.to_string(),
-                    ));
+                        name: tool_call.name.clone(),
+                        args: args_val,
+                    });
                 }
+            }
+            for call in &pending {
+                let _ = self.event_tx.send(AgentEvent::ToolCallStarted {
+                    session_id: session_id.to_string(),
+                    call_id: call.call_id.clone(),
+                    tool_name: call.name.clone(),
+                    arguments: call.args.clone(),
+                });
+            }
+
+            let mut executed: Vec<ExecutedCall> = Vec::new();
+            let mut registry_calls: Vec<PendingCall> = Vec::new();
+            for call in pending {
+                match call.name.as_str() {
+                    "find_tools" => {
+                        let output = self.handle_find_tools(&call.args, &mut active_tools);
+                        executed.push(ExecutedCall {
+                            index: call.index,
+                            call_id: call.call_id,
+                            name: call.name,
+                            args: call.args,
+                            output,
+                            is_error: false,
+                        });
+                    }
+                    "run_subagent" if subagent_enabled => {
+                        let (output, is_error) = self
+                            .execute_subagent(
+                                session_id,
+                                &call.args,
+                                requested_model,
+                                depth,
+                                cancellation.clone(),
+                            )
+                            .await;
+                        executed.push(ExecutedCall {
+                            index: call.index,
+                            call_id: call.call_id,
+                            name: call.name,
+                            args: call.args,
+                            output,
+                            is_error,
+                        });
+                    }
+                    _ => registry_calls.push(call),
+                }
+            }
+
+            if !registry_calls.is_empty() {
+                let registry_meta = registry_calls.clone();
+                if cancellation.is_cancelled() {
+                    for call in registry_calls {
+                        executed.push(ExecutedCall {
+                            index: call.index,
+                            call_id: call.call_id,
+                            name: call.name,
+                            args: call.args,
+                            output: serde_json::json!({
+                                "error": "Tool execution cancelled by user"
+                            }),
+                            is_error: true,
+                        });
+                    }
+                } else {
+                    let mut join_set = tokio::task::JoinSet::new();
+                    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_TOOLS));
+                    for call in registry_calls {
+                        let tools = self.tools.clone();
+                        let tool_ctx = ToolContext {
+                            session_id: session_id.to_string(),
+                            workspace_root: workspace_root.clone(),
+                            approval_engine: self.approval.clone(),
+                            audit_logger: self.audit.clone(),
+                            storage: Some(self.storage.clone()),
+                        };
+                        let semaphore = semaphore.clone();
+                        join_set.spawn(async move {
+                            let _permit = semaphore.acquire_owned().await;
+                            let (output, is_error) = match tools
+                                .execute_tool(&call.name, &tool_ctx, call.args.clone())
+                                .await
+                            {
+                                Ok(val) => (val, false),
+                                Err(e) => {
+                                    error!("Tool {} execution failed: {}", call.name, e);
+                                    (serde_json::json!({ "error": e.to_string() }), true)
+                                }
+                            };
+                            ExecutedCall {
+                                index: call.index,
+                                call_id: call.call_id,
+                                name: call.name,
+                                args: call.args,
+                                output,
+                                is_error,
+                            }
+                        });
+                    }
+                    loop {
+                        tokio::select! {
+                            _ = cancellation.cancelled() => {
+                                join_set.abort_all();
+                                break;
+                            }
+                            joined = join_set.join_next() => match joined {
+                                Some(Ok(done)) => executed.push(done),
+                                Some(Err(_)) => {}
+                                None => break,
+                            }
+                        }
+                    }
+                    // Calls that never finished (a Stop aborted them)
+                    // still owe the model a result, or the history the
+                    // next step replays is invalid.
+                    for meta in &registry_meta {
+                        if !executed.iter().any(|done| done.index == meta.index) {
+                            executed.push(ExecutedCall {
+                                index: meta.index,
+                                call_id: meta.call_id.clone(),
+                                name: meta.name.clone(),
+                                args: meta.args.clone(),
+                                output: serde_json::json!({
+                                    "error": "Tool execution cancelled by user"
+                                }),
+                                is_error: true,
+                            });
+                        }
+                    }
+                }
+            }
+
+            executed.sort_by_key(|call| call.index);
+            let mut executed_tools_info = Vec::new();
+            let mut tool_result_msgs: Vec<(String, String, String)> = Vec::new();
+            for call in executed {
+                if !call.is_error {
+                    if let Some(art_val) = call.output.get("artifact") {
+                        if let Ok(artifact) = serde_json::from_value::<Artifact>(art_val.clone()) {
+                            let _ = self.storage.save_artifact(&artifact);
+                            let _ = self.event_tx.send(AgentEvent::ArtifactCreated {
+                                session_id: session_id.to_string(),
+                                artifact: artifact.clone(),
+                            });
+                            active_artifacts.push(artifact.id.clone());
+                        }
+                    }
+                }
+                let _ = self.event_tx.send(AgentEvent::ToolCallFinished {
+                    session_id: session_id.to_string(),
+                    call_id: call.call_id.clone(),
+                    output: call.output.clone(),
+                    is_error: call.is_error,
+                });
+                executed_tools_info.push(ToolCallInfo {
+                    call_id: call.call_id.clone(),
+                    tool_name: call.name.clone(),
+                    arguments: call.args,
+                    output: Some(call.output.clone()),
+                    is_error: call.is_error,
+                    requires_approval: false,
+                    is_approved: Some(true),
+                });
+                // Tool results are persisted AFTER the assistant message
+                // that declares the calls (below): providers reject a
+                // tool message that does not follow the matching
+                // tool_calls message.
+                tool_result_msgs.push((call.call_id, call.name, call.output.to_string()));
+            }
+            if current_iteration >= max_turn_iterations {
+                hit_step_cap = true;
             }
 
             // Persist the assistant step with its tool_calls FIRST so history order
@@ -652,7 +893,18 @@ impl AgentRuntime {
             });
         }
 
-        // 6. Persist Assistant Final Message
+        // 6. Persist Assistant Final Message. A turn that hit the step
+        // cap with tool work still in flight pauses instead of
+        // completing: everything is persisted, the reply says so, and a
+        // follow-up message resumes the same session from that history.
+        if hit_step_cap {
+            if !total_accumulated_text.is_empty() {
+                total_accumulated_text.push_str("\n\n");
+            }
+            total_accumulated_text.push_str(&format!(
+                "[Turn paused after {max_turn_iterations} steps with work still in progress. Send \"continue\" to resume this session.]"
+            ));
+        }
         let thought_opt = if total_accumulated_thought.is_empty() {
             None
         } else {
@@ -672,12 +924,513 @@ impl AgentRuntime {
             .save_message(&assistant_msg)
             .map_err(|e| OdonError::Storage(e.to_string()))?;
 
-        // 7. Set State: Completed
+        // 7. Set State: Completed, or Paused when the step cap cut the
+        // turn short.
         let _ = self.event_tx.send(AgentEvent::StateChanged {
             session_id: session_id.to_string(),
-            state: AgentState::Completed,
+            state: if hit_step_cap {
+                AgentState::Paused
+            } else {
+                AgentState::Completed
+            },
         });
 
         Ok(assistant_msg)
+    }
+
+    /// Executes one `find_tools` call: searches the registry catalogue
+    /// for the query, registers the best matches in the turn's active
+    /// tool set so later steps can call them natively, and returns their
+    /// schemas to the model.
+    fn handle_find_tools(
+        &self,
+        args: &serde_json::Value,
+        active: &mut Vec<ToolDefinition>,
+    ) -> serde_json::Value {
+        let query = args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let mut matches: Vec<ToolDefinition> = Vec::new();
+        for schema in self.tools.schemas() {
+            if active.iter().any(|tool| tool.name == schema.name) {
+                continue;
+            }
+            let haystack = format!("{} {}", schema.name, schema.description).to_lowercase();
+            let score = terms
+                .iter()
+                .filter(|term| haystack.contains(**term))
+                .count();
+            if !terms.is_empty() && score == 0 {
+                continue;
+            }
+            matches.push(ToolDefinition {
+                name: schema.name,
+                description: schema.description,
+                parameters: schema.parameters,
+            });
+            if matches.len() >= 8 {
+                break;
+            }
+        }
+        let loaded: Vec<serde_json::Value> = matches
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                })
+            })
+            .collect();
+        active.extend(matches);
+        serde_json::json!({
+            "tools": loaded,
+            "note": "These tools are now registered for this turn; call them by name in your next step. If none match, reformulate the query.",
+        })
+    }
+
+    /// Executes one `run_subagent` call: a bounded nested turn on a
+    /// child session with the same providers, tools and workspace. The
+    /// child's steps go through the same approval gates; only its final
+    /// message comes back as the tool result.
+    async fn execute_subagent(
+        &self,
+        parent_session_id: &str,
+        args: &serde_json::Value,
+        model: &str,
+        depth: u32,
+        cancellation: CancellationToken,
+    ) -> (serde_json::Value, bool) {
+        if depth >= 1 {
+            return (
+                serde_json::json!({ "error": "run_subagent cannot be nested" }),
+                true,
+            );
+        }
+        let Some(task) = args
+            .get("task")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|task| !task.is_empty())
+        else {
+            return (
+                serde_json::json!({ "error": "run_subagent needs a non-empty 'task'" }),
+                true,
+            );
+        };
+        let child_session_id = format!("sub-{}", uuid::Uuid::new_v4().simple());
+        // The child works in the parent session's workspace.
+        let mut session = Session::new(
+            format!("Subagent: {}", truncate_chars(task, 60)),
+            SessionMode::Agents,
+            model.to_string(),
+        );
+        session.id = child_session_id.clone();
+        session.workspace_root = Some(self.session_workspace(parent_session_id));
+        let _ = self.storage.save_session(&session);
+
+        // Boxed: the nested turn is a recursive async call, so the
+        // future needs heap indirection to have a finite size.
+        match Box::pin(self.execute_turn_inner(
+            &child_session_id,
+            task,
+            Vec::new(),
+            Some(model),
+            None,
+            cancellation,
+            None,
+            None,
+            depth + 1,
+            Some(SUBAGENT_MAX_ITERATIONS),
+        ))
+        .await
+        {
+            Ok(message) => (
+                serde_json::json!({
+                    "subagent_session": child_session_id,
+                    "output": message.content.text,
+                }),
+                false,
+            ),
+            Err(error) => (serde_json::json!({ "error": error.to_string() }), true),
+        }
+    }
+}
+
+/// Truncates a string to at most `max` characters, on a char boundary.
+fn truncate_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// Rough token estimate (one token per four characters), good enough for
+/// a budget check that only decides when to compact.
+fn estimate_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(4)
+}
+
+fn message_estimated_tokens(message: &Message) -> usize {
+    let mut total = estimate_tokens(&message.content.text);
+    if let Some(thought) = &message.content.thought {
+        total += estimate_tokens(thought);
+    }
+    for call in &message.content.tool_calls {
+        total += estimate_tokens(&call.arguments.to_string());
+        if let Some(output) = &call.output {
+            total += estimate_tokens(&output.to_string());
+        }
+    }
+    total
+}
+
+/// Largest tool output kept whole through compaction, in characters.
+const COMPACT_TOOL_OUTPUT_CHARS: usize = 4_000;
+
+fn trim_long_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max_chars * 3 / 4).collect();
+    let tail: String = {
+        let skipped = text.chars().count().saturating_sub(max_chars / 4);
+        text.chars().skip(skipped).collect()
+    };
+    format!(
+        "{head}\n... [{} characters trimmed by context compaction] ...\n{tail}",
+        text.chars().count()
+    )
+}
+
+/// Compacts a request copy of the history to `budget_tokens` estimated
+/// tokens. The stored history is never touched. Oversized tool outputs
+/// are trimmed first (they are usually the bulk and the least load
+/// bearing); if that is not enough, the oldest middle messages are
+/// elided between a kept head and a kept tail, with a marker so the
+/// model knows context was dropped. The kept tail never starts with a
+/// tool result, which providers reject without its declaring message.
+fn compact_history(messages: Vec<Message>, budget_tokens: usize) -> Vec<Message> {
+    let total: usize = messages.iter().map(message_estimated_tokens).sum();
+    if total <= budget_tokens || messages.len() <= 2 {
+        return messages;
+    }
+
+    let mut messages: Vec<Message> = messages
+        .into_iter()
+        .map(|mut message| {
+            if message.role == MessageRole::Tool
+                && message.content.text.chars().count() > COMPACT_TOOL_OUTPUT_CHARS
+            {
+                message.content.text =
+                    trim_long_text(&message.content.text, COMPACT_TOOL_OUTPUT_CHARS);
+            }
+            for call in &mut message.content.tool_calls {
+                if let Some(serde_json::Value::String(output)) = &mut call.output {
+                    if output.chars().count() > COMPACT_TOOL_OUTPUT_CHARS {
+                        *output = trim_long_text(output, COMPACT_TOOL_OUTPUT_CHARS);
+                    }
+                }
+            }
+            message
+        })
+        .collect();
+
+    let total: usize = messages.iter().map(message_estimated_tokens).sum();
+    if total <= budget_tokens {
+        return messages;
+    }
+
+    let head_len = 4.min(messages.len());
+    let tail_budget = budget_tokens / 2;
+    let mut tail_start = messages.len();
+    let mut tail_tokens = 0usize;
+    while tail_start > head_len {
+        let next = message_estimated_tokens(&messages[tail_start - 1]);
+        if tail_tokens + next > tail_budget && tail_start < messages.len() {
+            break;
+        }
+        tail_tokens += next;
+        tail_start -= 1;
+    }
+    while tail_start < messages.len() && messages[tail_start].role == MessageRole::Tool {
+        tail_start += 1;
+    }
+    if tail_start >= messages.len() && messages.len() > head_len {
+        // Keep at least the final exchange even if it alone is large.
+        tail_start = messages.len().saturating_sub(2).max(head_len);
+        while tail_start < messages.len() && messages[tail_start].role == MessageRole::Tool {
+            tail_start += 1;
+        }
+    }
+
+    let elided = tail_start.saturating_sub(head_len);
+    if elided == 0 {
+        return messages;
+    }
+    let session_id = messages
+        .first()
+        .map(|m| m.session_id.clone())
+        .unwrap_or_default();
+    let mut compacted: Vec<Message> = messages.drain(..head_len).collect();
+    compacted.push(Message::new_user(
+        &session_id,
+        format!(
+            "[Context compacted: {elided} earlier message(s) were elided to fit the context budget. Ask for anything you need re-read.]"
+        ),
+    ));
+    compacted.extend(messages.into_iter().skip(tail_start - head_len));
+    compacted
+}
+
+/// Tools that stay inline when the catalogue exceeds the inline cap:
+/// the everyday coding set. Names that do not exist in a given registry
+/// are simply skipped.
+const CORE_TOOL_NAMES: &[&str] = &[
+    "fs_read",
+    "fs_write",
+    "fs_edit",
+    "fs_patch",
+    "fs_list",
+    "fs_search",
+    "fs_find",
+    "bash_run",
+    "shell_exec",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "todo_write",
+    "todo_read",
+    "think",
+];
+
+/// The `find_tools` definition offered when the catalogue is capped.
+fn find_tools_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "find_tools".to_string(),
+        description:
+            "Search the full tool catalogue by keyword and register matching tools for this turn. Use this when the tool you need is not in the current tool list."
+                .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Keywords describing the capability, e.g. 'screenshot browser'." }
+            },
+            "required": ["query"]
+        }),
+    }
+}
+
+/// The `run_subagent` definition offered on top-level turns.
+fn subagent_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "run_subagent".to_string(),
+        description:
+            "Delegate one self-contained task to a subagent with its own session and a bounded step budget. It works in the same workspace and returns its final report. Use for independent side tasks; never for work that needs the current conversation's full context."
+                .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "task": { "type": "string", "description": "One self-contained instruction for the subagent." }
+            },
+            "required": ["task"]
+        }),
+    }
+}
+
+/// Builds the tool set a turn starts with: the whole catalogue when it
+/// fits the inline cap, otherwise a core set plus `find_tools` (the rest
+/// loads on demand), plus `run_subagent` on top-level turns.
+fn initial_active_tools(
+    registry_defs: &[ToolDefinition],
+    subagent_enabled: bool,
+) -> Vec<ToolDefinition> {
+    let mut active: Vec<ToolDefinition> = Vec::new();
+    if subagent_enabled {
+        active.push(subagent_definition());
+    }
+    let needs_search = registry_defs.len() + active.len() > MAX_INLINE_TOOL_SCHEMAS;
+    let registry_budget =
+        MAX_INLINE_TOOL_SCHEMAS.saturating_sub(active.len() + usize::from(needs_search));
+    if registry_defs.len() <= registry_budget {
+        active.extend(registry_defs.iter().cloned());
+    } else {
+        let mut picked: Vec<ToolDefinition> = Vec::new();
+        for name in CORE_TOOL_NAMES {
+            if let Some(def) = registry_defs.iter().find(|def| &def.name == name) {
+                if !picked.iter().any(|tool| &tool.name == name) {
+                    picked.push(def.clone());
+                }
+            }
+        }
+        for def in registry_defs {
+            if picked.len() >= registry_budget {
+                break;
+            }
+            if !picked.iter().any(|tool| tool.name == def.name) {
+                picked.push(def.clone());
+            }
+        }
+        picked.truncate(registry_budget);
+        active.extend(picked);
+    }
+    if needs_search {
+        active.push(find_tools_definition());
+    }
+    active
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(role: MessageRole, text: &str) -> Message {
+        let session = "s1";
+        match role {
+            MessageRole::User => Message::new_user(session, text.to_string()),
+            MessageRole::Assistant => Message::new_assistant(session, text.to_string(), None, None),
+            MessageRole::System => {
+                let mut msg = Message::new_user(session, text.to_string());
+                msg.role = MessageRole::System;
+                msg
+            }
+            MessageRole::Tool => Message::new_tool(session, "call_1".to_string(), text.to_string()),
+        }
+    }
+
+    #[test]
+    fn compaction_under_budget_is_unchanged() {
+        let history = vec![
+            message(MessageRole::User, "hello"),
+            message(MessageRole::Assistant, "hi"),
+        ];
+        let out = compact_history(history.clone(), 120_000);
+        assert_eq!(out.len(), history.len());
+    }
+
+    #[test]
+    fn compaction_trims_a_huge_tool_output_first() {
+        let big = "x".repeat(40_000);
+        let history = vec![
+            message(MessageRole::User, "read it"),
+            message(MessageRole::Tool, &big),
+            message(MessageRole::Assistant, "done"),
+        ];
+        let out = compact_history(history, 4_000);
+        let total: usize = out.iter().map(message_estimated_tokens).sum();
+        assert!(total <= 4_500, "total {total}");
+        assert!(out[1]
+            .content
+            .text
+            .contains("trimmed by context compaction"));
+    }
+
+    #[test]
+    fn compaction_drops_the_middle_and_never_starts_the_tail_with_a_tool() {
+        let mut history = vec![message(MessageRole::System, "sys")];
+        for i in 0..40 {
+            history.push(message(
+                MessageRole::User,
+                &format!("question {i} {}", "q".repeat(200)),
+            ));
+            history.push(message(
+                MessageRole::Assistant,
+                &format!("answer {i} {}", "a".repeat(200)),
+            ));
+            history.push(message(
+                MessageRole::Tool,
+                &format!("output {i} {}", "o".repeat(200)),
+            ));
+        }
+        let out = compact_history(history, 2_000);
+        let total: usize = out.iter().map(message_estimated_tokens).sum();
+        assert!(total <= 2_600, "total {total}");
+        assert!(
+            out.iter()
+                .any(|m| m.content.text.contains("Context compacted")),
+            "the elision must be marked"
+        );
+        // After the kept head and the marker, no message may be a tool
+        // result whose declaring assistant message was elided.
+        let marker = out
+            .iter()
+            .position(|m| m.content.text.contains("Context compacted"))
+            .expect("marker present");
+        if let Some(first_tail) = out.get(marker + 1) {
+            assert_ne!(first_tail.role, MessageRole::Tool);
+        }
+    }
+
+    #[test]
+    fn harness_teaches_the_todo_workflow_and_surfaces_the_stored_plan() {
+        let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+        let (event_tx, _rx) = odon_core::events::create_event_bus(16);
+        let runtime = AgentRuntime::new(
+            storage.clone(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ApprovalEngine::new(
+                odon_security::SecurityPolicy::default(),
+            )),
+            Arc::new(AuditLogger::new()),
+            event_tx,
+            "/tmp".to_string(),
+        );
+
+        let harness = runtime.build_system_harness("/tmp");
+        assert!(
+            harness.contains("todo_write"),
+            "the harness must teach the todo workflow for large tasks"
+        );
+        assert!(
+            runtime.session_plan_harness("missing").is_empty(),
+            "no stored plan, no plan section"
+        );
+
+        let mut session = Session::new("t", SessionMode::General, "m");
+        session.id = "s-plan".to_string();
+        storage.save_session(&session).unwrap();
+        storage
+            .set_todos(
+                "s-plan",
+                &serde_json::json!([
+                    {"title": "Inspect the repo", "status": "completed"},
+                    {"title": "Implement the fix", "status": "in_progress"},
+                    {"title": "Run the tests", "status": "pending"},
+                ]),
+            )
+            .unwrap();
+        let plan = runtime.session_plan_harness("s-plan");
+        assert!(plan.contains("[x] Inspect the repo"), "{plan}");
+        assert!(plan.contains("[>] Implement the fix"), "{plan}");
+        assert!(plan.contains("[ ] Run the tests"), "{plan}");
+    }
+
+    #[test]
+    fn tool_selection_caps_the_inline_schemas_and_offers_search() {
+        let defs: Vec<ToolDefinition> = (0..300)
+            .map(|i| ToolDefinition {
+                name: format!("tool_{i}"),
+                description: "d".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            })
+            .collect();
+        let active = initial_active_tools(&defs, true);
+        assert_eq!(active.len(), MAX_INLINE_TOOL_SCHEMAS);
+        assert!(active.iter().any(|tool| tool.name == "find_tools"));
+        assert!(active.iter().any(|tool| tool.name == "run_subagent"));
+    }
+
+    #[test]
+    fn tool_selection_sends_everything_when_it_fits() {
+        let defs: Vec<ToolDefinition> = (0..20)
+            .map(|i| ToolDefinition {
+                name: format!("tool_{i}"),
+                description: "d".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            })
+            .collect();
+        let active = initial_active_tools(&defs, false);
+        assert_eq!(active.len(), 20);
+        assert!(!active.iter().any(|tool| tool.name == "find_tools"));
     }
 }
