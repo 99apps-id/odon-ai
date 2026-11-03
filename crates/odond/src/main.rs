@@ -4055,7 +4055,7 @@ async fn execute_terminal(
     if let Some(pos) = cleaned_stdout.rfind("__ODON_CWD__:") {
         let cwd_part = cleaned_stdout[pos + 13..].trim();
         if cwd_part.starts_with("C:\\") || cwd_part.starts_with("/") {
-            let cwd_part = cwd_part.trim_end_matches("__ODON_CWD__");
+            updated_cwd = cwd_part.trim_end_matches("__ODON_CWD__").to_string();
             cleaned_stdout.truncate(pos);
             if cleaned_stdout.ends_with("\r\n") {
                 cleaned_stdout.truncate(cleaned_stdout.len() - 2);

@@ -120,9 +120,11 @@ fn validate_session_id(id: &str) -> Result<&str> {
 fn browser() -> Result<PathBuf> {
     let mut p = Vec::new();
     if cfg!(windows) {
-        if let Ok(x) = std::env::var("PROGRAMFILES") {
-            p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe"));
-            p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe"));
+        for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)"] {
+            if let Ok(x) = std::env::var(variable) {
+                p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe"));
+                p.push(PathBuf::from(x).join("Microsoft/Edge/Application/msedge.exe"));
+            }
         }
         if let Ok(x) = std::env::var("LOCALAPPDATA") {
             p.push(PathBuf::from(x.clone()).join("Google/Chrome/Application/chrome.exe"));

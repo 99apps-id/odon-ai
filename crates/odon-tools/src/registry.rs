@@ -135,11 +135,40 @@ fn binary_on_path(binary: &str) -> bool {
         vec![String::new()]
     };
 
-    std::env::split_paths(&path).any(|directory| {
+    let found_on_path = std::env::split_paths(&path).any(|directory| {
         extensions
             .iter()
             .any(|extension| directory.join(format!("{binary}{extension}")).is_file())
-    })
+    });
+    if found_on_path || !cfg!(windows) {
+        return found_on_path;
+    }
+
+    // Chrome and Edge installers normally do not add themselves to PATH on
+    // Windows, while the browser-session implementation intentionally probes
+    // their standard install directories. Diagnostics must use the same
+    // capability check or the desktop hides a working browser tool.
+    let executable = match binary {
+        "chrome" | "google-chrome" | "chromium" => {
+            Some(("Google", "Chrome", "chrome.exe"))
+        }
+        "msedge" | "microsoft-edge" => Some(("Microsoft", "Edge", "msedge.exe")),
+        _ => None,
+    };
+    let Some((vendor, product, executable)) = executable else {
+        return false;
+    };
+    ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
+        .iter()
+        .filter_map(|name| std::env::var_os(name))
+        .map(std::path::PathBuf::from)
+        .any(|base| {
+            base.join(vendor)
+                .join(product)
+                .join("Application")
+                .join(executable)
+                .is_file()
+        })
 }
 
 impl ToolRegistry {

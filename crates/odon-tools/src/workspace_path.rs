@@ -45,12 +45,6 @@ pub fn resolve_write(workspace_root: &str, input: &str) -> Result<PathBuf> {
     } else {
         root.join(candidate)
     };
-    if !joined.starts_with(&root) {
-        return Err(tool_error(
-            "absolute path must stay inside the workspace".to_string(),
-        ));
-    }
-
     let mut ancestor = joined.as_path();
     let mut tail = Vec::new();
     while std::fs::symlink_metadata(ancestor).is_err() {
