@@ -7181,6 +7181,28 @@ fn redact_mcp_env(
         .collect()
 }
 
+/// Keep a stored secret when a client saves back the redacted placeholder.
+///
+/// Clients read configs through `redact_mcp_env`, so a config that round-trips
+/// carries `***` instead of the real value. Writing that back verbatim would
+/// silently destroy the stored secret.
+fn merge_redacted_env(
+    incoming: Option<std::collections::HashMap<String, String>>,
+    stored: Option<std::collections::HashMap<String, String>>,
+) -> Option<std::collections::HashMap<String, String>> {
+    let mut incoming = incoming?;
+    if let Some(stored) = stored {
+        for (key, value) in incoming.iter_mut() {
+            if value == "***" {
+                if let Some(original) = stored.get(key) {
+                    *value = original.clone();
+                }
+            }
+        }
+    }
+    Some(incoming)
+}
+
 async fn get_mcp_servers() -> impl IntoResponse {
     let servers = redact_mcp_env(odon_tools::mcp::load_mcp_servers());
     Json(json!(servers))
@@ -7190,6 +7212,12 @@ async fn save_mcp_server(
     Json(server): Json<odon_tools::mcp::McpServerConfig>,
 ) -> impl IntoResponse {
     let mut servers = odon_tools::mcp::load_mcp_servers();
+    let stored_env = servers
+        .iter()
+        .find(|s| s.id == server.id)
+        .and_then(|s| s.env.clone());
+    let mut server = server;
+    server.env = merge_redacted_env(server.env.take(), stored_env);
     if let Some(pos) = servers.iter().position(|s| s.id == server.id) {
         servers[pos] = server;
     } else {

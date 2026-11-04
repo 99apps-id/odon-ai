@@ -105,6 +105,74 @@ pub fn save_mcp_servers(servers: &[McpServerConfig]) -> Result<()> {
 
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Wrap batch shims so Windows can execute them; other programs run as-is.
+fn launcher_for(resolved: &str) -> (String, Vec<String>) {
+    let extension = std::path::Path::new(resolved)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if extension == "cmd" || extension == "bat" {
+        return (
+            "cmd".to_string(),
+            vec!["/C".to_string(), resolved.to_string()],
+        );
+    }
+    (resolved.to_string(), Vec::new())
+}
+
+/// Resolve a configured stdio command into a program Windows can actually start.
+///
+/// `Command::new("npx")` fails on Windows because `CreateProcessW` only appends
+/// `.exe`, while the npm shims are `npx.cmd`. Batch shims additionally cannot be
+/// started directly and must run through `cmd /C`.
+fn resolve_stdio_command(command: &str) -> (String, Vec<String>) {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return (trimmed.to_string(), Vec::new());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        #[cfg(windows)]
+        {
+            return launcher_for(trimmed);
+        }
+        #[cfg(not(windows))]
+        {
+            return (trimmed.to_string(), Vec::new());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        (trimmed.to_string(), Vec::new())
+    }
+    #[cfg(windows)]
+    {
+        let lower = trimmed.to_ascii_lowercase();
+        let has_shim_extension = [".exe", ".cmd", ".bat", ".com"]
+            .iter()
+            .any(|extension| lower.ends_with(extension));
+        let candidates: Vec<String> = if has_shim_extension {
+            vec![trimmed.to_string()]
+        } else {
+            [".exe", ".cmd", ".bat", ".com"]
+                .iter()
+                .map(|extension| format!("{trimmed}{extension}"))
+                .collect()
+        };
+        let path_value = std::env::var_os("PATH").unwrap_or_default();
+        for directory in std::env::split_paths(&path_value) {
+            for candidate in &candidates {
+                let full = directory.join(candidate);
+                if full.is_file() {
+                    return launcher_for(&full.to_string_lossy());
+                }
+            }
+        }
+        // Fall back to the bare name so the original spawn error is still reported.
+        (trimmed.to_string(), Vec::new())
+    }
+}
+
 struct StdioMcpClient {
     child: Child,
     stdin: ChildStdin,
@@ -131,9 +199,11 @@ impl StdioMcpClient {
                 tool: "mcp".to_string(),
                 message: format!("MCP server '{}' has no command", config.name),
             })?;
-        let mut process = Command::new(command);
+        let (program, mut leading) = resolve_stdio_command(command);
+        leading.extend(config.args.as_deref().unwrap_or_default().iter().cloned());
+        let mut process = Command::new(&program);
         process
-            .args(config.args.as_deref().unwrap_or_default())
+            .args(&leading)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -860,5 +930,122 @@ impl Tool for McpToggleServerTool {
             "enabled": enabled,
             "status": "updated"
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_stdio_command;
+    use serde_json::json;
+
+    /// Minimal JSON-RPC MCP server used to prove the stdio transport really
+    /// completes a handshake, rather than only resolving a command line.
+    const ECHO_SERVER: &str = r#"
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
+  if (msg.method === 'initialize') {
+    reply({ protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'probe', version: '1' } });
+  } else if (msg.method === 'tools/list') {
+    reply({ tools: [{ name: 'echo', description: 'echo', inputSchema: { type: 'object' } }] });
+  } else if (msg.id !== undefined) {
+    reply({});
+  }
+});
+"#;
+
+    #[tokio::test]
+    async fn stdio_server_completes_a_real_handshake() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // node is not installed on this machine
+        }
+        let dir = std::env::temp_dir().join(format!("odon-mcp-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create probe dir");
+        let script = dir.join("server.cjs");
+        std::fs::write(&script, ECHO_SERVER).expect("write probe server");
+
+        let config = super::McpServerConfig {
+            id: "probe".to_string(),
+            name: "Probe".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("node".to_string()),
+            args: Some(vec![script.to_string_lossy().to_string()]),
+            env: None,
+            url: None,
+            enabled: true,
+            tools: Vec::new(),
+        };
+
+        let outcome = super::call_server(&config, "tools/list", json!({})).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        let value = outcome.expect("tools/list should answer over stdio");
+        assert_eq!(value["tools"][0]["name"], "echo");
+    }
+
+    #[test]
+    fn plain_executable_is_started_directly() {
+        let (program, args) = resolve_stdio_command("cmd");
+        assert!(args.is_empty(), "unexpected launcher args: {args:?}");
+        #[cfg(windows)]
+        assert!(
+            program.to_ascii_lowercase().ends_with("cmd.exe"),
+            "expected an absolute cmd.exe, got {program}"
+        );
+    }
+
+    #[test]
+    fn explicit_batch_path_runs_through_cmd() {
+        let (program, args) = resolve_stdio_command("/opt/tool.bat");
+        #[cfg(windows)]
+        {
+            assert_eq!(program, "cmd");
+            assert_eq!(args, vec!["/C".to_string(), "/opt/tool.bat".to_string()]);
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(program, "/opt/tool.bat");
+            assert!(args.is_empty());
+        }
+    }
+
+    /// The npm 4 of 5 configured servers point at cannot be started by bare name on
+    /// Windows: the shim is `npx.cmd`, and `CreateProcessW` only appends `.exe`.
+    #[cfg(windows)]
+    #[test]
+    fn npm_shim_resolves_to_a_cmd_launcher() {
+        let (program, args) = resolve_stdio_command("npx");
+        if program != "cmd" {
+            return; // npm is not installed on this machine
+        }
+        assert_eq!(args[0], "/C");
+        assert!(
+            args[1].to_ascii_lowercase().ends_with("npx.cmd"),
+            "expected the npx.cmd shim, got {args:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolved_shim_actually_executes() {
+        let (program, mut args) = resolve_stdio_command("npx");
+        if program != "cmd" {
+            return; // npm is not installed on this machine
+        }
+        args.push("--version".to_string());
+        let Ok(output) = std::process::Command::new(program).args(args).output() else {
+            return;
+        };
+        let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if text.is_empty() {
+            text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        }
+        assert!(!text.is_empty(), "resolved npx produced no output");
     }
 }

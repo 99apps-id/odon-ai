@@ -135,11 +135,32 @@ impl Tool for ShellExecTool {
                 message: format!("Failed to execute command: {e}"),
             })?,
             Err(_) => {
-                let _ = child.kill().await;
-                return Err(OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: format!("Command timed out after {timeout_secs} seconds"),
-                });
+                // Kill the whole tree, not just the shell wrapper. On Windows
+                // `powershell.exe` spawns grandchildren that keep the inherited
+                // pipes open, so a plain `kill()` leaves `read_to_end` blocked
+                // forever and the harness reports a timeout with no output.
+                kill_process_tree(&mut child).await;
+                // Collect whatever the command already produced before the
+                // deadline. Losing it turns a slow build into an opaque error.
+                let partial_stdout = collect_partial(stdout_task).await;
+                let partial_stderr = collect_partial(stderr_task).await;
+                let (stdout, stdout_truncated) = clip(&partial_stdout);
+                let (stderr, stderr_truncated) = clip(&partial_stderr);
+                return Ok(json!({
+                    "exit_code": -1,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "success": false,
+                    "timed_out": true,
+                    "duration_ms": started.elapsed().as_millis(),
+                    "timeout_secs": timeout_secs,
+                    "cwd": cwd,
+                    "truncated": stdout_truncated || stderr_truncated,
+                    "note": format!(
+                        "Command killed after {timeout_secs}s. Partial output above. \
+                         Raise timeout_secs (max 900) for long builds."
+                    )
+                }));
             }
         };
         let output = std::process::Output {
@@ -161,6 +182,38 @@ impl Tool for ShellExecTool {
             "cwd": cwd,
             "truncated": stdout_truncated || stderr_truncated
         }))
+    }
+}
+
+/// Terminate a command together with every process it spawned.
+///
+/// `Child::kill` only signals the direct child. A shell that launched a build
+/// leaves grandchildren behind, holding the stdout/stderr pipes open; reading
+/// them then never finishes.
+async fn kill_process_tree(child: &mut tokio::process::Child) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(pid) = child.id() {
+            let _ = tokio::process::Command::new("taskkill")
+                .args(["/PID".to_string(), pid.to_string(), "/T".to_string(), "/F".to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await;
+        }
+    }
+    let _ = child.kill().await;
+}
+
+/// Wait a bounded time for a pipe reader to finish, then keep what it has.
+///
+/// After a tree kill the readers normally finish at once, but a stubborn
+/// grandchild on Windows can keep a handle alive. Never let that hold the
+/// turn: give up after a short grace period and report no partial output.
+async fn collect_partial(handle: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    match tokio::time::timeout(Duration::from_secs(5), handle).await {
+        Ok(Ok(buffer)) => buffer,
+        _ => Vec::new(),
     }
 }
 
@@ -216,5 +269,72 @@ impl Tool for TerminalExecTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         ShellExecTool.execute(ctx, args).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+    use std::sync::Arc;
+
+    fn test_context(root: &str) -> crate::registry::ToolContext {
+        crate::registry::ToolContext {
+            session_id: "shell-test".to_string(),
+            workspace_root: root.to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
+
+    /// A command that prints, then sleeps past the deadline. The partial output
+    /// must survive the timeout instead of being replaced by a bare error.
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn timeout_keeps_partial_output_and_returns_promptly() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let ctx = test_context(&root);
+        let started = std::time::Instant::now();
+        let result = ShellExecTool
+            .execute(
+                &ctx,
+                json!({
+                    "command": "echo PARTIAL_MARKER && ping -n 20 127.0.0.1 > nul",
+                    "shell": "cmd",
+                    "timeout_secs": 2
+                }),
+            )
+            .await
+            .expect("timeout must be reported as data, not as a hard error");
+        let elapsed = started.elapsed();
+
+        assert_eq!(result["timed_out"], json!(true), "timed_out flag missing: {result}");
+        assert_eq!(result["success"], json!(false));
+        let stdout = result["stdout"].as_str().unwrap_or_default();
+        assert!(
+            stdout.contains("PARTIAL_MARKER"),
+            "partial output was discarded: {stdout:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(20),
+            "turn was held for {elapsed:?}; the process tree was not killed"
+        );
+    }
+
+    /// A command that finishes inside the deadline must not be marked timed out.
+    #[tokio::test]
+    async fn normal_command_is_not_marked_timed_out() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let ctx = test_context(&root);
+        #[cfg(target_os = "windows")]
+        let args = json!({ "command": "echo OK", "shell": "cmd", "timeout_secs": 30 });
+        #[cfg(not(target_os = "windows"))]
+        let args = json!({ "command": "echo OK", "timeout_secs": 30 });
+
+        let result = ShellExecTool.execute(&ctx, args).await.expect("echo must succeed");
+        assert_eq!(result["timed_out"], serde_json::Value::Null, "unexpected timeout flag: {result}");
+        assert_eq!(result["success"], json!(true));
+        assert!(result["stdout"].as_str().unwrap_or_default().contains("OK"));
     }
 }

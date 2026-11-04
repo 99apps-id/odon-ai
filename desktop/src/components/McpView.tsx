@@ -146,7 +146,7 @@ export const McpView: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Register external MCP servers. Execution requires the MCP bridge, which is not enabled in this build.
+              Register external MCP servers. Enabled servers run as stdio processes and expose their tools to the agent through mcp_call.
             </p>
           </div>
         </div>
