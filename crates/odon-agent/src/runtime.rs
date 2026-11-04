@@ -1155,6 +1155,31 @@ impl AgentRuntime {
             .save_message(&assistant_msg)
             .map_err(|e| OdonError::Storage(e.to_string()))?;
 
+        // A successful turn is the agent's completion boundary. Models can
+        // forget the final todo_update after delivering the answer, so close
+        // any remaining plan items here. Paused turns must remain resumable.
+        if !hit_step_cap {
+            let todos = self
+                .storage
+                .get_todos(session_id)
+                .map_err(|e| OdonError::Storage(e.to_string()))?;
+            if let Some(items) = todos.as_array() {
+                let mut finalized = items.clone();
+                let mut changed = false;
+                for item in &mut finalized {
+                    if item.get("status").and_then(|status| status.as_str()) != Some("completed") {
+                        item["status"] = serde_json::Value::String("completed".to_string());
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.storage
+                        .set_todos(session_id, &serde_json::Value::Array(finalized))
+                        .map_err(|e| OdonError::Storage(e.to_string()))?;
+                }
+            }
+        }
+
         // 7. Set State: Completed, or Paused when the step cap cut the
         // turn short.
         let _ = self.event_tx.send(AgentEvent::StateChanged {
