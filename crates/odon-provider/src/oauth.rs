@@ -33,11 +33,6 @@ const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 const CLAUDE_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 
-/// Anthropic registers this redirect for the public Claude Code client id. The
-/// `code=true` manual flow only accepts it, so Claude cannot use a loopback
-/// listener the way Codex and Antigravity do: claude.ai rejects an unregistered
-/// redirect and shows a misleading "Missing client_id parameter" page.
-const CLAUDE_MANUAL_REDIRECT: &str = "https://console.anthropic.com/oauth/code/callback";
 const CLAUDE_SCOPE: &str = "org:create_api_key user:profile user:inference";
 
 const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -304,13 +299,12 @@ impl OAuthService {
 
     pub async fn begin_login(&self, provider: OAuthProvider) -> Result<PendingLogin> {
         match provider {
-            // Claude's public client id only accepts its registered https
-            // redirect, so it needs the manual paste flow.
-            OAuthProvider::ClaudeOauth => self
-                .begin_manual_login(provider)
-                .await
-                .map(|p| PendingLogin::ManualCode(Box::new(p))),
-            OAuthProvider::OpenAiCodex | OAuthProvider::Antigravity => self
+            // Termigo's proven flow: Claude's registered redirect is the loopback
+            // `http://localhost:54545/callback`, with `code=true` telling the
+            // consent page to display the code as well.
+            OAuthProvider::ClaudeOauth
+            | OAuthProvider::OpenAiCodex
+            | OAuthProvider::Antigravity => self
                 .begin_browser_login(provider)
                 .await
                 .map(PendingLogin::Browser),
@@ -323,42 +317,6 @@ impl OAuthService {
 
     pub async fn begin_login_for(&self, provider: &str) -> Result<PendingLogin> {
         self.begin_login(provider.parse()?).await
-    }
-
-    async fn begin_manual_login(&self, provider: OAuthProvider) -> Result<PendingManualLogin> {
-        let (verifier, challenge) = OAuthHandler::generate_pkce()?;
-        let state = secure_random_b64(32)?;
-        let config = browser_config(provider)?;
-        let redirect_uri = CLAUDE_MANUAL_REDIRECT.to_string();
-
-        let mut url = Url::parse(config.authorize_url)
-            .map_err(|e| auth_error(format!("invalid authorization endpoint: {e}")))?;
-        {
-            let mut query = url.query_pairs_mut();
-            query
-                .append_pair("response_type", "code")
-                .append_pair("client_id", config.client_id)
-                .append_pair("redirect_uri", &redirect_uri)
-                .append_pair("scope", config.scope)
-                .append_pair("code_challenge", &challenge)
-                .append_pair("code_challenge_method", "S256")
-                .append_pair("state", &state)
-                .append_pair("code", "true");
-        }
-
-        let response = LoginResponse::ManualCode {
-            provider: provider.to_string(),
-            authorization_url: url.into(),
-            redirect_uri: redirect_uri.clone(),
-        };
-        Ok(PendingManualLogin {
-            client: self.client.clone(),
-            config,
-            verifier,
-            state,
-            redirect_uri,
-            response,
-        })
     }
 
     async fn begin_browser_login(&self, provider: OAuthProvider) -> Result<PendingBrowserLogin> {
@@ -391,22 +349,8 @@ impl OAuthService {
                 .append_pair("code_challenge", &challenge)
                 .append_pair("code_challenge_method", "S256")
                 .append_pair("state", &state);
-            match provider {
-                OAuthProvider::OpenAiCodex => {
-                    query
-                        .append_pair("id_token_add_organizations", "true")
-                        .append_pair("codex_cli_simplified_flow", "true")
-                        .append_pair("originator", "codex_cli_rs");
-                }
-                OAuthProvider::ClaudeOauth => {
-                    query.append_pair("code", "true");
-                }
-                OAuthProvider::Antigravity => {
-                    query
-                        .append_pair("access_type", "offline")
-                        .append_pair("prompt", "consent");
-                }
-                _ => unreachable!("device providers do not use browser PKCE"),
+            for (name, value) in provider_extra_params(provider) {
+                query.append_pair(name, value);
             }
         }
 
@@ -931,6 +875,26 @@ struct BrowserConfig {
     callback_path: &'static str,
 }
 
+/// Provider-specific extras appended to the authorization URL. Kept separate so
+/// the exact parameters can be asserted without binding a loopback port.
+fn provider_extra_params(provider: OAuthProvider) -> Vec<(&'static str, &'static str)> {
+    match provider {
+        OAuthProvider::OpenAiCodex => vec![
+            ("id_token_add_organizations", "true"),
+            ("codex_cli_simplified_flow", "true"),
+            ("originator", "codex_cli_rs"),
+        ],
+        // Termigo's proven Claude flow: the consent page must also display the
+        // code, because the registered redirect is the loopback listener.
+        OAuthProvider::ClaudeOauth => vec![("code", "true")],
+        OAuthProvider::Antigravity => vec![
+            ("access_type", "offline"),
+            ("prompt", "consent"),
+        ],
+        OAuthProvider::XaiOauth | OAuthProvider::GithubCopilot => Vec::new(),
+    }
+}
+
 fn browser_config(provider: OAuthProvider) -> Result<BrowserConfig> {
     match provider {
         OAuthProvider::OpenAiCodex => Ok(BrowserConfig {
@@ -1404,6 +1368,23 @@ fn account_id_from_claims(claims: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_flow_matches_termitos_proven_url() {
+        // Termigo's working URL uses the loopback listener with `code=true`,
+        // not the console.anthropic.com paste redirect.
+        let config = browser_config(OAuthProvider::ClaudeOauth).unwrap();
+        assert_eq!(config.port, 54545);
+        assert_eq!(config.callback_path, "/callback");
+        assert_eq!(config.authorize_url, "https://claude.ai/oauth/authorize");
+        assert_eq!(config.client_id, CLAUDE_CLIENT_ID);
+        assert_eq!(
+            provider_extra_params(OAuthProvider::ClaudeOauth),
+            vec![("code", "true")]
+        );
+        let redirect = format!("http://localhost:{}{}", config.port, config.callback_path);
+        assert_eq!(redirect, "http://localhost:54545/callback");
+    }
 
     #[test]
     fn pkce_is_secure_url_safe_and_matches_s256() {
