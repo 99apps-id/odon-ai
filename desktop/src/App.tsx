@@ -56,6 +56,7 @@ import {
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { BootSplash } from './components/BootSplash';
+import { classifyBootFailure, type BootFailure } from './lib/bootFailure';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView, type BrowserSeed } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
@@ -83,7 +84,13 @@ import {
   WorkspaceBrowseResult,
   type TodoItem,
 } from './api';
-import { isDesktopShell, pickFolder, daemonToken } from './lib/desktop';
+import {
+  isDesktopShell,
+  pickFolder,
+  daemonToken,
+  daemonBootFailure,
+  restartDaemon,
+} from './lib/desktop';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
 // The composer exposes exactly four modes. Values outside this set are never
@@ -684,6 +691,11 @@ export default function App() {
   // flashes while it leaves.
   const [bootSplashPhase, setBootSplashPhase] = useState<'waiting' | 'fading' | 'gone'>('waiting');
   const [bootSplashSlow, setBootSplashSlow] = useState(false);
+  // Why the bundled daemon never answered, as reported by the shell. Null in a
+  // browser, or while the daemon is healthy.
+  const [bootFailure, setBootFailure] = useState<BootFailure | null>(null);
+  const [bootRetrying, setBootRetrying] = useState(false);
+  const [bootRetryError, setBootRetryError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -837,6 +849,51 @@ export default function App() {
     const timer = window.setTimeout(() => setBootSplashSlow(true), 4000);
     return () => window.clearTimeout(timer);
   }, [bootSplashPhase, daemonOnline]);
+
+  // Once boot looks failed in the desktop shell, ask the shell why. The shell
+  // is the only party that saw the spawn error, so guessing here would produce
+  // advice that does not match the machine.
+  useEffect(() => {
+    if (!bootSplashSlow || daemonOnline || !isDesktopShell()) {
+      if (daemonOnline) setBootFailure(null);
+      return;
+    }
+    let cancelled = false;
+    void daemonBootFailure().then((raw) => {
+      if (cancelled) return;
+      setBootFailure(raw ? classifyBootFailure(raw) : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bootSplashSlow, daemonOnline]);
+
+  // Restart from the overlay: the shell respawns the sidecar and we re-poll.
+  // Plain function (not useCallback): it must see the current
+  // checkDaemonStatus closure, not the one from first render.
+  const retryDaemonBoot = async () => {
+    setBootRetrying(true);
+    setBootRetryError(null);
+    try {
+      await restartDaemon();
+      // Give the sidecar a moment to bind before asking again.
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        if (await checkDaemonStatus()) {
+          setBootFailure(null);
+          setBootRetrying(false);
+          return;
+        }
+      }
+      const raw = await daemonBootFailure();
+      setBootFailure(raw ? classifyBootFailure(raw) : null);
+      setBootRetryError('the daemon still did not answer after 10s');
+    } catch (error) {
+      setBootRetryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBootRetrying(false);
+    }
+  };
 
   // Initial setup & SSE subscription
   useEffect(() => {
@@ -1756,6 +1813,12 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 : 'Run `odond serve` in a terminal to answer on 127.0.0.1:4096.'
               : undefined
           }
+          failure={bootFailure}
+          retrying={bootRetrying}
+          retryError={bootRetryError}
+          onRetry={() => {
+            void retryDaemonBoot();
+          }}
         />
       )}
       {/* Daemon offline banner: the whole local surface (state, tools,

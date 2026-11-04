@@ -18,6 +18,11 @@ const DAEMON_ADDR: &str = "127.0.0.1:4096";
 /// operator's, not the shell's).
 struct DaemonChild(Mutex<Option<Child>>);
 
+/// The reason the bundled daemon did not come up, kept so the window can
+/// show a cause and a next step instead of a bare "offline".
+#[derive(Default)]
+struct BootFailure(Mutex<Option<String>>);
+
 /// Appends one line to odon-desktop.log in the app log directory. The
 /// shell has no console when launched from a desktop menu, so this log
 /// is the only evidence when daemon startup misbehaves.
@@ -158,9 +163,15 @@ fn start_daemon(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// Startup path: bring the daemon up and leave the outcome in the log.
+/// Startup path: bring the daemon up, remember the outcome so the window can
+/// explain a failure instead of only showing "offline".
 fn spawn_daemon(app: &tauri::App) {
-    let _ = start_daemon(app.handle());
+    let outcome = start_daemon(app.handle());
+    if let Some(state) = app.try_state::<BootFailure>() {
+        if let Ok(mut slot) = state.0.lock() {
+            *slot = outcome.err();
+        }
+    }
 }
 
 /// Stops a daemon this shell owns, if any, and waits for the port to
@@ -245,15 +256,16 @@ async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 /// else, so the shell never kills a process it does not own.
 #[tauri::command]
 async fn restart_daemon(app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        stop_owned_daemon(&app);
+    let worker = app.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        stop_owned_daemon(&worker);
         if daemon_reachable() {
             return Err(
                 "a daemon is still answering on 127.0.0.1:4096 and was not started by this app; stop it manually"
                     .to_string(),
             );
         }
-        start_daemon(&app)?;
+        start_daemon(&worker)?;
         if wait_for_daemon() {
             Ok("daemon restarted and answering on 127.0.0.1:4096".to_string())
         } else {
@@ -261,7 +273,25 @@ async fn restart_daemon(app: tauri::AppHandle) -> Result<String, String> {
         }
     })
     .await
-    .map_err(|error| format!("restart task failed: {error}"))?
+    .map_err(|error| format!("restart task failed: {error}"))?;
+
+    // Keep the recorded cause in step with reality: cleared on success, so a
+    // later read does not resurrect a stale reason, and refreshed on failure.
+    if let Some(state) = app.try_state::<BootFailure>() {
+        if let Ok(mut slot) = state.0.lock() {
+            *slot = outcome.as_ref().err().cloned();
+        }
+    }
+
+    outcome
+}
+
+/// Reports why the bundled daemon failed to start, if it did. The window
+/// asks once after it sees the daemon unreachable so it can name the cause
+/// (missing sidecar, spawn refusal, timeout) and give the matching fix.
+#[tauri::command]
+fn daemon_boot_failure(state: tauri::State<'_, BootFailure>) -> Option<String> {
+    state.0.lock().ok().and_then(|slot| slot.clone())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -270,10 +300,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(DaemonChild(Mutex::new(None)))
+        .manage(BootFailure::default())
         .invoke_handler(tauri::generate_handler![
             pick_folder,
             restart_daemon,
-            daemon_token
+            daemon_token,
+            daemon_boot_failure
         ])
         .setup(|app| {
             spawn_daemon(app);

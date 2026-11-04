@@ -56,3 +56,16 @@ export async function daemonToken(): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * Why the bundled daemon did not come up, as reported by the shell.
+ * Returns null in a browser, or when the daemon started normally.
+ */
+export async function daemonBootFailure(): Promise<string | null> {
+  try {
+    const reason = await invoke<string | null>("daemon_boot_failure");
+    return typeof reason === "string" && reason.trim() ? reason.trim() : null;
+  } catch {
+    return null;
+  }
+}

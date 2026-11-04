@@ -1,5 +1,7 @@
 import React from 'react';
 import { CatLogo } from './CatLogo';
+import { BootFailureNotice } from './BootFailureNotice';
+import type { BootFailure } from '../lib/bootFailure';
 
 interface BootSplashProps {
   /** Fade the overlay out; the caller unmounts it once the transition ends. */
@@ -8,6 +10,11 @@ interface BootSplashProps {
   offline: boolean;
   /** Optional detail line, e.g. the daemon port or a failure hint. */
   detail?: string;
+  /** Cause reported by the shell once boot is considered failed. */
+  failure?: BootFailure | null;
+  retrying?: boolean;
+  retryError?: string | null;
+  onRetry?: () => void;
 }
 
 /**
@@ -19,7 +26,15 @@ interface BootSplashProps {
  * (opacity, transform) and every animation is switched off under
  * `prefers-reduced-motion`.
  */
-export function BootSplash({ done, offline, detail }: BootSplashProps) {
+export function BootSplash({
+  done,
+  offline,
+  detail,
+  failure,
+  retrying = false,
+  retryError = null,
+  onRetry,
+}: BootSplashProps) {
   return (
     <div
       className={`odon-splash fixed inset-0 z-[200] flex flex-col items-center justify-center bg-sand-50 ${
@@ -60,6 +75,15 @@ export function BootSplash({ done, offline, detail }: BootSplashProps) {
         </div>
 
         {detail && <p className="odon-splash-detail mt-4 max-w-[24rem] text-center">{detail}</p>}
+
+        {failure && onRetry && (
+          <BootFailureNotice
+            failure={failure}
+            retrying={retrying}
+            onRetry={onRetry}
+            retryError={retryError}
+          />
+        )}
       </div>
     </div>
   );
