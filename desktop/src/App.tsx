@@ -1085,6 +1085,12 @@ export default function App() {
     setStreamingText('');
     setStreamingThought('');
     setSteerCards([]);
+    // Clear everything that belongs to the session being left. Without this a
+    // session with no artifacts or todos inherits the previous session's, and
+    // the diff cards render inside the new chat as if that session produced
+    // them.
+    setTodos([]);
+    setArtifacts([]);
     stoppedRef.current = false;
     try {
       const data = await api.getSession(id);
@@ -1105,6 +1111,9 @@ export default function App() {
       if (currentSessionIdRef.current !== id) return;
       setTodos(sessionTodos);
     } catch (err: any) {
+      setTodos([]);
+      setArtifacts([]);
+      setIsGenerating(false);
       setMessages([
         {
           id: 'load-error',
