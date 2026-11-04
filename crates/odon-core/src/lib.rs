@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod daemon;
 pub mod error;
 pub mod events;
 pub mod message;

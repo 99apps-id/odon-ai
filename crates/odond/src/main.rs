@@ -2347,7 +2347,13 @@ async fn main() -> anyhow::Result<()> {
 
             // 3. Security & Policy
             let policy = SecurityPolicy::default();
-            let approval = Arc::new(ApprovalEngine::new(policy).with_events(event_tx.clone()));
+            // The workspace root is what turns "this call writes somewhere
+            // else" into an approval prompt instead of an auto-approval.
+            let approval = Arc::new(
+                ApprovalEngine::new(policy)
+                    .with_events(event_tx.clone())
+                    .with_workspace_root(workspace.clone()),
+            );
             let audit = Arc::new(AuditLogger::new());
 
             // 4. Tools Registry
@@ -3435,8 +3441,11 @@ async fn whatsapp_verify_webhook(
             .map(|token| token.to_string())
     };
     let valid = query.mode.as_deref() == Some("subscribe")
-        && expected.is_some()
-        && query.token.as_deref() == expected.as_deref();
+        && expected
+            .as_deref()
+            .zip(query.token.as_deref())
+            .map(|(expected, provided)| constant_time_eq(provided, expected))
+            .unwrap_or(false);
     if valid {
         (StatusCode::OK, query.challenge.unwrap_or_default()).into_response()
     } else {
@@ -6536,7 +6545,10 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
     // provider would turn a working default into "not configured".
     if let Some(entries) = payload.get("providers").and_then(|p| p.as_array()) {
         for entry in entries {
-            let usable = entry.get("connected").and_then(|v| v.as_bool()).unwrap_or(false)
+            let usable = entry
+                .get("connected")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
                 || entry
                     .get("configured")
                     .and_then(|v| v.as_bool())

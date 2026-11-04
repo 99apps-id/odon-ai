@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::process::Command;
 
-const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const OUTPUT_LIMIT: usize = 64 * 1024;
 

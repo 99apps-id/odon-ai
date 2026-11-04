@@ -412,10 +412,19 @@ impl ToolRegistry {
             }
         }
 
-        // Security approval check
+        // Security approval check. The tool's own declared tier is handed to
+        // the engine so the gate is not decided purely by a name table that
+        // can lag behind the registry.
+        let declared_risk = tool.risk_tier();
         let decision = ctx
             .approval_engine
-            .evaluate_and_request(&ctx.session_id, canonical_name, &args, &desc)
+            .evaluate_and_request_with_risk(
+                &ctx.session_id,
+                canonical_name,
+                Some(declared_risk),
+                &args,
+                &desc,
+            )
             .await
             .map_err(OdonError::Security)?;
 

@@ -1,8 +1,7 @@
-use crate::registry::{Tool, ToolContext};
+﻿use crate::registry::{Tool, ToolContext};
 use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
-use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -18,16 +17,6 @@ fn bounded_output(raw: &[u8]) -> (String, bool) {
             true,
         )
     }
-}
-
-fn http_client() -> Result<Client> {
-    Client::builder()
-        .user_agent("odon-monitoring/0.1")
-        .build()
-        .map_err(|e| OdonError::Tool {
-            tool: "monitoring".to_string(),
-            message: format!("Failed to build HTTP client: {e}"),
-        })
 }
 
 pub struct MetricDashboardTool;

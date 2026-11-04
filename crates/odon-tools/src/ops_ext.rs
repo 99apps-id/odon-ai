@@ -17,7 +17,7 @@ fn odon_home() -> std::path::PathBuf {
 }
 
 pub(crate) fn daemon_base_url() -> String {
-    std::env::var("ODON_DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:4096".to_string())
+    odon_core::daemon::base_url()
 }
 
 // 1. Artifact Operations
@@ -804,6 +804,13 @@ pub(crate) async fn daemon_json(
     let mut request = reqwest::Client::new()
         .request(method, &url)
         .timeout(std::time::Duration::from_secs(10));
+    // The daemon authenticates every `/api/` call with a bearer token and has
+    // no fall-open mode, so a request without one is always a 401. Resolve the
+    // token the same way the daemon publishes it (env, then the loopback
+    // token file) instead of assuming the caller exported it.
+    if let Some(token) = odon_core::daemon::api_token() {
+        request = request.bearer_auth(token);
+    }
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -812,6 +819,15 @@ pub(crate) async fn daemon_json(
         message: format!("Could not reach the ODON daemon at {url}: {e}"),
     })?;
     let status = response.status().as_u16();
+    // Centralise the 401 story: every daemon-backed tool funnels through here,
+    // so the operator sees the fix ("set ODON_API_TOKEN / start the daemon on
+    // loopback") instead of a bare status code.
+    if status == 401 {
+        return Err(OdonError::Tool {
+            tool: tool_name.to_string(),
+            message: odon_core::daemon::unauthorized_hint(&url),
+        });
+    }
     let value: Value = response.json().await.unwrap_or_else(|_| json!({}));
     Ok((status, value))
 }

@@ -7,7 +7,6 @@ use std::time::Duration;
 use tokio::process::Command;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
-const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const OUTPUT_LIMIT: usize = 64 * 1024;
 
 fn bounded_output(raw: &[u8]) -> (String, bool) {
@@ -282,9 +281,14 @@ mod tests {
     #[tokio::test]
     async fn architecture_diagram_reports_a_missing_generator() {
         let error = ArchitectureDiagramTool
-            .execute(&context(), json!({ "source": "src", "output_path": "diagram.svg" }))
+            .execute(
+                &context(),
+                json!({ "source": "src", "output_path": "diagram.svg" }),
+            )
             .await
             .expect_err("a missing generator must surface as an error");
-        assert!(error.to_string().contains("no diagram generator is configured"));
+        assert!(error
+            .to_string()
+            .contains("no diagram generator is configured"));
     }
 }

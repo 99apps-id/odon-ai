@@ -100,10 +100,7 @@ enum ConfigCommands {
 }
 
 fn daemon_base_url() -> String {
-    std::env::var("ODON_DAEMON_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:4096".to_string())
-        .trim_end_matches('/')
-        .to_string()
+    odon_core::daemon::base_url()
 }
 
 fn mask_secret(value: &str) -> String {
@@ -125,10 +122,12 @@ async fn daemon_request(
         .timeout(std::time::Duration::from_secs(8))
         .build()?;
     let mut request = client.request(method, format!("{}{}", daemon_base_url(), path));
-    if let Ok(token) = std::env::var("ODON_API_TOKEN") {
-        if !token.trim().is_empty() {
-            request = request.bearer_auth(token);
-        }
+    // Same credential resolution as the daemon-backed tools: an exported
+    // ODON_API_TOKEN wins, otherwise use the per-session token the daemon
+    // published for loopback clients. Without the fallback the CLI 401s on a
+    // default local install, where the operator never sees the token at all.
+    if let Some(token) = odon_core::daemon::api_token() {
+        request = request.bearer_auth(token);
     }
     if let Some(body) = body {
         request = request.json(&body);
@@ -140,7 +139,14 @@ async fn daemon_request(
         .await
         .unwrap_or_else(|_| serde_json::json!({}));
     if !status.is_success() {
-        anyhow::bail!("daemon returned HTTP {status}: {payload}");
+        anyhow::bail!(
+            "{}",
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                odon_core::daemon::unauthorized_hint(&format!("{}{}", daemon_base_url(), path))
+            } else {
+                format!("daemon returned HTTP {status}: {payload}")
+            }
+        );
     }
     Ok(payload)
 }
@@ -302,6 +308,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 5. Agent Runtime
     let workspace = std::env::current_dir()?.to_string_lossy().to_string();
+    // Attach the containment root once it is known, so a mutating tool call
+    // outside the project is escalated rather than auto-approved.
+    approval.set_workspace_root(workspace.clone()).await;
     let runtime = Arc::new(AgentRuntime::new(
         storage.clone(),
         tools.clone(),

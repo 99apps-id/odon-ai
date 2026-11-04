@@ -84,6 +84,11 @@ pub struct ApprovalEngine {
     policy_path: PathBuf,
     audit_path: PathBuf,
     events: Option<EventSender>,
+    /// Root that mutating calls are expected to stay inside. Always allocated
+    /// so the root can be attached after construction (workspace switches);
+    /// the inner `None` means no root was declared, in which case containment
+    /// cannot be judged and no escalation is applied.
+    workspace_root: Arc<RwLock<Option<PathBuf>>>,
 }
 
 impl ApprovalEngine {
@@ -122,7 +127,27 @@ impl ApprovalEngine {
             policy_path,
             audit_path,
             events: None,
+            workspace_root: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Declare the workspace root so out-of-workspace targets can be escalated
+    /// instead of silently auto-approved. Chainable at construction:
+    /// `ApprovalEngine::new(policy).with_workspace_root(root)`.
+    pub fn with_workspace_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.workspace_root = Arc::new(RwLock::new(Some(root.into())));
+        self
+    }
+
+    /// Re-point the containment root at runtime (workspace switch, project
+    /// attach). The previous root is replaced, never merged.
+    pub async fn set_workspace_root(&self, root: impl Into<PathBuf>) {
+        *self.workspace_root.write().await = Some(root.into());
+    }
+
+    /// The declared containment root, if any.
+    pub async fn workspace_root(&self) -> Option<PathBuf> {
+        self.workspace_root.read().await.clone()
     }
 
     /// Re-point the persisted policy and audit files, reloading both from
@@ -161,9 +186,59 @@ impl ApprovalEngine {
     }
 
     fn canonical_root(workspace_root: &std::path::Path) -> std::path::PathBuf {
-        workspace_root
-            .canonicalize()
-            .unwrap_or_else(|_| Self::normalize_lexically(workspace_root))
+        Self::strip_verbatim(
+            workspace_root
+                .canonicalize()
+                .unwrap_or_else(|_| Self::normalize_lexically(workspace_root)),
+        )
+    }
+
+    /// Drop the Windows verbatim prefix (`\\?\`, and `\\?\UNC\` for shares).
+    ///
+    /// `fs::canonicalize` always returns a verbatim path on Windows, while a
+    /// path that does not exist yet is only normalised lexically and carries no
+    /// prefix. Comparing the two spellings never matches, which made every
+    /// target look like it escaped the workspace.
+    fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return std::path::PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(rest);
+        }
+        path
+    }
+
+    /// Whether `candidate` sits inside `root`.
+    ///
+    /// Windows paths are case-insensitive and one side is often a lexical path
+    /// (the target may not exist yet) while the other was canonicalised, so a
+    /// byte-wise `starts_with` is not enough there.
+    fn path_is_inside(candidate: &std::path::Path, root: &std::path::Path) -> bool {
+        if candidate.starts_with(root) {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            let norm = |p: &std::path::Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
+            let candidate = norm(candidate);
+            let mut root = norm(root);
+            while root.ends_with('\\') && root.len() > 3 {
+                root.pop();
+            }
+            if candidate == root {
+                return true;
+            }
+            if !root.ends_with('\\') {
+                root.push('\\');
+            }
+            candidate.starts_with(&root)
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
     /// Check if target parameters point outside the workspace.
@@ -171,6 +246,15 @@ impl ApprovalEngine {
         parameters: &serde_json::Value,
         workspace_root: &std::path::Path,
     ) -> bool {
+        Self::outside_workspace_target(parameters, workspace_root).is_some()
+    }
+
+    /// First target parameter that escapes `workspace_root`, spelled as the
+    /// caller wrote it (for the approval prompt).
+    pub fn outside_workspace_target(
+        parameters: &serde_json::Value,
+        workspace_root: &std::path::Path,
+    ) -> Option<String> {
         let root = Self::canonical_root(workspace_root);
         for key in ["path", "cwd", "destination", "source", "file"] {
             if let Some(p_str) = parameters.get(key).and_then(|v| v.as_str()) {
@@ -183,15 +267,23 @@ impl ApprovalEngine {
                 } else {
                     workspace_root.join(raw)
                 };
-                let normalized = joined
-                    .canonicalize()
-                    .unwrap_or_else(|_| Self::normalize_lexically(&joined));
-                if !normalized.starts_with(&root) {
-                    return true;
+                let normalized = Self::strip_verbatim(
+                    joined
+                        .canonicalize()
+                        .unwrap_or_else(|_| Self::normalize_lexically(&joined)),
+                );
+                if !Self::path_is_inside(&normalized, &root) {
+                    return Some(p_str.to_string());
                 }
             }
         }
-        false
+        None
+    }
+
+    /// The containment target for these parameters, when a root is declared.
+    async fn escaping_target(&self, parameters: &serde_json::Value) -> Option<String> {
+        let root = self.workspace_root().await?;
+        Self::outside_workspace_target(parameters, &root)
     }
 
     /// Publish approval lifecycle events (requested / resolved) on the event bus.
@@ -390,10 +482,53 @@ impl ApprovalEngine {
         parameters: &serde_json::Value,
         description: &str,
     ) -> Result<ApprovalDecision, String> {
-        let risk = self.check_risk(tool_name).await;
+        self.evaluate_and_request_with_risk(session_id, tool_name, None, parameters, description)
+            .await
+    }
+
+    /// [`evaluate_and_request`], seeded with the risk tier the tool declares.
+    ///
+    /// The name-based table in [`check_risk`] is a second source of truth for
+    /// the same fact, and the two drift: a tool missing from the table falls
+    /// through to `Tier2SystemMutating`, while a tool that declares `Tier1` but
+    /// is not listed is treated as system-mutating. The effective tier is the
+    /// stricter of the two, so neither source can downgrade a call the other
+    /// considers dangerous, and the gate always sees the tool's own claim.
+    pub async fn evaluate_and_request_with_risk(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        declared: Option<RiskTier>,
+        parameters: &serde_json::Value,
+        description: &str,
+    ) -> Result<ApprovalDecision, String> {
+        let by_name = self.check_risk(tool_name).await;
+        let risk = match declared {
+            Some(declared) => by_name.max(declared),
+            None => by_name,
+        };
         let policy_key = Self::policy_key(tool_name, parameters);
         let exact_key = Self::exact_policy_key(tool_name, parameters);
         let wildcard_key = Self::wildcard_policy_key(parameters);
+        // A mutating call aimed outside the declared workspace is never
+        // auto-approved: not by the Autonomous Tier-1 shortcut, and not by a
+        // cached `always allow` grant. Those grants are recorded while the
+        // operator is looking at in-workspace work, so a stored wildcard `*`
+        // must not quietly extend itself to a path they never saw. Such a call
+        // always reaches the interactive prompt, flagged with the escaping
+        // path, which is what `is_outside_workspace` was written for.
+        let escaping = if risk > RiskTier::Tier0ReadOnly {
+            self.escaping_target(parameters).await
+        } else {
+            None
+        };
+        let description = match &escaping {
+            Some(target) => {
+                format!("WARNING: target path '{target}' is outside the workspace. {description}")
+            }
+            None => description.to_string(),
+        };
+        let description = description.as_str();
         let policy = self.policy.read().await;
 
         // In locked mode, all mutating calls rejected
@@ -408,15 +543,21 @@ impl ApprovalEngine {
             return Ok(ApprovalDecision::Approved);
         }
 
-        // Autonomous mode auto-approves Tier 1
-        if policy.mode == ExecutionMode::Autonomous && risk == RiskTier::Tier1WorkspaceMutating {
+        // Autonomous mode auto-approves Tier 1 — but never when the target
+        // escapes the workspace, which must be seen by a human.
+        if policy.mode == ExecutionMode::Autonomous
+            && risk == RiskTier::Tier1WorkspaceMutating
+            && escaping.is_none()
+        {
             return Ok(ApprovalDecision::Approved);
         }
 
         // `always_allowed` may only skip the interactive prompt for tools that
         // are already permitted by mode/tier enforcement above. This prevents
         // an `ApprovedAll` wildcard from bypassing execution-mode restrictions.
-        {
+        // A cached grant is also scoped to the workspace it was granted in, so
+        // an out-of-workspace target bypasses the cache entirely.
+        if escaping.is_none() {
             let allowed = self.always_allowed.read().await;
             if allowed.contains(&policy_key)
                 || allowed.contains(&exact_key)
@@ -888,18 +1029,247 @@ mod tests {
 
     #[tokio::test]
     async fn approved_all_does_not_bypass_locked_mode() {
+        let tmp =
+            std::env::temp_dir().join(format!("odon-locked-{}", uuid::Uuid::new_v4().simple()));
         let policy = SecurityPolicy {
             mode: ExecutionMode::Locked,
             ..SecurityPolicy::default()
         };
-        let engine = ApprovalEngine::new(policy);
-        let _ = engine
-            .submit_decision("shell_exec", ApprovalDecision::ApprovedAll)
-            .await;
+        let engine = ApprovalEngine::new(policy)
+            .with_paths(tmp.join("approval-policies.json"), tmp.join("audit.jsonl"));
+        // A real wildcard grant, stored the way `ApprovedAll` stores it. (The
+        // previous version recorded nothing — `submit_decision` on an unknown
+        // id is a no-op — so the assertion passed without testing a bypass.)
+        engine.always_allowed.write().await.insert("*".to_string());
+
         let decision = engine
             .evaluate_and_request("s1", "shell_exec", &serde_json::json!({}), "bash")
             .await
             .unwrap();
-        assert!(matches!(decision, ApprovalDecision::Rejected { .. }));
+        assert!(
+            matches!(decision, ApprovalDecision::Rejected { .. }),
+            "Locked mode must refuse a mutation even with a `*` grant stored, got {decision:?}"
+        );
+    }
+
+    fn temp_dir(prefix: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("odon-{prefix}-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn outside_workspace_targets_are_detected_after_normalisation() {
+        let root = temp_dir("ws-root");
+        std::fs::create_dir_all(root.join("nested")).expect("create nested");
+
+        assert_eq!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "path": "nested/file.txt" }),
+                &root
+            ),
+            None,
+            "a relative in-workspace path is fine"
+        );
+        assert!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "path": "nested/../../escape.txt" }),
+                &root
+            )
+            .is_some(),
+            "`..` must be resolved before containment is decided"
+        );
+
+        // A real directory outside the root, so the check is platform-neutral.
+        let elsewhere = temp_dir("ws-elsewhere");
+        let escaped = elsewhere.join("hosts");
+        assert_eq!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "destination": escaped.to_string_lossy() }),
+                &root
+            ),
+            Some(escaped.to_string_lossy().to_string()),
+            "an absolute path elsewhere is reported verbatim for the prompt"
+        );
+        assert!(!ApprovalEngine::is_outside_workspace(
+            &serde_json::json!({ "path": "nested/file.txt" }),
+            &root
+        ));
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(elsewhere);
+    }
+
+    /// An out-of-workspace target must reach a human even in Autonomous mode,
+    /// where Tier-1 calls are otherwise auto-approved, and even when a cached
+    /// grant exists for exactly these arguments.
+    #[tokio::test]
+    async fn autonomous_mode_does_not_auto_approve_outside_the_workspace() {
+        let root = temp_dir("ws-grant");
+        let tmp = temp_dir("ws-policy");
+        let (tx, mut rx) = odon_core::events::create_event_bus(64);
+        let policy = SecurityPolicy {
+            mode: ExecutionMode::Autonomous,
+            ..SecurityPolicy::default()
+        };
+        let engine = ApprovalEngine::new(policy)
+            .with_paths(tmp.join("approval-policies.json"), tmp.join("audit.jsonl"))
+            .with_events(tx)
+            .with_workspace_root(root.clone());
+
+        let outside = serde_json::json!({ "path": "../nope/escape.txt" });
+        // A cached grant for this exact invocation must not cover it.
+        engine
+            .always_allowed
+            .write()
+            .await
+            .insert(ApprovalEngine::exact_policy_key(
+                "create_directory",
+                &outside,
+            ));
+
+        let handle = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request("s1", "create_directory", &outside, "mkdir")
+                    .await
+                    .unwrap()
+            })
+        };
+
+        let approval_id = next_requested_id(&mut rx).await;
+        assert!(
+            engine
+                .submit_decision(
+                    &approval_id,
+                    ApprovalDecision::Rejected {
+                        reason: "no".to_string()
+                    }
+                )
+                .await,
+            "the request must be pending, i.e. the operator was actually asked"
+        );
+        let decision = handle.await.expect("evaluate task");
+        assert!(
+            matches!(decision, ApprovalDecision::Rejected { .. }),
+            "an outside-workspace mutation must be decided by a human, got {decision:?}"
+        );
+
+        // Inside the workspace the Autonomous Tier-1 shortcut still applies.
+        let decision = engine
+            .evaluate_and_request(
+                "s1",
+                "create_directory",
+                &serde_json::json!({ "path": "sub/dir" }),
+                "mkdir",
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(decision, ApprovalDecision::Approved),
+            "in-workspace Tier-1 work must stay auto-approved, got {decision:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// The tool-declared tier and the name-based table must not disagree in a
+    /// way that weakens the gate: the effective tier is the stricter one.
+    #[tokio::test]
+    async fn a_declared_tier_can_only_raise_the_name_table_risk() {
+        let tmp = temp_dir("ws-risk");
+        let (tx, mut rx) = odon_core::events::create_event_bus(64);
+        let engine = ApprovalEngine::new(SecurityPolicy {
+            mode: ExecutionMode::Autonomous,
+            ..SecurityPolicy::default()
+        })
+        .with_paths(tmp.join("approval-policies.json"), tmp.join("audit.jsonl"))
+        .with_events(tx);
+
+        // The name table calls `create_directory` Tier 1, which Autonomous mode
+        // auto-approves. A tool that declares Tier 2 must still be asked about.
+        let outside_workspace_free = serde_json::json!({ "path": "sub/dir" });
+        let handle = {
+            let engine = engine.clone();
+            let params = outside_workspace_free.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request_with_risk(
+                        "s1",
+                        "create_directory",
+                        Some(RiskTier::Tier2SystemMutating),
+                        &params,
+                        "mkdir",
+                    )
+                    .await
+                    .unwrap()
+            })
+        };
+        let approval_id = next_requested_id(&mut rx).await;
+        assert!(
+            engine
+                .submit_decision(
+                    &approval_id,
+                    ApprovalDecision::Rejected {
+                        reason: "declared tier2".to_string()
+                    }
+                )
+                .await
+        );
+        assert!(matches!(
+            handle.await.expect("evaluate task"),
+            ApprovalDecision::Rejected { .. }
+        ));
+
+        // A tool under-declaring read-only cannot talk its way out of the
+        // name table's Tier 2 either.
+        let handle = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request_with_risk(
+                        "s1",
+                        "shell_exec",
+                        Some(RiskTier::Tier0ReadOnly),
+                        &serde_json::json!({ "command": "echo hi" }),
+                        "run",
+                    )
+                    .await
+                    .unwrap()
+            })
+        };
+        let approval_id = next_requested_id(&mut rx).await;
+        assert!(
+            engine
+                .submit_decision(
+                    &approval_id,
+                    ApprovalDecision::Rejected {
+                        reason: "under-declared".to_string()
+                    }
+                )
+                .await
+        );
+        assert!(matches!(
+            handle.await.expect("evaluate task"),
+            ApprovalDecision::Rejected { .. }
+        ));
+
+        // A Tier 1 declaration that agrees with the table keeps the shortcut.
+        let decision = engine
+            .evaluate_and_request_with_risk(
+                "s1",
+                "create_directory",
+                Some(RiskTier::Tier1WorkspaceMutating),
+                &serde_json::json!({ "path": "sub/dir" }),
+                "mkdir",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(decision, ApprovalDecision::Approved));
+
+        let _ = std::fs::remove_dir_all(tmp);
     }
 }
