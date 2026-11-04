@@ -30,8 +30,7 @@ you already produced and do not restart the answer.]";
 /// Uses the KMP prefix function, so the cost is linear in the input length
 /// instead of the quadratic cost of testing every suffix.
 pub fn continuation_overlap_length(previous: &str, continuation: &str) -> usize {
-    if previous.len() < MIN_CONTINUATION_OVERLAP || continuation.len() < MIN_CONTINUATION_OVERLAP
-    {
+    if previous.len() < MIN_CONTINUATION_OVERLAP || continuation.len() < MIN_CONTINUATION_OVERLAP {
         return 0;
     }
 
@@ -101,8 +100,15 @@ pub fn trailing_continue_intent(text: &str) -> bool {
         .to_lowercase();
     matches!(
         normalised.as_str(),
-        "continue" | "lanjut" | "lanjutkan" | "go on" | "keep going" | "carry on" | "resume"
-            | "teruskan" | "next"
+        "continue"
+            | "lanjut"
+            | "lanjutkan"
+            | "go on"
+            | "keep going"
+            | "carry on"
+            | "resume"
+            | "teruskan"
+            | "next"
     )
 }
 
@@ -148,7 +154,8 @@ mod tests {
     #[test]
     fn overlap_handles_multibyte_text() {
         let previous = "Ringkasan: proses build gagal karena modul belum terdaftar di workspace.";
-        let continuation = "proses build gagal karena modul belum terdaftar di workspace. Lalu saya perbaiki.";
+        let continuation =
+            "proses build gagal karena modul belum terdaftar di workspace. Lalu saya perbaiki.";
         let merged = merge_continuation(previous, continuation);
         assert_eq!(merged.matches("modul belum terdaftar").count(), 1);
         assert!(merged.ends_with("Lalu saya perbaiki."));
@@ -156,7 +163,14 @@ mod tests {
 
     #[test]
     fn bare_continue_messages_are_recognised() {
-        for text in ["continue", "Continue.", " lanjut ", "Lanjutkan!", "go on", "resume"] {
+        for text in [
+            "continue",
+            "Continue.",
+            " lanjut ",
+            "Lanjutkan!",
+            "go on",
+            "resume",
+        ] {
             assert!(trailing_continue_intent(text), "should match {text:?}");
         }
     }

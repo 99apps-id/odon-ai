@@ -23,6 +23,7 @@ pub enum RiskTier {
     Tier0ReadOnly = 0,
     Tier1WorkspaceMutating = 1,
     Tier2SystemMutating = 2,
+    Tier3NetworkAction = 3,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

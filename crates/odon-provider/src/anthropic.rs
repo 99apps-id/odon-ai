@@ -241,11 +241,7 @@ impl ModelProvider for AnthropicProvider {
                         || status.as_u16() == 408;
                     if retryable && attempt < 2 {
                         attempt += 1;
-                        tracing::warn!(
-                            "Anthropic returned HTTP {} - retry {}/2",
-                            status,
-                            attempt
-                        );
+                        tracing::warn!("Anthropic returned HTTP {} - retry {}/2", status, attempt);
                         tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64))
                             .await;
                         continue;

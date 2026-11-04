@@ -1338,7 +1338,7 @@ impl Tool for BrowserDownloadTool {
 
             drop(ws);
             let _ = child.kill().await;
-            Ok(())
+            Ok::<(), OdonError>(())
         })
         .await
         .map_err(|_| OdonError::Tool {
