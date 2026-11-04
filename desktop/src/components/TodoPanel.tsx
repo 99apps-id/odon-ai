@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Circle, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, Loader2, X } from 'lucide-react';
 import type { TodoItem } from '../api';
 
 interface TodoPanelProps {
   items: TodoItem[];
   live?: boolean;
+  onHide?: () => void;
 }
 
 const STATUS_LABEL: Record<TodoItem['status'], string> = {
@@ -17,7 +18,7 @@ const STATUS_LABEL: Record<TodoItem['status'], string> = {
  * Single place todos are rendered in chat. Tool calls named todo_* are filtered
  * out of the tool rows so the list never appears twice.
  */
-export function TodoPanel({ items, live = false }: TodoPanelProps) {
+export function TodoPanel({ items, live = false, onHide }: TodoPanelProps) {
   const [open, setOpen] = useState(true);
 
   if (!items || items.length === 0) return null;
@@ -30,30 +31,43 @@ export function TodoPanel({ items, live = false }: TodoPanelProps) {
   return (
     <div className="my-2 max-w-full min-w-0">
       <div className="rounded-xl border border-neutral-200 bg-sand-50/60 overflow-hidden shadow-2xs">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-sand-100/60 transition-colors"
-        >
-          {open ? (
-            <ChevronDown className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-          )}
-          <span className="text-[11.5px] font-semibold text-neutral-700">Tasks</span>
-          <span className="text-[10.5px] font-mono text-neutral-500 tabular-nums">
-            {done}/{total}
-          </span>
-          {live && active && (
-            <span className="text-[10.5px] text-blue-700 truncate min-w-0 flex-1">
-              {active.title}
+        <div className="flex items-center gap-1 px-3 py-1.5 hover:bg-sand-100/60 transition-colors">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer"
+          >
+            {open ? (
+              <ChevronDown className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+            )}
+            <span className="text-[11.5px] font-semibold text-neutral-700">Tasks</span>
+            <span className="text-[10.5px] font-mono text-neutral-500 tabular-nums">
+              {done}/{total}
             </span>
+            {live && active && (
+              <span className="text-[10.5px] text-blue-700 truncate min-w-0 flex-1">
+                {active.title}
+              </span>
+            )}
+            <span className="ml-auto text-[10px] font-mono text-neutral-500 tabular-nums">
+              {pct}%
+            </span>
+          </button>
+          {onHide && (
+            <button
+              type="button"
+              onClick={onHide}
+              aria-label="Hide tasks"
+              title="Hide tasks"
+              className="ml-1 rounded-md p-1 text-neutral-400 hover:bg-sand-100 hover:text-neutral-700 transition-colors cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
           )}
-          <span className="ml-auto text-[10px] font-mono text-neutral-500 tabular-nums">
-            {pct}%
-          </span>
-        </button>
+        </div>
 
         <div className="h-0.5 bg-neutral-200/70">
           <div

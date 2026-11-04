@@ -659,6 +659,7 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [showTodos, setShowTodos] = useState(true);
   const [artifactHistoryTarget, setArtifactHistoryTarget] = useState<Artifact | null>(null);
 
   // Chat & Stream State
@@ -2311,8 +2312,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   </div>
                 ))}
 
-                <TodoPanel items={todos} live={isGenerating} />
-
                 {/* Active Generating / Streaming Turn */}
                 {pendingApproval && (
                   <div className="flex gap-4 mb-4 max-w-3xl" role="alert" aria-live="assertive">
@@ -2394,6 +2393,26 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               </div>
             )}
           </div>
+
+          {/* Tasks stay attached to the composer instead of interrupting the transcript. */}
+          {todos.length > 0 && (
+            <div className={`px-4 ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} w-full mx-auto shrink-0`}>
+              {showTodos ? (
+                <TodoPanel items={todos} live={isGenerating} onHide={() => setShowTodos(false)} />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowTodos(true)}
+                  className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-neutral-50 hover:text-neutral-900 cursor-pointer"
+                  aria-label="Show tasks"
+                >
+                  <ListTree className="w-3.5 h-3.5 text-blue-600" />
+                  Show tasks
+                  <span className="font-mono text-[10px] text-neutral-400">{todos.filter((item) => item.status === 'completed').length}/{todos.length}</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Bottom Prompt Input Box */}
           <div className="p-4 pt-0 shrink-0">
