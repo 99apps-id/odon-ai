@@ -146,6 +146,23 @@ impl Tool for ProcessListTool {
 }
 
 pub struct ProcessKillTool;
+
+/// Hard safety guard for `process_kill`.
+///
+/// Refuses the odond process's own PID so the agent can never terminate the
+/// daemon it is running inside. Checked before any kill command is built or
+/// spawned, so a self-kill request never reaches the OS. Every other PID is
+/// passed through unchanged, preserving the tool's existing behaviour.
+fn guard_kill_target(pid: u64) -> Result<u64> {
+    let self_pid = u64::from(std::process::id());
+    if pid == self_pid {
+        return Err(OdonError::Security(format!(
+            "Refusing to kill the odond process itself (pid {self_pid})"
+        )));
+    }
+    Ok(pid)
+}
+
 #[async_trait]
 impl Tool for ProcessKillTool {
     fn name(&self) -> &str {
@@ -174,6 +191,8 @@ impl Tool for ProcessKillTool {
                 tool: self.name().to_string(),
                 message: "Missing 'pid' argument".to_string(),
             })?;
+        // Refuse a self-kill before constructing or spawning the kill command.
+        let pid = guard_kill_target(pid)?;
 
         #[cfg(target_os = "windows")]
         let mut cmd = Command::new("taskkill");
@@ -1336,6 +1355,65 @@ impl Tool for ProcessWaitTool {
             "stderr": stderr,
             "elapsed_seconds": start.elapsed().as_secs()
         }))
+    }
+}
+
+#[cfg(test)]
+mod process_kill_tests {
+    use super::*;
+    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+
+    fn test_context() -> ToolContext {
+        ToolContext {
+            session_id: "process-kill-test".to_string(),
+            workspace_root: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
+
+    #[test]
+    fn guard_rejects_the_current_process_pid() {
+        let self_pid = std::process::id();
+        let error = guard_kill_target(u64::from(self_pid)).expect_err("self pid must be refused");
+        assert!(
+            matches!(error, OdonError::Security(_)),
+            "expected a security refusal, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains(&self_pid.to_string()),
+            "refusal should name the refused pid: {error}"
+        );
+    }
+
+    #[test]
+    fn guard_passes_other_pids_through_unchanged() {
+        let self_pid = u64::from(std::process::id());
+        for pid in [self_pid + 1, self_pid + 1_000_000] {
+            assert_eq!(guard_kill_target(pid).expect("other pid allowed"), pid);
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_refuses_self_pid_before_any_kill_command_runs() {
+        let ctx = test_context();
+        let self_pid = std::process::id();
+        let error = ProcessKillTool
+            .execute(&ctx, json!({ "pid": self_pid }))
+            .await
+            .expect_err("process_kill must refuse its own pid");
+        let message = error.to_string();
+        assert!(
+            message.contains("Refusing to kill") && message.contains(&self_pid.to_string()),
+            "unexpected refusal message: {message}"
+        );
+        // Still executing at this PID: the guard returned before any OS kill
+        // command was spawned (a real taskkill/kill on this PID would end the test).
+        assert_eq!(std::process::id(), self_pid);
     }
 }
 
