@@ -155,6 +155,18 @@
   animation: odon-reasoning-shimmer 1.8s ease-in-out infinite;
 }
 
+.reasoning-markdown p {
+  white-space: pre-line;
+}
+
+.reasoning-markdown p + p {
+  margin-top: 0.65rem;
+}
+
+.reasoning-markdown li {
+  white-space: pre-line;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .approval-option::after,
   .odon-reasoning-mark.is-live {

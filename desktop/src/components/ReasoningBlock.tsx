@@ -45,7 +45,7 @@ export function ReasoningBlock({ content, live = false }: ReasoningBlockProps) {
       {open && (
         <div className="max-h-60 overflow-y-auto bg-white/45 px-3 py-2 text-[11px] leading-snug text-neutral-600 select-text break-words">
           {content ? (
-            <MarkdownView content={content} dense />
+            <MarkdownView content={content} dense preserveLineBreaks />
           ) : (
             <span className="text-neutral-400">Thinking through the next step…</span>
           )}

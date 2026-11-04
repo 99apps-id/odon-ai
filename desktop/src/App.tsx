@@ -2065,7 +2065,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                             <span className="text-[10px] text-neutral-400 font-mono group-open:hidden">Click to expand</span>
                           </summary>
                           <div className="p-3 border-t border-neutral-200/60 bg-neutral-50/30 text-[11px] leading-snug text-neutral-600 select-text max-w-full min-w-0 overflow-x-hidden break-words">
-                            <MarkdownView content={msg.thought} dense />
+                            <MarkdownView content={msg.thought} dense preserveLineBreaks />
                           </div>
                         </details>
                       </div>

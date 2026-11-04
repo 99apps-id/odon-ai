@@ -24,6 +24,7 @@ interface MarkdownViewProps {
   content: string;
   className?: string;
   dense?: boolean;
+  preserveLineBreaks?: boolean;
   onRunTerminal?: (cmd: string) => void;
   onOpenBrowser?: (url: string) => void;
 }
@@ -171,6 +172,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
   content,
   className = '',
   dense = false,
+  preserveLineBreaks = false,
   onRunTerminal,
   onOpenBrowser,
 }) => {
@@ -443,7 +445,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
                 ? "text-[11px] leading-snug text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
                 : "text-[13.5px] leading-[1.6] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
             }
-            dangerouslySetInnerHTML={{ __html: formatInline(paragraphLines.join(' '), triggerOpenBrowser, dense) }}
+            dangerouslySetInnerHTML={{ __html: formatInline(paragraphLines.join(preserveLineBreaks ? '\n' : ' '), triggerOpenBrowser, dense) }}
           />
         );
       } else {
@@ -468,7 +470,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
     return elements;
   };
 
-  return <div className={`font-sans select-text break-words [overflow-wrap:anywhere] max-w-full min-w-0 overflow-x-hidden ${className}`}>{renderFormatted(content)}</div>;
+  return <div className={`font-sans select-text break-words [overflow-wrap:anywhere] max-w-full min-w-0 overflow-x-hidden ${preserveLineBreaks ? 'reasoning-markdown' : ''} ${className}`}>{renderFormatted(content)}</div>;
 };
 
 // ─────────────────────────────────────────────────────────────
