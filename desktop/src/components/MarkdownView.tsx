@@ -251,13 +251,31 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
       }
 
       // 4. Tables (| col 1 | col 2 |)
-      if (trimmed.startsWith('|') && trimmed.endsWith('|') && i + 1 < rawLines.length && rawLines[i + 1].includes('---')) {
+      // Every pipe-leading line must be consumed here. A partial table (header
+      // row still streaming in, or a row without a `---` separator) used to
+      // match no branch and leave the cursor in place, which hung the renderer.
+      if (trimmed.startsWith('|')) {
         const tableLines: string[] = [];
-        while (i < rawLines.length && rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|')) {
+        while (i < rawLines.length && rawLines[i].trim().startsWith('|')) {
           tableLines.push(rawLines[i].trim());
           i++;
         }
-        elements.push(<TableBlock key={`table-${i}`} lines={tableLines} dense={dense} onOpenBrowser={triggerOpenBrowser} />);
+        const looksLikeTable = tableLines.length >= 2 && tableLines[1].includes('---');
+        if (looksLikeTable) {
+          elements.push(<TableBlock key={`table-${i}`} lines={tableLines} dense={dense} onOpenBrowser={triggerOpenBrowser} />);
+        } else {
+          elements.push(
+            <p
+              key={`pipes-${i}`}
+              className={
+                dense
+                  ? "text-[11px] leading-snug text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
+                  : "text-[13.5px] leading-[1.6] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
+              }
+              dangerouslySetInnerHTML={{ __html: formatInline(tableLines.join(' '), triggerOpenBrowser, dense) }}
+            />
+          );
+        }
         continue;
       }
 
@@ -428,6 +446,22 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
             dangerouslySetInnerHTML={{ __html: formatInline(paragraphLines.join(' '), triggerOpenBrowser, dense) }}
           />
         );
+      } else {
+        // Safety net: a line that no branch claimed must still advance the
+        // cursor, otherwise the parser can never terminate (renderer hang).
+        elements.push(
+          <p
+            key={`raw-${i}`}
+            className={
+              dense
+                ? "text-[11px] leading-snug text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
+                : "text-[13.5px] leading-[1.6] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
+            }
+          >
+            {line}
+          </p>
+        );
+        i++;
       }
     }
 

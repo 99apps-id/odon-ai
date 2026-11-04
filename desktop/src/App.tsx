@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   MessageSquare,
   Code2,
@@ -23,6 +23,9 @@ import {
   Radio,
   Activity,
   ChevronRight,
+  CircleAlert,
+  Clock3,
+  FilePen,
   Video,
   Square,
   X,
@@ -63,12 +66,13 @@ import { DiffView } from './components/DiffView';
 import { TerminalPeek, commandOf, isTerminalTool, outputToText, type TerminalEntry } from './components/TerminalPeek';
 import { ApprovalCard } from './components/ApprovalCard';
 import { ApprovalCenterModal } from './components/ApprovalCenterModal';
+import { TodoPanel } from './components/TodoPanel';
 import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
 import { PromptStartersGrid } from './components/PromptStartersGrid';
 import { ArtifactVersionsModal } from './components/ArtifactVersionsModal';
-import { api, WorkspaceInfo, WorkspaceBrowseResult } from './api';
+import { api, WorkspaceInfo, WorkspaceBrowseResult, type TodoItem } from './api';
 import { isDesktopShell, pickFolder } from './lib/desktop';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
@@ -87,9 +91,43 @@ function parseExecutionMode(raw: string | null): ExecutionMode {
 }
 
 interface ToolCallSummary {
+  id?: string;
   name: string;
   /** Target URL when the tool was called with one, so the chip can open the real page. */
   url?: string;
+  /** One-line argument summary (command, path, query...), shown next to the name. */
+  args?: string;
+  /** Tool output, available only for calls recorded on this turn. */
+  output?: string;
+  isError?: boolean;
+}
+
+/** One-line summary of a tool call's arguments, the way a coding agent reads it. */
+function summarizeToolArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const a = args as Record<string, unknown>;
+  const pick = (key: string) => (typeof a[key] === 'string' ? (a[key] as string) : undefined);
+  const primary =
+    pick('command') ??
+    pick('path') ??
+    pick('query') ??
+    pick('url') ??
+    pick('pattern') ??
+    pick('target') ??
+    pick('prompt') ??
+    pick('name');
+  if (!primary) return undefined;
+  return primary.length > 160 ? `${primary.slice(0, 157)}...` : primary;
+}
+
+function toolOutputText(output: unknown): string | undefined {
+  if (output == null) return undefined;
+  if (typeof output === 'string') return output;
+  try {
+    return JSON.stringify(output, null, 2);
+  } catch {
+    return undefined;
+  }
 }
 
 interface ChatMessage {
@@ -109,6 +147,23 @@ function formatSessionTimestamp(value: string): string {
   return Number.isNaN(date.getTime())
     ? ''
     : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Legacy rows can arrive without updated_at; print nothing instead of the
+// literal "Invalid Date" in the sidebar.
+function formatSessionDate(value: string | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+}
+
+// Artifact timestamps arrive as an ISO string or epoch millis; never print
+// "Invalid Date" in the sidebar when the field is missing or malformed.
+function formatArtifactTime(value: string | number | undefined): string {
+  if (value === undefined || value === null || value === '') return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return ` • ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 // Terminal commands an assistant turn actually ran, taken from the persisted
@@ -153,22 +208,16 @@ function normalizeSessionHistory(history: Message[]): ChatMessage[] {
       .find((message) => message.content.text.trim().length > 0);
 
     if (finalAssistant) {
-      const toolCalls: ToolCallSummary[] = Array.from(
-        new Map(
-          assistants
-            .flatMap((message) => message.content.tool_calls || [])
-            .map((call) => [
-              call.tool_name,
-              {
-                name: call.tool_name,
-                url:
-                  typeof (call.arguments as any)?.url === 'string'
-                    ? (call.arguments as any).url
-                    : undefined,
-              } satisfies ToolCallSummary,
-            ]),
-        ).values(),
-      );
+      const toolCalls: ToolCallSummary[] = assistants
+        .flatMap((message) => message.content.tool_calls || [])
+        .map((call) => ({
+          id: call.call_id,
+          name: call.tool_name || (call as { name?: string }).name || 'tool',
+          url: typeof (call.arguments as any)?.url === 'string' ? (call.arguments as any).url : undefined,
+          args: summarizeToolArgs(call.arguments),
+          output: toolOutputText(call.output),
+          isError: call.is_error,
+        }));
 
       output.push({
         id: finalAssistant.id,
@@ -607,6 +656,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const [artifactHistoryTarget, setArtifactHistoryTarget] = useState<Artifact | null>(null);
 
   // Chat & Stream State
@@ -616,10 +666,22 @@ export default function App() {
   const [streamingText, setStreamingText] = useState('');
   const [streamingThought, setStreamingThought] = useState('');
   const [streamingTool, setStreamingTool] = useState<string | null>(null);
-  const [chatDiffs, setChatDiffs] = useState<{ id: string; title: string; diff: string }[]>([]);
+  const chatDiffs = useMemo<{ id: string; title: string; diff: string }[]>(
+    () =>
+      artifacts
+        .flatMap((a) => {
+          const payload = a.payload;
+          if (a.kind !== 'patch' || payload?.type !== 'patch') return [];
+          const diff = payload.data?.diff;
+          return diff ? [{ id: a.id, title: a.title, diff }] : [];
+        })
+        .slice(0, 4),
+    [artifacts],
+  );
   const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null);
   const [liveTerminal, setLiveTerminal] = useState<TerminalEntry[]>([]);
   const pendingTerminalRef = useRef<Map<string, TerminalEntry>>(new Map());
+  const todoCallIdsRef = useRef<Set<string>>(new Set());
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [steerCards, setSteerCards] = useState<SteerCard[]>([]);
   const steerCardsRef = useRef<SteerCard[]>([]);
@@ -728,7 +790,10 @@ export default function App() {
 
     const unsubscribe = api.subscribeEvents((event) => {
       const eventSession = 'session_id' in event.payload ? event.payload.session_id : null;
-      if (eventSession && activeSessionRef.current && eventSession !== activeSessionRef.current) {
+      // Drop session-bound events when no session is active, and drop events
+      // belonging to another session. Without the null check, a background
+      // session (or subagent) could feed this view before any session opens.
+      if (eventSession && eventSession !== activeSessionRef.current) {
         return;
       }
       if (event.type === 'text_delta') {
@@ -747,6 +812,9 @@ export default function App() {
       } else if (event.type === 'tool_call_started') {
         const toolName = event.payload.tool_name;
         setStreamingTool(toolName);
+        if (String(toolName || '').toLowerCase().startsWith('todo')) {
+          todoCallIdsRef.current.add(event.payload.call_id);
+        }
         if (['terminal_exec', 'bash_run', 'shell_exec', 'exec_background', 'exec_stream_stdout'].includes(toolName)) {
           window.dispatchEvent(new CustomEvent('odon:agent-terminal-event', { detail: event.payload }));
           if (isTerminalTool(toolName)) {
@@ -757,7 +825,7 @@ export default function App() {
             });
             setLiveTerminal(Array.from(pendingTerminalRef.current.values()).slice(-4));
           }
-        } else if (['browser_open', 'browser_navigate', 'browser_session_navigate', 'url_preview', 'probe_url', 'web_fetch'].includes(toolName)) {
+        } else if (['browser_open', 'browser_navigate', 'browser_session_navigate'].includes(toolName)) {
           const u = event.payload.arguments?.url;
           if (u) {
             window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { url: u } }));
@@ -765,6 +833,9 @@ export default function App() {
         }
       } else if (event.type === 'tool_call_finished') {
         setStreamingTool(null);
+        if (todoCallIdsRef.current.delete(event.payload.call_id) && currentSessionId) {
+          api.getTodos(currentSessionId).then(setTodos).catch(() => {});
+        }
         const pending = pendingTerminalRef.current.get(event.payload.call_id);
         if (pending) {
           pending.output = outputToText(event.payload.output);
@@ -773,15 +844,6 @@ export default function App() {
         }
       } else if (event.type === 'artifact_created') {
         setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
-        const art = event.payload.artifact;
-        if (art.kind === 'patch' && art.payload?.type === 'patch' && art.payload.data?.diff) {
-          const diff = art.payload.data.diff;
-          setChatDiffs((prev) =>
-            prev.some((d) => d.id === art.id)
-              ? prev
-              : [...prev, { id: art.id, title: art.title, diff }].slice(-4),
-          );
-        }
       } else if (event.type === 'steer_applied') {
         setSteerCards((prev) => prev.filter((card) => card.id !== event.payload.steer_id));
       } else if (event.type === 'state_changed') {
@@ -790,6 +852,7 @@ export default function App() {
           setStreamingTool(null);
           if (currentSessionId) {
             loadArtifacts(currentSessionId);
+            api.getTodos(currentSessionId).then(setTodos).catch(() => {});
             loadSessions();
           }
         }
@@ -867,7 +930,6 @@ export default function App() {
     setStreamingThought('');
     setStreamingTool(null);
     setSteerCards([]);
-    setChatDiffs([]);
     stoppedRef.current = false;
     setActiveWorkspace(workspaces.default);
   };
@@ -881,7 +943,6 @@ export default function App() {
     setStreamingText('');
     setStreamingThought('');
     setSteerCards([]);
-    setChatDiffs([]);
     stoppedRef.current = false;
     try {
       const data = await api.getSession(id);
@@ -894,6 +955,7 @@ export default function App() {
       if (data.artifacts && data.artifacts.length > 0) {
         setArtifacts(data.artifacts);
       }
+      setTodos(await api.getTodos(id));
     } catch (err: any) {
       setMessages([
         {
@@ -1225,8 +1287,12 @@ export default function App() {
           showAppCard: resMsg.content.artifact_ids?.length > 0 || resMsg.content.text.includes('```'),
           thought: resMsg.content.thought,
           toolCalls: resMsg.content.tool_calls?.map((t) => ({
-            name: t.tool_name,
+            id: t.call_id,
+            name: t.tool_name || (t as { name?: string }).name || 'tool',
             url: typeof (t.arguments as any)?.url === 'string' ? (t.arguments as any).url : undefined,
+            args: summarizeToolArgs(t.arguments),
+            output: toolOutputText(t.output),
+            isError: t.is_error,
           })),
           terminal: terminalEntriesOf([resMsg]),
         };
@@ -1450,7 +1516,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
   const recentItems = (showAllRecent ? sessions : sessions.slice(0, 5)).map((s) => ({
     id: s.id,
     title: s.title,
-    time: new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    time: formatSessionTimestamp(s.updated_at),
   }));
 
   return (
@@ -1920,6 +1986,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             {/* VIEW B: CONVERSATION STREAM */}
             {inChatMode && (
               <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} flex flex-col space-y-6 mx-auto select-text min-w-0 overflow-x-hidden`}>
+                <TodoPanel items={todos} live={isGenerating} />
                 {messages.map((msg) => (
                   <div key={msg.id} className="flex flex-col space-y-2 group">
                     <div className="flex items-center justify-between">
@@ -1986,49 +2053,65 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       </div>
                     )}
 
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div className="ml-7 flex flex-wrap items-center gap-2 py-1">
-                        {msg.toolCalls.map((tc, idx) => {
-                          const tcLower = tc.name.toLowerCase();
+                    {(() => {
+                      const rows = (msg.toolCalls || []).filter(
+                        (tc) => !String(tc.name || '').toLowerCase().startsWith('todo'),
+                      );
+                      return rows.length > 0 ? (
+                      <div className="ml-7 flex flex-col gap-1 py-1">
+                        {rows.map((tc, idx) => {
+                          const tcLower = (tc.name || 'tool').toLowerCase();
                           const isTerm = ['terminal', 'bash', 'shell', 'exec', 'kill'].some(k => tcLower.includes(k));
                           const isWeb = ['browser', 'web', 'fetch', 'url', 'http'].some(k => tcLower.includes(k));
+                          const isEdit = ['edit', 'patch', 'write'].some(k => tcLower.includes(k));
                           return (
-                            <span
-                              key={idx}
-                              onClick={() => {
-                                if (isTerm) {
-                                  setRightPanelView('terminal');
-                                  setIsRightPanelOpen(true);
-                                } else if (isWeb) {
-                                  // Seed the panel with the real target so it shows the
-                                  // page the tool touched, not an empty/status screen.
-                                  setBrowserSeed(tc.url ? { url: tc.url } : null);
-                                  setRightPanelView('browser');
-                                  setIsRightPanelOpen(true);
-                                }
-                              }}
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-all cursor-pointer ${
-                                isTerm
-                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200/80 hover:bg-emerald-100'
-                                  : isWeb
-                                  ? 'bg-blue-50 text-blue-800 border-blue-200/80 hover:bg-blue-100'
-                                  : 'bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200'
-                              }`}
-                              title={isTerm ? "Click to view in Terminal panel" : isWeb ? (tc.url ? `Open ${tc.url}` : "No URL recorded for this call") : tc.name}
+                            <details
+                              key={tc.id ?? idx}
+                              className="group rounded-lg border border-neutral-200 bg-white open:bg-neutral-50/60"
                             >
-                              {isTerm ? (
-                                <Terminal className="w-3 h-3 text-emerald-600" />
-                              ) : isWeb ? (
-                                <Globe className="w-3 h-3 text-blue-600" />
-                              ) : (
-                                <Terminal className="w-3 h-3 text-neutral-500" />
+                              <summary
+                                onClick={() => {
+                                  if (isTerm) {
+                                    setRightPanelView('terminal');
+                                    setIsRightPanelOpen(true);
+                                  } else if (isWeb) {
+                                    // Seed the panel with the real target so it shows the
+                                    // page the tool touched, not an empty/status screen.
+                                    setBrowserSeed(tc.url ? { url: tc.url } : null);
+                                    setRightPanelView('browser');
+                                    setIsRightPanelOpen(true);
+                                  }
+                                }}
+                                className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-[11.5px] font-medium"
+                              >
+                                {tc.isError
+                                  ? <CircleAlert className="h-3.5 w-3.5 shrink-0 text-clay-600" />
+                                  : isTerm
+                                    ? <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-700" />
+                                    : isWeb
+                                      ? <Globe className="h-3.5 w-3.5 shrink-0 text-slate-700" />
+                                      : isEdit
+                                        ? <FilePen className="h-3.5 w-3.5 shrink-0 text-slate-700" />
+                                        : <Clock3 className="h-3.5 w-3.5 shrink-0 text-neutral-500" />}
+                                <span className={`font-mono ${tc.isError ? 'text-clay-700' : 'text-neutral-800'}`}>{tc.name}</span>
+                                {tc.args && (
+                                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-normal text-neutral-500">
+                                    {tc.args}
+                                  </span>
+                                )}
+                                <ChevronRight className="ml-auto h-3 w-3 shrink-0 text-neutral-400 transition-transform group-open:rotate-90" />
+                              </summary>
+                              {tc.output && (
+                                <pre className="max-h-56 overflow-auto border-t border-neutral-200 bg-neutral-900 px-3 py-2 text-[11px] leading-relaxed text-neutral-100">
+                                  {tc.output.length > 4000 ? `${tc.output.slice(0, 4000)}\n...` : tc.output}
+                                </pre>
                               )}
-                              <span>{tc.name}</span>
-                            </span>
+                            </details>
                           );
                         })}
                       </div>
-                    )}
+                      ) : null;
+                    })()}
 
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="ml-7 flex flex-wrap gap-2">
@@ -2728,7 +2811,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                     {art.title}
                                   </div>
                                   <div className="text-[10px] text-neutral-400 mt-0.5 capitalize">
-                                    {art.kind} • {new Date(art.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {art.kind}{formatArtifactTime(art.created_at)}
                                   </div>
                                 </div>
                               </div>
@@ -3257,7 +3340,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     >
                       <span className="font-medium text-neutral-800 truncate">{s.title}</span>
                       <span className="text-[10px] text-neutral-400">
-                        {new Date(s.updated_at).toLocaleDateString()}
+                        {formatSessionDate(s.updated_at)}
                       </span>
                     </button>
                   ))

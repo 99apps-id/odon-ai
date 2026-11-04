@@ -30,6 +30,8 @@ export interface BrowserSeed {
   url?: string;
   html?: string;
   markdown?: string;
+  /** Display name for an artifact-backed page (its title or file path). */
+  title?: string;
 }
 
 interface BrowserPreviewViewProps {
@@ -49,6 +51,7 @@ export function BrowserPreviewView({
   const [inputUrl, setInputUrl] = useState<string>(initialUrl);
   const [htmlContent, setHtmlContent] = useState<string | null>(initialHtml || null);
   const [markdownContent, setMarkdownContent] = useState<string>('');
+  const [seedTitle, setSeedTitle] = useState<string>('');
   const [mode, setMode] = useState<'iframe' | 'reader' | 'html' | 'markdown' | 'live'>('iframe');
   const [viewportMode, setViewportMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -97,6 +100,7 @@ export function BrowserPreviewView({
   // to the daemon status JSON instead of the page the agent navigated to.
   useEffect(() => {
     if (!seed) return;
+    if (seed.title) setSeedTitle(seed.title);
     if (seed.markdown) {
       setMarkdownContent(seed.markdown);
       setMode('markdown');
@@ -429,6 +433,14 @@ export function BrowserPreviewView({
             </button>
           </div>
 
+          {/* Artifact-backed page label */}
+          {seedTitle && (mode === 'html' || mode === 'markdown') && (
+            <span className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-200/70 text-[11px] font-medium text-neutral-600 max-w-[220px] truncate">
+              <FileText className="w-3 h-3 shrink-0" />
+              <span className="truncate">{seedTitle}</span>
+            </span>
+          )}
+
           {/* Popout to OS Browser */}
           <a
             href={url}
@@ -466,7 +478,7 @@ export function BrowserPreviewView({
           CANVAS VIEWPORT AREA
       ───────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-auto bg-neutral-100/60 p-3 flex justify-center items-stretch relative">
-        {mode === 'iframe' && (
+        {(mode === 'iframe' || mode === 'html') && (
           <div
             className={`bg-white rounded-xl shadow-xs border border-neutral-200/90 overflow-hidden flex flex-col transition-all duration-200 ${
               viewportMode === 'mobile'

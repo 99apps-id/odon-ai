@@ -19,6 +19,31 @@ import { Artifact, ArtifactPayload } from '../types';
 
 const isDocumentPayload = (payload: ArtifactPayload): payload is Extract<ArtifactPayload, { type: 'document' }> =>
   payload.type === 'document';
+
+/**
+ * Documents hold raw text that may actually be an HTML page (the agent has no
+ * HTML artifact tool, so a page lands in a `document` artifact). Sending that
+ * text to the browser panel as markdown showed the source instead of the page,
+ * which is why a generated timeline "did not appear". Detect it and hand the
+ * panel real HTML so it renders in the sandboxed iframe.
+ */
+export function looksLikeHtmlDocument(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/^(<!doctype\s+html|<html[\s>])/i.test(trimmed)) return true;
+  const fenced = trimmed.match(/^```(?:html)?\s*\n([\s\S]*?)\n```\s*$/i);
+  if (fenced) {
+    const inner = fenced[1].trim();
+    return /^<!doctype\s+html/i.test(inner) || /^<html[\s>]/i.test(inner);
+  }
+  return false;
+}
+
+/** Strip a ```html fence so the panel receives a bare document. */
+export function unwrapHtmlDocument(text: string): string {
+  const fenced = text.trim().match(/^```(?:html)?\s*\n([\s\S]*?)\n```\s*$/i);
+  return fenced ? fenced[1] : text;
+}
 import { api } from '../api';
 import { MarkdownView } from './MarkdownView';
 
@@ -231,6 +256,28 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                           <pre className="p-3 text-[12px] font-mono text-neutral-200 overflow-x-auto max-h-[360px]">
                             <code>{currentFile.content}</code>
                           </pre>
+                          {(currentFile.path.toLowerCase().endsWith('.html') ||
+                            currentFile.path.toLowerCase().endsWith('.htm') ||
+                            looksLikeHtmlDocument(currentFile.content)) && (
+                            <div className="px-3 py-2 border-t border-neutral-800 bg-[#252526]">
+                              <button
+                                onClick={() =>
+                                  window.dispatchEvent(
+                                    new CustomEvent('odon:open-browser', {
+                                      detail: {
+                                        html: unwrapHtmlDocument(currentFile.content),
+                                        title: currentFile.path,
+                                      },
+                                    }),
+                                  )
+                                }
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                                Open Page in Browser
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -240,23 +287,36 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                 {/* Document Artifact Payload */}
                 {selectedArtifact.payload.type === 'document' && (() => {
                   const markdown = selectedArtifact.payload.data.markdown;
+                  const isHtml = looksLikeHtmlDocument(markdown);
                   return (
                     <div className="space-y-2">
                       <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 bg-white dark:bg-neutral-900 max-h-[420px] overflow-y-auto">
-                        <MarkdownView content={markdown} />
+                        {isHtml ? (
+                          <iframe
+                            srcDoc={unwrapHtmlDocument(markdown)}
+                            sandbox="allow-scripts allow-forms"
+                            referrerPolicy="no-referrer"
+                            title="Document artifact preview"
+                            className="w-full h-[380px] border-0 bg-white rounded"
+                          />
+                        ) : (
+                          <MarkdownView content={markdown} />
+                        )}
                       </div>
                       <button
                         onClick={() =>
                           window.dispatchEvent(
                             new CustomEvent('odon:open-browser', {
-                              detail: { markdown },
+                              detail: isHtml
+                                ? { html: unwrapHtmlDocument(markdown), title: selectedArtifact.title }
+                                : { markdown, title: selectedArtifact.title },
                             }),
                           )
                         }
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                       >
                         <FileText className="w-3 h-3" />
-                        Preview in Browser
+                        {isHtml ? 'Open Page in Browser' : 'Preview in Browser'}
                       </button>
                     </div>
                   );

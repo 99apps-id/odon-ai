@@ -63,6 +63,12 @@ export interface FsReadResult {
   error?: string;
 }
 
+export interface TodoItem {
+  id: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
 export interface WorkspaceInfo {
   default: string;
   allowed: string[];
@@ -557,6 +563,13 @@ export const api = {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/artifacts`);
     if (!res.ok) return [];
     return res.json();
+  },
+
+  async getTodos(sessionId: string): Promise<TodoItem[]> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/todos`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.items) ? data.items : [];
   },
 
   async getArtifact(id: string): Promise<Artifact> {
