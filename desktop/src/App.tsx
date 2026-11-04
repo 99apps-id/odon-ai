@@ -977,6 +977,7 @@ export default function App() {
     currentSessionIdRef.current = null;
     setCurrentSessionId(null);
     setMessages([]);
+    setTodos([]);
     setInputMessage('');
     setStreamingText('');
     setStreamingThought('');
@@ -997,6 +998,7 @@ export default function App() {
     stoppedRef.current = false;
     try {
       const data = await api.getSession(id);
+      if (currentSessionIdRef.current !== id) return;
       setActiveWorkspace(data.session?.workspace_root || workspaces.default || '');
       if (data.messages && data.messages.length > 0) {
         setMessages(normalizeSessionHistory(data.messages));
@@ -1006,7 +1008,9 @@ export default function App() {
       if (data.artifacts && data.artifacts.length > 0) {
         setArtifacts(data.artifacts);
       }
-      setTodos(await api.getTodos(id));
+      const sessionTodos = await api.getTodos(id);
+      if (currentSessionIdRef.current !== id) return;
+      setTodos(sessionTodos);
     } catch (err: any) {
       setMessages([
         {

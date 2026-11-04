@@ -424,6 +424,10 @@ struct WhatsAppBridge {
     spawned: SpawnedBridge,
 }
 
+fn resolve_first_existing(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(|path| path.exists())
+}
+
 impl WhatsAppBridge {
     fn new(bind: &str, api_token: Option<String>) -> Self {
         let port = std::env::var("WA_BRIDGE_PORT")
@@ -484,21 +488,47 @@ impl WhatsAppBridge {
     }
 
     fn resolve_script() -> Option<PathBuf> {
+        let mut candidates = Vec::new();
+
         if let Ok(explicit) = std::env::var("ODON_WHATSAPP_BRIDGE_SCRIPT") {
-            let path = PathBuf::from(explicit);
-            if path.exists() {
-                return Some(path);
+            candidates.push(PathBuf::from(explicit));
+        }
+
+        if let Ok(resource_dir) = std::env::var("ODON_RESOURCE_DIR") {
+            candidates.push(
+                PathBuf::from(resource_dir)
+                    .join("scripts")
+                    .join("whatsapp-bridge")
+                    .join("index.mjs"),
+            );
+        }
+
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                candidates.push(
+                    parent
+                        .join("scripts")
+                        .join("whatsapp-bridge")
+                        .join("index.mjs"),
+                );
+                candidates.push(
+                    parent
+                        .join("resources")
+                        .join("scripts")
+                        .join("whatsapp-bridge")
+                        .join("index.mjs"),
+                );
             }
         }
+
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        [
-            "scripts/whatsapp-bridge/index.mjs",
-            "../scripts/whatsapp-bridge/index.mjs",
-            "../../scripts/whatsapp-bridge/index.mjs",
-        ]
-        .iter()
-        .map(|relative| cwd.join(relative))
-        .find(|candidate| candidate.exists())
+        candidates.push(
+            cwd.join("scripts")
+                .join("whatsapp-bridge")
+                .join("index.mjs"),
+        );
+
+        resolve_first_existing(candidates)
     }
 
     fn child_running(&self) -> bool {
@@ -7976,6 +8006,31 @@ mod tests {
             default_base_url_for("muse"),
             default_base_url_for("some-unknown-provider")
         );
+    }
+
+    #[test]
+    fn resolve_first_existing_returns_first_match() {
+        let dir = std::env::temp_dir().join("odond-resolve-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let first = dir.join("a.mjs");
+        let second = dir.join("b.mjs");
+        std::fs::write(&first, "x").unwrap();
+        std::fs::write(&second, "y").unwrap();
+
+        assert_eq!(
+            resolve_first_existing(vec![second.clone(), first.clone()]),
+            Some(second)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_first_existing_returns_none_when_missing() {
+        assert!(resolve_first_existing(vec![
+            PathBuf::from("/missing/a.mjs"),
+            PathBuf::from("/missing/b.mjs"),
+        ])
+        .is_none());
     }
 }
 
