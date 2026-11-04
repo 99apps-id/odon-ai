@@ -141,7 +141,10 @@ jobs:
           missing=0
           while IFS='=' read -r name _; do
             case "$name" in ''|\#*) continue ;; esac
-            if ! grep -rqF "\"$name\"" crates scripts --include='*.rs' --include='*.mjs' --exclude-dir=node_modules; then
+            # A key counts as read when the code either quotes it (env::var("X"))
+            # or reaches it through the env object (process.env.X). Only the
+            # quoted form used to match, which flagged keys read via dot access.
+            if ! grep -rqE "\"$name\"|env\.$name\b" crates scripts --include='*.rs' --include='*.mjs' --exclude-dir=node_modules; then
               echo "::error::$name is documented in .env.example but never read by the code"
               missing=1
             fi

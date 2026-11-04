@@ -30,18 +30,27 @@ jobs:
             os: ubuntu-22.04
             rust-target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
+            files: |
+              desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
           - label: macOS (Apple Silicon)
             os: macos-14
             rust-target: aarch64-apple-darwin
             bundles: dmg
+            files: |
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - label: macOS (Intel)
             os: macos-13
             rust-target: x86_64-apple-darwin
             bundles: dmg
+            files: |
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           - label: Windows (x86_64)
             os: windows-2022
             rust-target: x86_64-pc-windows-msvc
             bundles: nsis
+            files: |
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -100,20 +109,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: odon-${{ matrix.rust-target }}
-          path: |
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/deb/*.deb
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
+          path: ${{ matrix.files }}
           if-no-files-found: error
 
       - name: Publish bundles to the GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/deb/*.deb
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/${{ matrix.rust-target }}/release/bundle/nsis/*.exe
+          files: ${{ matrix.files }}
           fail_on_unmatched_files: true
