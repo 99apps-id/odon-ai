@@ -1278,6 +1278,7 @@ impl AgentRuntime {
                                 session_id,
                                 &call.args,
                                 requested_model,
+                                routed_provider.as_deref(),
                                 depth,
                                 cancellation.clone(),
                             )
@@ -1625,6 +1626,7 @@ impl AgentRuntime {
         parent_session_id: &str,
         args: &serde_json::Value,
         model: &str,
+        parent_provider: Option<&str>,
         depth: u32,
         cancellation: CancellationToken,
     ) -> (serde_json::Value, bool) {
@@ -1643,11 +1645,17 @@ impl AgentRuntime {
                 );
             }
         };
+        // A subagent must keep the provider its parent was actually using.
+        // The parent's model arrives here already stripped of its
+        // `provider::` prefix, so without this the child would re-resolve the
+        // provider from the model id alone and could land on a different (for
+        // example, usage-capped) provider.
         let provider_override = args
             .get("provider")
             .and_then(|v| v.as_str())
             .filter(|v| !v.trim().is_empty())
-            .map(str::trim);
+            .map(str::trim)
+            .or(parent_provider);
         let requested_model = args
             .get("model")
             .and_then(|v| v.as_str())
@@ -1885,12 +1893,25 @@ impl AgentRuntime {
 
         let overall_error = completed_errors.first().map(|item| item.2.clone());
 
+        // The report must name the provider and the model separately; the
+        // parent needs both to retry with an explicit override. Deriving the
+        // provider from the model string's `provider::model` prefix keeps it
+        // correct even when the child inherited the parent's selection.
+        let effective_model = requested_model
+            .or(parent_model_override.as_deref())
+            .unwrap_or(model);
         let provider_display = provider_override
-            .or(parent_model_override.as_deref())
-            .unwrap_or(model);
-        let model_display = requested_model
-            .or(parent_model_override.as_deref())
-            .unwrap_or(model);
+            .map(str::to_string)
+            .or_else(|| {
+                effective_model
+                    .split_once("::")
+                    .map(|(provider, _)| provider.to_string())
+            })
+            .unwrap_or_else(|| "default".to_string());
+        let model_display = effective_model
+            .split_once("::")
+            .map(|(_, model)| model.to_string())
+            .unwrap_or_else(|| effective_model.to_string());
 
         if child_count > 1 {
             (
@@ -2499,7 +2520,15 @@ fn subagent_definition() -> ToolDefinition {
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "task": { "type": "string", "description": "One self-contained instruction for the subagent." }
+                "task": { "type": "string", "description": "One self-contained instruction for the subagent." },
+                "model": {
+                    "type": "string",
+                    "description": "Optional model override for this subagent. Defaults to the model the parent session is using. Accepts 'provider::model' or a bare model id."
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "Optional provider override (for example 'deepseek', 'mistral'). Pairs with 'model'; omit to let the model id pick the provider."
+                }
             },
             "required": ["task"]
         }),
@@ -2928,6 +2957,25 @@ mod tests {
         // Anything else keeps the documented clamp.
         assert_eq!(normalize_step_cap(1), 1);
         assert_eq!(normalize_step_cap(20_000), 10_000);
+    }
+
+    #[test]
+    fn subagent_definition_advertises_model_and_provider_overrides() {
+        let def = subagent_definition();
+        let props = def
+            .parameters
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("run_subagent must declare properties");
+        // The executor has always honoured `model` and `provider`; without
+        // advertising them the model could never use the override, so a
+        // usage-capped provider could not be routed around.
+        assert!(props.contains_key("model"), "model override must be advertised");
+        assert!(
+            props.contains_key("provider"),
+            "provider override must be advertised"
+        );
+        assert!(props.contains_key("task"));
     }
 
     #[test]

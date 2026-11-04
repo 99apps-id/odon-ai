@@ -912,6 +912,60 @@ async fn test_run_subagent_delegates_and_returns_the_child_report() {
     );
 }
 
+/// The delegation report must name the provider and the model separately.
+/// Pins the regression where `provider` was filled from the parent's *model*,
+/// so a failed subagent blamed a provider that was never called.
+#[tokio::test]
+async fn test_subagent_report_names_provider_and_model_separately() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    runtime
+        .register_provider("delegating", Arc::new(DelegatingProvider), true)
+        .await;
+
+    let session = Session::new("Delegation", SessionMode::General, "delegating-model");
+    storage.save_session(&session).unwrap();
+
+    let result = runtime
+        .execute_turn(
+            &session.id,
+            "please delegate this work",
+            Some("delegating::delegating-model"),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let payload = result
+        .content
+        .text
+        .split_once("Parent received: ")
+        .map(|(_, rest)| rest.to_string())
+        .expect("the parent must receive the tool output");
+    let value: serde_json::Value = serde_json::from_str(payload.trim())
+        .expect("the subagent report must be JSON");
+    assert_eq!(
+        value["provider"], "delegating",
+        "provider must be the provider, not the inherited model: {value}"
+    );
+    assert_eq!(
+        value["model"], "delegating-model",
+        "model must be reported without the provider prefix: {value}"
+    );
+}
+
 /// Provider that delegates with run_subagent and the child writes a file.
 /// Pins the regression where `git worktree remove --force` discarded the
 /// child's uncommitted work: the changes must survive as a patch artifact
