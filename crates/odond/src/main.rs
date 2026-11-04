@@ -756,7 +756,8 @@ impl WhatsAppBridge {
             // `scripts/whatsapp-bridge`). Seeing this on a packaged install means
             // the app predates the bundled bridge, so tell the operator to
             // reinstall instead of hunting for a file that is not there.
-            "WhatsApp bridge script not found. Expected scripts/whatsapp-bridge/index.mjs ".to_string()
+            "WhatsApp bridge script not found. Expected scripts/whatsapp-bridge/index.mjs "
+                .to_string()
                 + "inside the app resources. Reinstall the desktop app, or set "
                 + "ODON_WHATSAPP_BRIDGE_SCRIPT to a bridge checkout for development."
         })?;
@@ -1683,10 +1684,7 @@ fn relay_help_text(channel: &str) -> String {
         .into_iter()
         .map(|(command, description)| format!("{command} — {description}"))
         .collect();
-    format!(
-        "🤖 *ODON relay commands* ({label})\n\n{}",
-        body.join("\n")
-    )
+    format!("🤖 *ODON relay commands* ({label})\n\n{}", body.join("\n"))
 }
 
 fn relay_supports_command(channel: &str, command: &str) -> bool {
@@ -1713,8 +1711,7 @@ fn relay_whatsapp_pairing_text(status: &serde_json::Value) -> String {
         return "✅ WhatsApp is paired and connected.".to_string();
     }
     if !running {
-        return "⚠️ WhatsApp bridge is not running. Start it from Settings → WhatsApp."
-            .to_string();
+        return "⚠️ WhatsApp bridge is not running. Start it from Settings → WhatsApp.".to_string();
     }
     let has_code = status
         .get("pairing_code")
@@ -2015,11 +2012,17 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                 if relay_supports_command(&message.channel, &command) {
                     "Command not available here.".to_string()
                 } else if relay_supports_command("whatsapp", &command) {
-                    format!("`{command}` is WhatsApp-only. Send /help to see this channel's commands.")
+                    format!(
+                        "`{command}` is WhatsApp-only. Send /help to see this channel's commands."
+                    )
                 } else if relay_supports_command("telegram", &command) {
-                    format!("`{command}` is Telegram-only. Send /help to see this channel's commands.")
+                    format!(
+                        "`{command}` is Telegram-only. Send /help to see this channel's commands."
+                    )
                 } else {
-                    format!("Unknown command `{command}`. Send /help to see this channel's commands.")
+                    format!(
+                        "Unknown command `{command}`. Send /help to see this channel's commands."
+                    )
                 }
             }
         };
@@ -5243,10 +5246,11 @@ async fn init_providers(
             }
             // Index the models this provider lists, so a bare model id reaches
             // the provider that serves it instead of the default slot.
-            for model in
-                serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default()
-            {
-                runtime.register_model_route(&model, &pid).await;
+            let listed: Vec<String> =
+                serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default();
+            let catalogue = listed.len();
+            for model in listed {
+                runtime.register_model_route(&model, &pid, catalogue).await;
             }
         }
     }
@@ -5406,8 +5410,12 @@ async fn save_provider_config(
     // Keep the model → provider index in step with what Settings saved, so
     // automations and relays using a bare model id reach this provider.
     if let Ok(models) = serde_json::from_str::<Vec<String>>(&models_json) {
+        let catalogue = models.len();
         for model in models {
-            state.runtime.register_model_route(&model, &pid).await;
+            state
+                .runtime
+                .register_model_route(&model, &pid, catalogue)
+                .await;
         }
     }
 
@@ -6060,8 +6068,12 @@ async fn discover_provider_models(
     }
 
     // Make the freshly discovered models routable straight away.
+    let catalogue = models.len();
     for model in &models {
-        state.runtime.register_model_route(model, &pid).await;
+        state
+            .runtime
+            .register_model_route(model, &pid, catalogue)
+            .await;
     }
 
     (
@@ -6512,6 +6524,39 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                         "configured".to_string(),
                         json!(!c.api_key.trim().is_empty() || c.base_url.is_some()),
                     );
+                }
+            }
+        }
+    }
+
+    // Keep the bare-model index in step with what this catalog offers, so a
+    // model id chosen in the UI reaches the provider that actually serves it
+    // instead of whatever provider happens to hold the default slot. Only
+    // usable providers are indexed: routing a bare id to an unconfigured
+    // provider would turn a working default into "not configured".
+    if let Some(entries) = payload.get("providers").and_then(|p| p.as_array()) {
+        for entry in entries {
+            let usable = entry.get("connected").and_then(|v| v.as_bool()).unwrap_or(false)
+                || entry
+                    .get("configured")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+            if !usable {
+                continue;
+            }
+            let Some(pid) = entry.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(models) = entry.get("models").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            let catalogue = models.len();
+            for model in models {
+                if let Some(mid) = model.get("id").and_then(|v| v.as_str()) {
+                    state
+                        .runtime
+                        .register_model_route(mid, pid, catalogue)
+                        .await;
                 }
             }
         }
@@ -8755,7 +8800,10 @@ mod gateway_catalogue_tests {
         // saved gateway had nothing to select and every turn failed with
         // "No model selected" after the daemon started.
         let ids = gateway_model_ids(&[config("[\"gw-model-a\",\" gw-model-b \"]")]);
-        assert_eq!(ids, vec!["gw-model-a".to_string(), "gw-model-b".to_string()]);
+        assert_eq!(
+            ids,
+            vec!["gw-model-a".to_string(), "gw-model-b".to_string()]
+        );
     }
 
     #[test]

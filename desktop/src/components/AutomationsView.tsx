@@ -81,7 +81,8 @@ export const AutomationsView: React.FC = () => {
   const [triggerType, setTriggerType] = useState<string>('cron');
   const [triggerValue, setTriggerValue] = useState<string>('0 8 * * *');
   const [prompt, setPrompt] = useState<string>('');
-  const [model, setModel] = useState<string>('odon-auto');
+  const [model, setModel] = useState<string>(() => activeModelId() || 'odon-auto');
+  const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [retryCount, setRetryCount] = useState<number>(0);
   const [retryDelay, setRetryDelay] = useState<number>(30);
   const [dependsOn, setDependsOn] = useState<string>('');
@@ -106,6 +107,31 @@ export const AutomationsView: React.FC = () => {
     loadData();
     const interval = setInterval(loadData, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Catalogue for the model picker: only providers that can actually answer.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getModels()
+      .then((data) => {
+        if (cancelled) return;
+        const list = Array.isArray(data.providers) ? data.providers : [];
+        setProviders(
+          list.filter(
+            (provider) =>
+              (provider.configured || provider.connected) &&
+              Array.isArray(provider.models) &&
+              provider.models.length > 0,
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleToggle = async (job: AutomationJob) => {
@@ -185,7 +211,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('cron');
         setTriggerValue('0 8 * * *');
         setPrompt('Summarize git commits made over the last 24 hours and highlight open PRs.');
-        setModel('odon-auto');
+        setModel(activeModelId() || 'odon-auto');
         break;
       case 'tests':
         setName('Repository Health & Cargo Tests');
@@ -193,7 +219,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('interval');
         setTriggerValue('Every 4 hours');
         setPrompt('Run workspace test suites and report any failing tests or lint warnings.');
-        setModel('odon-auto');
+        setModel(activeModelId() || 'odon-auto');
         break;
       case 'security':
         setName('Automated Secret & Security Audit');
@@ -201,7 +227,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('cron');
         setTriggerValue('0 0 * * *');
         setPrompt('Audit workspace for exposed API keys, unpinned dependencies, and security headers.');
-        setModel('odon-auto');
+        setModel(activeModelId() || 'odon-auto');
         break;
       case 'hygiene':
         setName('Stale Branch & PR Hygiene');
@@ -209,7 +235,7 @@ export const AutomationsView: React.FC = () => {
         setTriggerType('interval');
         setTriggerValue('Every 7 days');
         setPrompt('Check git branches that have not been modified for over 14 days and flag them.');
-        setModel('odon-auto');
+        setModel(activeModelId() || 'odon-auto');
         break;
     }
   };
@@ -503,6 +529,38 @@ export const AutomationsView: React.FC = () => {
                 className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                 required
               />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">
+                Model &amp; Provider
+              </label>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              >
+                <option value="odon-auto">Auto — model aktif saat ini</option>
+                {providers.map((provider) => (
+                  <optgroup key={provider.id} label={provider.name}>
+                    {provider.models.map((entry) => {
+                      const value = `${provider.id}::${entry.id}`;
+                      return (
+                        <option key={value} value={value}>
+                          {entry.name || entry.id}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
+                {model !== 'odon-auto' &&
+                  !providers.some((provider) =>
+                    provider.models.some((entry) => `${provider.id}::${entry.id}` === model),
+                  ) && <option value={model}>{model} (saved)</option>}
+              </select>
+              <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                Runs on the model picked here. Choose Auto to follow the model you are chatting with.
+              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

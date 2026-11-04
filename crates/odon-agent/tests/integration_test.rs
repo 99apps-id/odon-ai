@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_core::events::create_event_bus;
+use odon_core::events::AgentState;
 use odon_core::session::{Session, SessionMode};
 use odon_core::{AgentEvent, ArtifactKind, ArtifactPayload, Result};
-use odon_core::events::AgentState;
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent};
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, RiskTier, SecurityPolicy};
 use odon_storage::StorageEngine;
@@ -182,6 +182,181 @@ async fn test_security_policy_and_risk_tiers() {
         .await
         .unwrap();
     matches!(decision, ApprovalDecision::Approved);
+}
+
+/// Counts how often it answered, so a test can prove which provider ran.
+struct RecordingProvider {
+    name: &'static str,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ModelProvider for RecordingProvider {
+    fn provider_name(&self) -> &str {
+        self.name
+    }
+
+    async fn stream_chat(
+        &self,
+        _request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let _ = event_sender
+            .send(StreamEvent::TextDelta("ok".to_string()))
+            .await;
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn auto_model_resolves_to_a_concrete_id_the_provider_lists() {
+    // `odon-auto` is a sentinel. Forwarding it verbatim made providers answer
+    // "no model selected", which is what automation runs used to hit.
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let tools = Arc::new(ToolRegistry::new());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let workspace = temp_dir.path().to_string_lossy().to_string();
+    let runtime = AgentRuntime::new(storage.clone(), tools, approval, audit, event_tx, workspace);
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    runtime
+        .register_provider(
+            "gateway",
+            Arc::new(ModelRecordingProvider {
+                name: "gateway",
+                seen: seen.clone(),
+            }),
+            true,
+        )
+        .await;
+    runtime
+        .register_model_route("zeta-model", "gateway", 3)
+        .await;
+
+    let session = Session::new("Auto", SessionMode::General, "odon-auto");
+    storage.save_session(&session).unwrap();
+    runtime
+        .execute_turn(
+            &session.id,
+            "hello",
+            Some("gateway::odon-auto"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("auto must resolve to a concrete model");
+
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen, vec!["zeta-model".to_string()]);
+}
+
+/// Records the model id each request carried, so a test can prove the provider
+/// never received the `odon-auto` sentinel.
+struct ModelRecordingProvider {
+    name: &'static str,
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl ModelProvider for ModelRecordingProvider {
+    fn provider_name(&self) -> &str {
+        self.name
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        self.seen.lock().unwrap().push(request.model.clone());
+        let _ = event_sender
+            .send(StreamEvent::TextDelta("ok".to_string()))
+            .await;
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn bare_model_routes_to_the_provider_that_lists_it() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let tools = Arc::new(ToolRegistry::new());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let workspace = temp_dir.path().to_string_lossy().to_string();
+
+    let runtime = AgentRuntime::new(storage.clone(), tools, approval, audit, event_tx, workspace);
+
+    // A gateway holds the default slot, exactly like the reported case where
+    // every bare model id landed on the default router.
+    let gateway_calls = Arc::new(AtomicUsize::new(0));
+    runtime
+        .register_provider(
+            "gateway",
+            Arc::new(RecordingProvider {
+                name: "gateway",
+                calls: gateway_calls.clone(),
+            }),
+            true,
+        )
+        .await;
+    let deepseek_calls = Arc::new(AtomicUsize::new(0));
+    runtime
+        .register_provider(
+            "deepseek",
+            Arc::new(RecordingProvider {
+                name: "deepseek",
+                calls: deepseek_calls.clone(),
+            }),
+            false,
+        )
+        .await;
+    runtime
+        .register_model_route("deepseek-chat", "deepseek", 2)
+        .await;
+    // The gateway re-exports thousands of other vendors' ids and must not
+    // capture a shared bare id just by registering afterwards.
+    runtime
+        .register_model_route("deepseek-chat", "gateway", 2274)
+        .await;
+
+    let session = Session::new("Route", SessionMode::General, "deepseek-chat");
+    storage.save_session(&session).unwrap();
+
+    let turn = runtime
+        .execute_turn(
+            &session.id,
+            "hello",
+            Some("deepseek-chat"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("bare model should resolve through the model route");
+    assert_eq!(turn.content.text, "ok");
+    assert_eq!(deepseek_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(gateway_calls.load(Ordering::SeqCst), 0);
+
+    // An explicit `provider::model` still wins over the route.
+    let explicit = runtime
+        .execute_turn(
+            &session.id,
+            "hello again",
+            Some("gateway::deepseek-chat"),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(explicit.content.text, "ok");
+    assert_eq!(gateway_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(deepseek_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -1213,8 +1388,7 @@ impl ModelProvider for TruncatedThenResumedProvider {
         if call_index == 1 {
             let _ = event_sender
                 .send(StreamEvent::TextDelta(
-                    "First half of the answer and the sentence that will be repeated."
-                        .to_string(),
+                    "First half of the answer and the sentence that will be repeated.".to_string(),
                 ))
                 .await;
             let _ = event_sender.send(StreamEvent::OutputTruncated).await;

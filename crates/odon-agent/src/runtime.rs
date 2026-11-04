@@ -133,6 +133,16 @@ pub fn normalize_step_cap(value: usize) -> usize {
     }
 }
 
+/// Which provider serves a bare model id, and how specific that provider is.
+///
+/// `catalogue` is the number of models the provider lists; the smallest wins so
+/// a dedicated provider outranks a gateway that re-exports the same id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRoute {
+    pub provider: String,
+    pub catalogue: usize,
+}
+
 pub struct AgentRuntime {
     storage: Arc<StorageEngine>,
     tools: Arc<ToolRegistry>,
@@ -143,7 +153,7 @@ pub struct AgentRuntime {
     /// Model id → provider id. Lets a bare model name (an automation or a relay
     /// message) reach the provider that actually lists it, instead of whatever
     /// provider happens to hold the `default` slot.
-    model_routes: Arc<RwLock<HashMap<String, String>>>,
+    model_routes: Arc<RwLock<HashMap<String, ModelRoute>>>,
     event_tx: EventSender,
     workspace_root: String,
     max_turn_iterations: AtomicUsize,
@@ -258,25 +268,57 @@ impl AgentRuntime {
     }
 
     /// Replace the model → provider index. One provider may claim many models.
-    pub async fn set_model_routes(&self, routes: HashMap<String, String>) {
+    pub async fn set_model_routes(&self, routes: HashMap<String, ModelRoute>) {
         *self.model_routes.write().await = routes;
     }
 
     /// Record that `provider` serves `model`.
-    pub async fn register_model_route(&self, model: &str, provider: &str) {
+    ///
+    /// `catalogue` is how many models that provider offers. When two providers
+    /// claim the same bare model id, the narrower catalogue wins: a real
+    /// provider listing two dozen models is a better answer than a gateway that
+    /// re-exports thousands of other vendors' ids. Without this, whichever
+    /// provider registered last silently captured every shared id, which sent
+    /// `deepseek-chat` to a gateway instead of to DeepSeek.
+    pub async fn register_model_route(&self, model: &str, provider: &str, catalogue: usize) {
         let model = model.trim();
         if model.is_empty() || model == "odon-auto" {
             return;
         }
-        self.model_routes
-            .write()
-            .await
-            .insert(model.to_string(), provider.to_string());
+        let mut routes = self.model_routes.write().await;
+        match routes.get(model) {
+            Some(existing) if existing.catalogue <= catalogue => {}
+            _ => {
+                routes.insert(
+                    model.to_string(),
+                    ModelRoute {
+                        provider: provider.to_string(),
+                        catalogue,
+                    },
+                );
+            }
+        }
     }
 
     /// The provider that lists this exact model, if any.
     pub async fn provider_for_model(&self, model: &str) -> Option<String> {
-        self.model_routes.read().await.get(model.trim()).cloned()
+        self.model_routes
+            .read()
+            .await
+            .get(model.trim())
+            .map(|route| route.provider.clone())
+    }
+
+    /// A model this provider actually lists, used to turn `odon-auto` into a
+    /// concrete id. A provider that receives the literal `odon-auto` answers
+    /// "no model selected", which is what automations used to hit.
+    pub async fn first_model_for_provider(&self, provider: &str) -> Option<String> {
+        let routes = self.model_routes.read().await;
+        routes
+            .iter()
+            .filter(|(_, route)| route.provider == provider)
+            .min_by(|a, b| a.0.cmp(b.0))
+            .map(|(model, _)| model.clone())
     }
 
     /// Drop every model route that pointed at a removed provider.
@@ -284,7 +326,7 @@ impl AgentRuntime {
         self.model_routes
             .write()
             .await
-            .retain(|_, owner| owner != provider);
+            .retain(|_, route| route.provider != provider);
     }
 
     pub async fn get_provider(&self, name: Option<&str>) -> Option<Arc<dyn ModelProvider>> {
@@ -441,7 +483,10 @@ impl AgentRuntime {
 
         // Lessons are separate from memory: they describe a request shape that
         // already failed, so the model can avoid repeating it this turn.
-        let lessons = self.storage.list_memories(Some("lessons")).unwrap_or_default();
+        let lessons = self
+            .storage
+            .list_memories(Some("lessons"))
+            .unwrap_or_default();
         if !lessons.is_empty() {
             memories_text.push_str("\n### Lessons From Earlier Turns (do not repeat these):\n");
             for lesson in lessons.iter().take(5) {
@@ -721,6 +766,25 @@ impl AgentRuntime {
             Some(name) => Some(name),
             None => self.provider_for_model(requested_model).await,
         };
+        // `odon-auto` is a sentinel, not a model id. Turning it into a concrete
+        // id here keeps providers from answering "no model selected", which is
+        // what an automation with Auto used to hit.
+        let requested_model: String = if requested_model == "odon-auto" {
+            let owner = match routed_provider.clone() {
+                Some(name) => Some(name),
+                None => self.get_provider(None).await.map(|p| p.provider_name().to_string()),
+            };
+            match owner {
+                Some(name) => self
+                    .first_model_for_provider(&name)
+                    .await
+                    .unwrap_or_else(|| requested_model.to_string()),
+                None => requested_model.to_string(),
+            }
+        } else {
+            requested_model.to_string()
+        };
+        let requested_model = requested_model.as_str();
         let routed_label = routed_provider.as_deref().unwrap_or("default").to_string();
         // Kept for the failure lesson, which must name the model that was refused.
         let model_for_lesson = requested_model.to_string();
@@ -1083,7 +1147,8 @@ impl AgentRuntime {
                 {
                     truncation_continuations += 1;
                     truncation_seam = Some(step_text.clone());
-                    let nudge = Message::new_user(session_id, crate::continuation::OUTPUT_LIMIT_NUDGE);
+                    let nudge =
+                        Message::new_user(session_id, crate::continuation::OUTPUT_LIMIT_NUDGE);
                     let _ = self.storage.save_message(&nudge);
                     let _ = self.event_tx.send(AgentEvent::StateChanged {
                         session_id: session_id.to_string(),
@@ -1809,7 +1874,8 @@ impl AgentRuntime {
             if let Some((_, _, output, _)) = completed_reports.iter().find(|item| item.0 == index) {
                 report["status"] = serde_json::json!("completed");
                 report["output"] = serde_json::json!(cap_subagent_report(output));
-                report["truncated"] = serde_json::json!(output.chars().count() > SUBAGENT_RESULT_MAX_CHARS);
+                report["truncated"] =
+                    serde_json::json!(output.chars().count() > SUBAGENT_RESULT_MAX_CHARS);
             } else if let Some((_, _, error)) = completed_errors.iter().find(|item| item.0 == index)
             {
                 report["error"] = serde_json::json!(error);
@@ -2653,7 +2719,10 @@ mod tests {
             ("No model selected. Add a model ID", "model_selection"),
             ("upstream returned 429 rate limit", "rate_limit"),
             ("401 Unauthorized: invalid api key", "auth"),
-            ("Provider 'x' is not configured or missing an API key", "provider_config"),
+            (
+                "Provider 'x' is not configured or missing an API key",
+                "provider_config",
+            ),
             ("maximum context length exceeded", "context_limit"),
             ("request timed out after 60s", "timeout"),
             ("model not found (404)", "model_not_found"),
@@ -2696,7 +2765,9 @@ mod tests {
         );
 
         assert!(
-            !runtime.build_system_harness("/tmp").contains("Lessons From Earlier Turns"),
+            !runtime
+                .build_system_harness("/tmp")
+                .contains("Lessons From Earlier Turns"),
             "a fresh store must not invent lessons"
         );
 
