@@ -40,7 +40,9 @@ jobs:
             files: |
               desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - label: macOS (Intel)
-            os: macos-13
+            # macos-13 is being retired and its queue never clears; GitHub
+            # points x86_64 users at macos-15-intel (supported until 2027).
+            os: macos-15-intel
             rust-target: x86_64-apple-darwin
             bundles: dmg
             files: |
