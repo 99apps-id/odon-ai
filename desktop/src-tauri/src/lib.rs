@@ -120,12 +120,20 @@ fn start_daemon(app: &tauri::AppHandle) -> Result<(), String> {
         &handle,
         &format!("spawning daemon: {} serve --bind {DAEMON_ADDR} --workspace {workspace}", odond.display()),
     );
-    match Command::new(&odond)
+    // Tell the daemon where bundled resources live (the WhatsApp bridge script
+    // and its node_modules). Without this the daemon only guesses from the exe
+    // location and reports "WhatsApp bridge script not found" in the bundled
+    // app even though the resource shipped.
+    let resource_dir = app.path().resource_dir().ok();
+    let mut command = Command::new(&odond);
+    command
         .args(["serve", "--bind", DAEMON_ADDR, "--workspace", &workspace])
         .stdout(stdout)
-        .stderr(stderr)
-        .spawn()
-    {
+        .stderr(stderr);
+    if let Some(dir) = resource_dir.as_ref() {
+        command.env("ODON_RESOURCE_DIR", dir);
+    }
+    match command.spawn() {
         Ok(child) => {
             if let Some(state) = app.try_state::<DaemonChild>() {
                 if let Ok(mut slot) = state.0.lock() {

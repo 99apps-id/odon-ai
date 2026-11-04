@@ -814,12 +814,62 @@ export default function App() {
         toolsLoadedRef.current = true;
       }
     }).catch(() => {});
-    api.getModels().then((data) => {
+    // A BYOK gateway can be "configured" (key saved) with no model ids yet.
+    // Nothing then populates the picker, so ask the endpoint once and re-read
+    // the catalogue. After the first success the ids are persisted, so the
+    // network round-trip does not repeat.
+    const loadCatalog = async () => {
+      let data = await api.getModels();
+      const starved = (data?.providers ?? []).filter(
+        (p: any) =>
+          p?.configured &&
+          p?.auth_type === 'api_key' &&
+          Array.isArray(p?.models) &&
+          p.models.length === 0,
+      );
+      if (starved.length === 0) return data;
+      let discovered = false;
+      for (const p of starved) {
+        try {
+          const found = await api.discoverModels(p.id);
+          if (found.models.length > 0) discovered = true;
+        } catch {
+          // Endpoint unreachable or key invalid: keep the empty catalogue and
+          // let the required-provider choice below fall through to a usable one.
+        }
+      }
+      if (!discovered) return data;
+      try {
+        data = await api.getModels();
+      } catch {
+        // Keep the first catalogue if the refresh fails.
+      }
+      return data;
+    };
+
+    loadCatalog().then((data) => {
       if (data?.providers?.length) {
         setProviders(data.providers);
+        // A provider is only usable when it has at least one model to send.
+        // A gateway saved without a model id reports configured=true with an
+        // empty catalogue; keeping it selected is what produced "no model
+        // selected" right after every daemon start.
+        const usable = (p: any) =>
+          (p?.connected || p?.configured) && Array.isArray(p?.models) && p.models.length > 0;
+
         const storedProvider = localStorage.getItem('odon_active_provider');
-        if (!storedProvider || storedProvider === 'openai') {
-          const readyProv = data.providers.find((p: any) => p.connected || p.configured);
+        const stored = data.providers.find((p: any) => p.id === storedProvider);
+        const storedUsable =
+          !!stored &&
+          usable(stored) &&
+          (stored.models as any[]).some(
+            (m: any) =>
+              m.id === localStorage.getItem('odon_selected_model') ||
+              m.name === localStorage.getItem('odon_selected_model'),
+          );
+
+        if (!storedUsable) {
+          const readyProv = data.providers.find(usable);
           if (readyProv) {
             setActiveProviderId(readyProv.id);
             localStorage.setItem('odon_active_provider', readyProv.id);
@@ -1234,13 +1284,25 @@ export default function App() {
     let textToSend = (customText || inputMessage).trim();
     if (!textToSend && attachedFiles.length === 0) return;
 
-    if (isOpenAiCompatible && !selectedModel.trim()) {
+    // Resolve the model at send time as well as in the catalog effect: right
+    // after a daemon start the stored id can still point at a model the active
+    // provider no longer serves, which upstream reports as "model not found".
+    const catalogModel =
+      activeModels.find(
+        (m) =>
+          m.id === selectedModel ||
+          `${activeProvider?.id}::${m.id}` === selectedModel ||
+          m.name === selectedModel,
+      ) || (activeModels.length > 0 ? activeModels.find((m) => m.recommended) || activeModels[0] : undefined);
+    const effectiveModel = (catalogModel?.id || selectedModel || '').trim();
+
+    if (isOpenAiCompatible && !effectiveModel) {
       setMessages((prev) => [
         ...prev,
         {
           id: `cfg_err_${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ **No model selected.**\n\nOpen **Settings → Endpoints**, add the Model IDs available on your gateway, then select one before sending a message.`,
+          content: `**No model selected.**\n\nOpen **Settings → Endpoints**, add the Model IDs available on your gateway, then select one before sending a message.`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -1314,7 +1376,10 @@ export default function App() {
         }
 
         const wireProviderId = activeProvider?.id || activeProviderId;
-        const modelPayload = selectedModel.includes('::') ? selectedModel : `${wireProviderId}::${selectedModel}`;
+        // An empty id would reach the provider as "no model selected"; fall back
+        // to the provider's own default sentinel when the catalog has nothing.
+        const wireModel = effectiveModel || 'odon-auto';
+        const modelPayload = wireModel.includes('::') ? wireModel : `${wireProviderId}::${wireModel}`;
         const effort = (typeof window !== 'undefined' && localStorage.getItem('odon_effort_level')) || 'high';
         const personaId = (typeof window !== 'undefined' && localStorage.getItem('odon_active_persona')) || 'coder';
         const customInstructions = (typeof window !== 'undefined' && localStorage.getItem('odon_custom_instructions')) || '';

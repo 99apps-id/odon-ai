@@ -495,12 +495,17 @@ impl WhatsAppBridge {
         }
 
         if let Ok(resource_dir) = std::env::var("ODON_RESOURCE_DIR") {
+            let base = PathBuf::from(&resource_dir);
+            // Tauri maps the bundle resource to `<resource_dir>/scripts/whatsapp-bridge`;
+            // tolerate a direct bridge directory too so a different bundler layout
+            // does not turn into "script not found".
             candidates.push(
-                PathBuf::from(resource_dir)
-                    .join("scripts")
+                base.join("scripts")
                     .join("whatsapp-bridge")
                     .join("index.mjs"),
             );
+            candidates.push(base.join("whatsapp-bridge").join("index.mjs"));
+            candidates.push(base.join("index.mjs"));
         }
 
         if let Ok(exe) = std::env::current_exe() {
@@ -747,12 +752,17 @@ impl WhatsAppBridge {
         self.stop();
 
         let script = self.script.clone().ok_or_else(|| {
-            "WhatsApp bridge script not found. Expected scripts/whatsapp-bridge/index.mjs"
-                .to_string()
+            // The bridge ships inside the installed app (Tauri resource
+            // `scripts/whatsapp-bridge`). Seeing this on a packaged install means
+            // the app predates the bundled bridge, so tell the operator to
+            // reinstall instead of hunting for a file that is not there.
+            "WhatsApp bridge script not found. Expected scripts/whatsapp-bridge/index.mjs ".to_string()
+                + "inside the app resources. Reinstall the desktop app, or set "
+                + "ODON_WHATSAPP_BRIDGE_SCRIPT to a bridge checkout for development."
         })?;
         if !script.exists() {
             return Err(format!(
-                "WhatsApp bridge script not found at {}",
+                "WhatsApp bridge script not found at {}. Reinstall the desktop app, or set ODON_WHATSAPP_BRIDGE_SCRIPT to a bridge checkout.",
                 script.display()
             ));
         }
@@ -2222,18 +2232,16 @@ async fn main() -> anyhow::Result<()> {
             // end up with an ephemeral secret.
             let (api_token, ephemeral_session_token) =
                 mint_loopback_session_token(is_loopback, configured_token);
-            if ephemeral_session_token {
-                // Hand the value to the bundled desktop UI through an
-                // owner-only file; the token itself is never logged.
-                if let Some(token) = api_token.as_deref() {
-                    match write_loopback_token_file(token) {
-                        Ok(path) => eprintln!("Loopback API token file: {}", path.display()),
-                        Err(error) => {
-                            eprintln!("Could not write the loopback API token file: {error}")
-                        }
-                    }
-                }
-            }
+            // The token file is shared with the desktop shell, which reads it
+            // to authenticate the UI. It must only be published by a daemon
+            // that actually owns the port: writing it before the bind means a
+            // second launch (or a failed launch on a busy port) replaces the
+            // running daemon's token and every UI request starts failing 401.
+            let pending_loopback_token = if ephemeral_session_token {
+                api_token.clone()
+            } else {
+                None
+            };
             if api_token.is_some() {
                 println!("✔ API token authentication enabled");
             }
@@ -2568,6 +2576,10 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/automations/logs", get(get_automation_logs))
                 .route("/api/settings", get(get_settings).post(update_settings))
                 .route("/api/models", get(get_models))
+                .route(
+                    "/api/providers/{id}/discover-models",
+                    post(discover_provider_models),
+                )
                 .route("/api/browser/read", get(browser_read_page))
                 .route(
                     "/api/browser/sessions",
@@ -2689,7 +2701,30 @@ async fn main() -> anyhow::Result<()> {
                     require_api_token,
                 ));
 
-            let listener = tokio::net::TcpListener::bind(&bind).await?;
+            let listener = match tokio::net::TcpListener::bind(&bind).await {
+                Ok(listener) => listener,
+                Err(error) => {
+                    // Another daemon owns this port. Leave its token file
+                    // untouched and exit with an actionable message instead of
+                    // clobbering the credentials the running UI depends on.
+                    if error.kind() == std::io::ErrorKind::AddrInUse {
+                        anyhow::bail!(
+                            "Another ODON daemon is already listening on {bind}. \
+                             Close the other instance (or its desktop app) before starting a new one; \
+                             the running daemon keeps its API token."
+                        );
+                    }
+                    return Err(error.into());
+                }
+            };
+            // Publish the loopback token only now that this process owns the
+            // listener, so the file always matches the daemon the UI talks to.
+            if let Some(token) = pending_loopback_token.as_deref() {
+                match write_loopback_token_file(token) {
+                    Ok(path) => eprintln!("Loopback API token file: {}", path.display()),
+                    Err(error) => eprintln!("Could not write the loopback API token file: {error}"),
+                }
+            }
             println!("\n✔ ODON HTTP & SSE Server listening on: http://{}", bind);
             println!("✔ API ready for Desktop UI and Relays. Press Ctrl+C to stop.\n");
 
@@ -3148,11 +3183,15 @@ async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
 
 /// Unauthenticated by design (see `require_api_token`): lets a client discover
 /// whether this daemon demands a token before it has one to send. It reports
-/// whether a token is required and, for a same-origin or first-party caller
-/// only, the ephemeral loopback session token. That is what lets the bundled
-/// desktop UI adopt the token without a manual copy/paste: the value is never
-/// returned to an untrusted origin, and never for an operator-configured
-/// persistent token.
+/// whether a token is required and, for a first-party browser origin only, the
+/// ephemeral loopback session token. That is what lets the bundled desktop UI
+/// adopt the token without a manual copy/paste.
+///
+/// The caller must present an explicit trusted `Origin`. A request with no
+/// Origin at all is a local tool (curl, a script, another process) and is told
+/// only that a token is required: it can read the owner-only token file
+/// instead. Without this rule any local process could read the secret from an
+/// endpoint that needs no secret.
 async fn get_health(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     let origin = headers
         .get(header::ORIGIN)
@@ -3160,10 +3199,9 @@ async fn get_health(headers: HeaderMap, State(state): State<AppState>) -> impl I
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok());
-    let session_token = state
-        .session_token
-        .as_deref()
-        .filter(|_| origin_is_trusted(origin, host, &allowed_origins_from_env()));
+    let trusted_origin =
+        origin.is_some() && origin_is_trusted(origin, host, &allowed_origins_from_env());
+    let session_token = state.session_token.as_deref().filter(|_| trusted_origin);
     Json(json!({
         "status": "online",
         "version": env!("CARGO_PKG_VERSION"),
@@ -3834,7 +3872,18 @@ async fn send_message(
                 odon_core::OdonError::Provider { message, .. } => message,
                 other => other.to_string(),
             };
-            (StatusCode::BAD_GATEWAY, Json(json!({ "error": message })))
+            // A missing model is a configuration mistake the operator can fix in
+            // Settings, not a gateway outage. Reporting 502 made the UI say
+            // "failed to contact the AI model", which sent people to check API
+            // keys and connectivity instead of picking a model.
+            let status = if message.starts_with("No model selected")
+                || message.starts_with("The configured model ID is empty")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            (status, Json(json!({ "error": message })))
         }
     }
 }
@@ -5627,6 +5676,162 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
     drop(master_ref);
 }
 
+/// Model ids the saved gateway config makes selectable.
+///
+/// The static `openai-compatible` catalogue entry ships with an empty list, so
+/// this is the only place the operator's own model ids can surface. Falling back
+/// to `OPENAI_MODEL` keeps an env-only gateway usable.
+fn gateway_model_ids(byok_configs: &[odon_storage::ProviderConfigRecord]) -> Vec<String> {
+    let mut model_ids: Vec<String> = byok_configs
+        .iter()
+        .find(|c| {
+            c.provider_id.eq_ignore_ascii_case("openai-compatible")
+                || c.provider_id.eq_ignore_ascii_case("openai_compatible")
+        })
+        .and_then(|c| serde_json::from_str::<Vec<String>>(&c.models_json).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+
+    if model_ids.is_empty() {
+        if let Ok(model) = std::env::var("OPENAI_MODEL") {
+            if !model.trim().is_empty() {
+                model_ids.push(model.trim().to_string());
+            }
+        }
+    }
+
+    model_ids
+}
+
+/// Ask a BYOK/gateway endpoint which models it actually serves.
+///
+/// A gateway with a saved key but an empty `models_json` is only half
+/// configured: the catalogue then exposes `models: []`, the model picker has
+/// nothing to select, and every send fails with "no model selected". The key
+/// alone cannot tell us the model ids, so this asks the endpoint and remembers
+/// the answer.
+async fn discover_provider_models(
+    Path(pid): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let pid = pid.to_lowercase();
+    let Some(config) = state.storage.get_provider_config(&pid).ok().flatten() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Provider '{pid}' is not configured") })),
+        );
+    };
+    if config.api_key.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Provider '{pid}' has no API key") })),
+        );
+    }
+    let base = config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| default_base_url_for(&pid));
+    let url = format!("{}/models", base.trim_end_matches('/'));
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": error.to_string() })),
+            )
+        }
+    };
+    let response = match client.get(&url).bearer_auth(&config.api_key).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("Could not reach {url}: {error}") })),
+            )
+        }
+    };
+    if !response.status().is_success() {
+        let status = response.status();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("{url} returned HTTP {status}") })),
+        );
+    }
+    let body: Value = match response.json().await {
+        Ok(body) => body,
+        Err(error) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("{url} did not return JSON: {error}") })),
+            )
+        }
+    };
+
+    // OpenAI-compatible gateways answer {data:[{id}]}; Ollama answers
+    // {models:[{name}]}. Accept either so the caller never has to care which.
+    let mut models: Vec<String> = Vec::new();
+    for entry in body
+        .get("data")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        if let Some(id) = entry.get("id").and_then(Value::as_str) {
+            models.push(id.to_string());
+        }
+    }
+    for entry in body
+        .get("models")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        if let Some(id) = entry
+            .get("name")
+            .or_else(|| entry.get("id"))
+            .and_then(Value::as_str)
+        {
+            models.push(id.to_string());
+        }
+    }
+    models.sort();
+    models.dedup();
+
+    if models.is_empty() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("{url} listed no models") })),
+        );
+    }
+
+    let models_json = serde_json::to_string(&models).unwrap_or_else(|_| "[]".to_string());
+    if let Err(error) = state.storage.save_provider_config(
+        &pid,
+        &config.api_key,
+        Some(&base),
+        config.is_default,
+        config.name.as_deref(),
+        &models_json,
+    ) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error.to_string() })),
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({ "provider_id": pid, "models": models })),
+    )
+}
+
 async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
     let connected = state.oauth_accounts.read().await;
     let is_connected = |provider: &str| connected.contains_key(provider);
@@ -6023,6 +6228,54 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                 "description": "Custom OpenAI-compatible endpoint",
                 "models": models
             }));
+        }
+
+        // The static `openai-compatible` entry ships with an empty model list
+        // because it is a gateway: the real models live in the saved provider
+        // config. Without this the UI offers a provider that has nothing to
+        // select, so a turn goes out with an empty model id and dies with
+        // "No model selected" right after the daemon starts.
+        for entry in list.iter_mut() {
+            let is_gateway = entry
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|id| {
+                    id.eq_ignore_ascii_case("openai-compatible")
+                        || id.eq_ignore_ascii_case("openai_compatible")
+                })
+                .unwrap_or(false);
+            if !is_gateway {
+                continue;
+            }
+
+            let config = byok_configs.iter().find(|c| {
+                c.provider_id.eq_ignore_ascii_case("openai-compatible")
+                    || c.provider_id.eq_ignore_ascii_case("openai_compatible")
+            });
+
+            let model_ids = gateway_model_ids(&byok_configs);
+
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert(
+                    "models".to_string(),
+                    json!(model_ids
+                        .into_iter()
+                        .map(|id| json!({
+                            "id": id,
+                            "name": id,
+                            "context": 128000,
+                            "recommended": false
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+                if let Some(c) = config {
+                    obj.insert("default_base_url".to_string(), json!(c.base_url));
+                    obj.insert(
+                        "configured".to_string(),
+                        json!(!c.api_key.trim().is_empty() || c.base_url.is_some()),
+                    );
+                }
+            }
         }
     }
 
@@ -8074,5 +8327,47 @@ mod oauth_store_tests {
     fn oauth_blob_ignores_non_magic_input() {
         // A legacy plaintext JSON store has no magic header and is not decryptable.
         assert!(decrypt_oauth_blob_with_key(&KEY, b"{\"x\":1}").is_none());
+    }
+}
+
+#[cfg(test)]
+mod gateway_catalogue_tests {
+    use super::*;
+    use odon_storage::ProviderConfigRecord;
+
+    fn config(models_json: &str) -> ProviderConfigRecord {
+        ProviderConfigRecord {
+            provider_id: "openai-compatible".to_string(),
+            api_key: "k".to_string(),
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            is_default: true,
+            name: None,
+            models_json: models_json.to_string(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn gateway_models_come_from_the_saved_config() {
+        // Regression: the static catalogue entry reported `models: []`, so a
+        // saved gateway had nothing to select and every turn failed with
+        // "No model selected" after the daemon started.
+        let ids = gateway_model_ids(&[config("[\"gw-model-a\",\" gw-model-b \"]")]);
+        assert_eq!(ids, vec!["gw-model-a".to_string(), "gw-model-b".to_string()]);
+    }
+
+    #[test]
+    fn gateway_models_ignore_blank_and_broken_entries() {
+        assert!(gateway_model_ids(&[config("[]")]).is_empty());
+        assert!(gateway_model_ids(&[config("not json")]).is_empty());
+        assert!(gateway_model_ids(&[config("[\"  \"]")]).is_empty());
+        assert!(gateway_model_ids(&[]).is_empty());
+    }
+
+    #[test]
+    fn gateway_models_ignore_other_providers() {
+        let mut other = config("[\"nope\"]");
+        other.provider_id = "deepseek".to_string();
+        assert!(gateway_model_ids(&[other]).is_empty());
     }
 }

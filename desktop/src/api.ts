@@ -245,7 +245,31 @@ export const api = {
     if (!token || !this.isTrustedApiUrl(url)) return window.fetch(input, init);
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
     headers.set('Authorization', `Bearer ${token}`);
-    return window.fetch(input, { ...init, headers });
+    const res = await window.fetch(input, { ...init, headers });
+    if (res.status !== 401) return res;
+    // The daemon minted a new loopback token (it was restarted, or a second
+    // instance overwrote the token file). Adopt the current token once and
+    // replay the request, so a stale token does not surface as "model failed"
+    // or "daemon offline" while the daemon is actually healthy.
+    const refreshed = await this.refreshTokenFromShell();
+    if (!refreshed || refreshed === token) return res;
+    const retryHeaders = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+    retryHeaders.set('Authorization', `Bearer ${refreshed}`);
+    return window.fetch(input, { ...init, headers: retryHeaders });
+  },
+
+  /** Ask the desktop shell for the daemon's current token. No-op in a browser. */
+  async refreshTokenFromShell(): Promise<string | null> {
+    try {
+      const { daemonToken } = await import('./lib/desktop');
+      const token = await daemonToken();
+      if (token && token !== this.getApiToken()) {
+        this.setApiToken(token);
+      }
+      return token;
+    } catch {
+      return null;
+    }
   },
 
   authorizeUrl(url: string): string {
@@ -536,14 +560,30 @@ export const api = {
     return res.json().catch(() => ({ cancelled: false }));
   },
 
+  // A gateway provider is saved with a key but no model ids until something
+  // asks it what it serves. Without this the picker stays empty and every send
+  // fails with "no model selected".
+  async discoverModels(
+    providerId: string,
+  ): Promise<{ provider_id: string; models: string[] }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/providers/${encodeURIComponent(providerId)}/discover-models`,
+      { method: 'POST' },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `Model discovery failed with status ${res.status}`);
+    }
+    return { provider_id: data.provider_id ?? providerId, models: data.models ?? [] };
+  },
+
   async steerMessage(
     sessionId: string,
     text: string,
     attachments?: Array<{ name: string; mime_type: string; data_base64: string }>,
     priority: boolean = false,
     steerId?: string,
-  ): Promise<{ queued: boolean; steer_id?: string; priority?: boolean }> {
-    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/steer`, {
+  ): Promise<{ queued: boolean; steer_id?: string; priority?: boolean }> {    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${sessionId}/steer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, attachments: attachments || [], priority, steer_id: steerId }),
