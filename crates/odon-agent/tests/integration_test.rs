@@ -484,7 +484,7 @@ async fn test_tool_history_orders_assistant_calls_before_tool_results() {
     }
 }
 
-/// Provider that streams slowly so a priority steer can interrupt it.
+/// Provider that streams slowly so a steer must wait for the active task.
 struct SteerableProvider {
     calls: Arc<AtomicUsize>,
 }
@@ -528,7 +528,7 @@ impl ModelProvider for SteerableProvider {
 }
 
 #[tokio::test]
-async fn test_priority_steer_interrupts_running_turn() {
+async fn test_steer_waits_for_running_turn_then_is_applied() {
     let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
     let approval = auto_approve(SecurityPolicy::default());
     let audit = Arc::new(AuditLogger::new());
@@ -577,6 +577,10 @@ async fn test_priority_steer_interrupts_running_turn() {
         attachments: Vec::new(),
         priority: true,
     });
+
+    // Sending steer must not cancel or preempt the active provider stream.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let result = tokio::time::timeout(Duration::from_secs(5), task)
         .await

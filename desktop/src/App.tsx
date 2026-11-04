@@ -1118,6 +1118,8 @@ export default function App() {
         // The turn already finished before the steer was queued: continue it
         // as a normal message instead of losing it.
         setSteerCards((prev) => prev.filter((item) => item.id !== id));
+        // The server confirmed that the old turn is over. Clear the stale
+        // client-side flag so the steer can start as the next normal turn.
         setIsGenerating(false);
         stoppedRef.current = false;
         setTimeout(() => sendMessageRef.current(text), 80);
@@ -1154,6 +1156,8 @@ export default function App() {
       const res = await api.steerMessage(sid, card.text, [], true, card.id);
       if (!res.queued) {
         setSteerCards((prev) => prev.filter((item) => item.id !== card.id));
+        // The server confirmed that the active turn ended before the mailbox
+        // accepted this steer, so this is safe to start as a new turn.
         setIsGenerating(false);
         stoppedRef.current = false;
         setTimeout(() => sendMessageRef.current(card.text), 80);
@@ -2417,7 +2421,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         onClick={() => prioritizeSteer(card)}
                         disabled={card.status === 'sending'}
                         className="px-2 py-0.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-semibold disabled:opacity-50 cursor-pointer shrink-0"
-                        title="Send this steer now and preempt the current stream"
+                        title="Queue this steer after the current task finishes"
                       >
                         Send
                       </button>

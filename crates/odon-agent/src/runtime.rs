@@ -679,30 +679,17 @@ impl AgentRuntime {
             let mut tool_accumulator: HashMap<usize, AccumulatedToolCall> = HashMap::new();
             let mut stream_error = None;
 
-            // Process stream deltas. A priority steer cancels only this
-            // iteration's stream so the new guidance can be applied promptly.
-            let mut steer_interrupted = false;
+            // Process stream deltas. Steer messages are deliberately observed
+            // at iteration boundaries, never by cancelling this stream: the
+            // active task must finish before the guidance is applied.
+
             // A provider that stops producing events without closing the stream
             // leaves recv() pending forever, because the sender still lives
             // inside prov_task. The turn then never finishes and the UI sits in
             // "running" with no error. Bound the wait so a stall surfaces.
             let stream_idle_timeout = std::time::Duration::from_secs(180);
             loop {
-                let next = tokio::time::timeout(stream_idle_timeout, async {
-                    if let Some(queue) = &steer {
-                        tokio::select! {
-                            evt = stream_rx.recv() => evt,
-                            _ = queue.wait_priority() => {
-                                iteration_cancel.cancel();
-                                steer_interrupted = true;
-                                None
-                            }
-                        }
-                    } else {
-                        stream_rx.recv().await
-                    }
-                })
-                .await;
+                let next = tokio::time::timeout(stream_idle_timeout, stream_rx.recv()).await;
                 let evt = match next {
                     Ok(evt) => evt,
                     Err(_) => {
@@ -799,12 +786,6 @@ impl AgentRuntime {
                 });
             }
 
-            if steer_interrupted {
-                // Preempted by a priority steer: skip this partial step and let
-                // the next iteration drain and apply the guidance.
-                continue;
-            }
-
             // If no tools were called in this step, we reached the final answer.
             // If a steer is waiting, run another iteration so it is not lost.
             if tool_accumulator.is_empty() {
@@ -812,7 +793,10 @@ impl AgentRuntime {
                     .as_ref()
                     .map(|queue| queue.has_pending())
                     .unwrap_or(false);
-                if pending_steer && current_iteration < max_turn_iterations {
+                // A steer arriving with the final answer still deserves one
+                // follow-up iteration; the turn budget is a safety cap for
+                // autonomous work, not permission to drop user guidance.
+                if pending_steer {
                     continue;
                 }
                 break;
