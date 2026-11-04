@@ -1099,6 +1099,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(profile),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Saving the SSH profile failed with status ${res.status}`);
+    }
     return res.json();
   },
 
@@ -1106,6 +1110,10 @@ export const api = {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/profiles/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Deleting the SSH profile failed with status ${res.status}`);
+    }
     return res.json();
   },
 

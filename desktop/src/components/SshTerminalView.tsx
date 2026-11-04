@@ -31,6 +31,7 @@ export const SshTerminalView: React.FC = () => {
   const [selectedProfile, setSelectedProfile] = useState<SshProfile | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Profile modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -132,7 +133,11 @@ export const SshTerminalView: React.FC = () => {
   };
 
   const handleSaveNewProfile = async () => {
-    if (!newAlias.trim() || !newHost.trim()) return;
+    if (!newAlias.trim() || !newHost.trim()) {
+      setSaveError('Alias and host are required.');
+      return;
+    }
+    setSaveError(null);
 
     let finalKeyPath = newKeyPath.trim();
     let finalCertName = importedCertName;
@@ -176,7 +181,7 @@ export const SshTerminalView: React.FC = () => {
       setIsModalOpen(false);
       resetModalForm();
     } catch (err) {
-      console.error('Failed to save profile:', err);
+      setSaveError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -196,6 +201,7 @@ export const SshTerminalView: React.FC = () => {
   };
 
   const resetModalForm = () => {
+    setSaveError(null);
     setNewAlias('');
     setNewHost('');
     setNewPort(22);
@@ -213,7 +219,7 @@ export const SshTerminalView: React.FC = () => {
       {/* ───────────────────────────────────────────────────────────
           LEFT: HOST / SERVERS SIDEBAR
       ─────────────────────────────────────────────────────────── */}
-      <div className="w-72 shrink-0 border-r border-neutral-200 flex flex-col bg-neutral-50/50">
+      <div className="w-96 min-w-[18rem] max-w-[40rem] resize-x overflow-auto shrink-0 border-r border-neutral-200 flex flex-col bg-neutral-50/50">
         <div className="p-3 border-b border-neutral-200 flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-bold text-xs text-neutral-800">
             <Server className="w-4 h-4 text-blue-600" />
@@ -223,6 +229,7 @@ export const SshTerminalView: React.FC = () => {
           <button
             onClick={() => {
               resetModalForm();
+              setSaveError(null);
               setIsModalOpen(true);
             }}
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold transition-colors shadow-2xs cursor-pointer"
@@ -615,6 +622,15 @@ export const SshTerminalView: React.FC = () => {
                 />
               </div>
             </div>
+
+            {saveError && (
+              <div
+                role="alert"
+                className="text-[11px] leading-snug text-clay-800 bg-clay-100 border border-clay-200 rounded-lg px-3 py-2"
+              >
+                {saveError}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
               <button
