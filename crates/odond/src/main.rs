@@ -6435,6 +6435,11 @@ async fn sse_events(
                 // event, so the wire JSON keeps its flat `type` / `payload`
                 // shape and only gains the routing id.
                 Ok(envelope) => {
+                    if let Some(required) = &requested_session_id {
+                        if envelope.session_id.as_deref() != Some(required.as_str()) {
+                            continue;
+                        }
+                    }
                     if let Ok(data) = serde_json::to_string(&envelope) {
                         yield Ok::<Event, Infallible>(Event::default().data(data));
                     }
