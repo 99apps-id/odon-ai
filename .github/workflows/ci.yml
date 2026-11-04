@@ -1,0 +1,113 @@
+name: CI
+
+# Every push and PR gets the checks that previously only a human could remember
+# to run: formatting, lints, the test suite, and dependency advisories.
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust builds
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        # -D warnings is scoped to this invocation on purpose. A global RUSTFLAGS
+        # would apply to dependency builds too, and one upstream warning would
+        # then fail a run nobody can fix.
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+  # Kept separate so a red advisory database does not mask a red test run: the
+  # two failures need very different reactions.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit Rust dependencies
+        run: cargo audit
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Audit frontend dependencies
+        working-directory: desktop
+        run: pnpm audit --audit-level high
+
+  manifest:
+    name: Manifest consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The release version is duplicated across four manifests and is bumped by
+      # hand. Drift here ships an installer that disagrees with its own daemon.
+      - name: Version strings agree
+        run: |
+          set -euo pipefail
+          semver() { grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1; }
+          cargo_v=$(grep -m1 '^version = ' Cargo.toml | semver)
+          pkg_v=$(grep -m1 '"version"' desktop/package.json | semver)
+          tauri_v=$(grep -m1 '"version"' desktop/src-tauri/tauri.conf.json | semver)
+          sidecar_v=$(grep -m1 '^version = ' desktop/src-tauri/Cargo.toml | semver)
+          echo "Cargo.toml=$cargo_v package.json=$pkg_v tauri.conf.json=$tauri_v src-tauri/Cargo.toml=$sidecar_v"
+          for v in "$pkg_v" "$tauri_v" "$sidecar_v"; do
+            if [ "$v" != "$cargo_v" ]; then
+              echo "::error::Version drift: expected $cargo_v, found $v"
+              exit 1
+            fi
+          done
+
+      - name: No stray agent scratch files
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '^(rt_[0-9]+|runtime_chunk_[0-9]+|temp_runtime).*\.txt$'; then
+            echo "::error::Agent scratch output is tracked; it belongs in .gitignore"
+            exit 1
+          fi
