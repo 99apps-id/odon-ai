@@ -41,7 +41,7 @@ pub const DEFAULT_MAX_TURN_ITERATIONS: usize = 500;
 pub const OAUTH_MAX_TURN_ITERATIONS: usize = 10_000;
 
 /// Sentinel stored when the step cap is disabled. The loop compares
-/// `current_iteration < cap`, so this is "run until the model stops
+/// `current_iteration <= cap`, so this is "run until the model stops
 /// asking for tools or the turn is cancelled".
 pub const UNLIMITED_TURN_ITERATIONS: usize = usize::MAX;
 
@@ -616,6 +616,11 @@ impl AgentRuntime {
             .max(1);
         let mut current_iteration = 0;
         let mut hit_step_cap = false;
+        // One closing model call after the cap. The cap exists to bound
+        // autonomous work, not to cut the operator off mid-sentence: without
+        // this the turn ends on a truncated transcript with tool calls whose
+        // results the model never got to read.
+        let mut grace_used = false;
 
         // A step cap bounds the count, never the clock: a model that keeps
         // retrying a tool it believes is failing looks perfectly healthy at
@@ -641,7 +646,12 @@ impl AgentRuntime {
             std::collections::HashMap::new();
 
         // 5. Multi-Step Agentic Loop (ReAct / Tool-Use Loop)
-        while current_iteration < max_turn_iterations {
+        // The counter is bumped before the pass, so `<= cap` runs exactly
+        // `cap + 1` passes: `cap` working steps plus the single closing call.
+        // The closing call is the pass whose bumped counter is `cap + 1`, so it
+        // cannot repeat. A cap of `usize::MAX` (0 = unlimited) makes the bound
+        // unreachable, which is what "no cap" has to mean.
+        while current_iteration <= max_turn_iterations {
             if let Some(budget) = turn_budget {
                 if turn_started.elapsed() > budget {
                     let message = format!(
@@ -691,11 +701,22 @@ impl AgentRuntime {
                 .unwrap_or_else(|_| vec![user_msg.clone()]);
             let history = compact_history(history, self.context_budget_tokens());
 
+            // At the cap the model gets exactly one closing call with no tools:
+            // the work it already did stays persisted, and the operator gets a
+            // real answer instead of a truncated step.
+            let grace_call = current_iteration > max_turn_iterations;
+            if grace_call {
+                grace_used = true;
+            }
             let chat_req = ChatRequest {
                 messages: history,
                 model: requested_model.to_string(),
                 system_prompt: Some(system_harness.clone()),
-                tools: active_tools.clone(),
+                tools: if grace_call {
+                    Vec::new()
+                } else {
+                    active_tools.clone()
+                },
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
                 effort: effort
@@ -836,8 +857,13 @@ impl AgentRuntime {
                 // A steer arriving with the final answer still deserves one
                 // follow-up iteration; the turn budget is a safety cap for
                 // autonomous work, not permission to drop user guidance.
-                if pending_steer {
+                if pending_steer && !grace_call {
                     continue;
+                }
+                // The closing call is the last model turn: mark the cap so the
+                // transcript stays honest and the session remains resumable.
+                if grace_call {
+                    hit_step_cap = true;
                 }
                 break;
             }
@@ -1172,9 +1198,15 @@ impl AgentRuntime {
             if !total_accumulated_text.is_empty() {
                 total_accumulated_text.push_str("\n\n");
             }
-            total_accumulated_text.push_str(&format!(
-                "[Turn paused after {max_turn_iterations} steps with work still in progress. Send \"continue\" to resume this session.]"
-            ));
+            if grace_used {
+                total_accumulated_text.push_str(&format!(
+                    "[Step cap of {max_turn_iterations} reached; the closing answer above was written without tools. Send \"continue\" to resume this session with tools.]"
+                ));
+            } else {
+                total_accumulated_text.push_str(&format!(
+                    "[Turn paused after {max_turn_iterations} steps with work still in progress. Send \"continue\" to resume this session.]"
+                ));
+            }
         }
         let thought_opt = if total_accumulated_thought.is_empty() {
             None
@@ -2208,6 +2240,13 @@ mod tests {
         );
         // 0 disables the cap; the loop then never trips its step guard.
         assert_eq!(normalize_step_cap(0), UNLIMITED_TURN_ITERATIONS);
+        // The grace pass is derived as `cap + 1`, so the unlimited sentinel
+        // must saturate instead of wrapping to 0 (which would end a no-cap
+        // turn on its very first step).
+        assert_eq!(
+            UNLIMITED_TURN_ITERATIONS.saturating_add(1),
+            UNLIMITED_TURN_ITERATIONS
+        );
         // Anything else keeps the documented clamp.
         assert_eq!(normalize_step_cap(1), 1);
         assert_eq!(normalize_step_cap(20_000), 10_000);

@@ -3,6 +3,7 @@ use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
 use odon_core::{AgentEvent, ArtifactKind, Result};
+use odon_core::events::AgentState;
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent};
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, RiskTier, SecurityPolicy};
 use odon_storage::StorageEngine;
@@ -827,5 +828,190 @@ async fn test_parallel_tool_calls_in_one_step_all_execute() {
     assert_eq!(
         tool_messages, 2,
         "both calls in the step must persist results"
+    );
+}
+
+/// A provider that never stops asking for tools. It records the size of the
+/// tool list it was offered, which is how the closing call is detected: the
+/// step after the cap must be offered zero tools.
+struct NeverConcludesProvider {
+    tool_counts: Arc<std::sync::Mutex<Vec<usize>>>,
+}
+
+#[async_trait]
+impl ModelProvider for NeverConcludesProvider {
+    fn provider_name(&self) -> &str {
+        "never-concludes"
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        self.tool_counts.lock().unwrap().push(request.tools.len());
+        if request.tools.is_empty() {
+            // The closing call: answer in prose, as the real contract allows.
+            let _ = event_sender
+                .send(StreamEvent::TextDelta("closing answer".to_string()))
+                .await;
+        } else {
+            let _ = event_sender
+                .send(StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some("call_never".to_string()),
+                    name: Some("system_info".to_string()),
+                    arguments_delta: Some("{}".to_string()),
+                })
+                .await;
+        }
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_step_cap_grants_one_closing_call_without_tools() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    let tool_counts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    runtime
+        .register_provider(
+            "default",
+            Arc::new(NeverConcludesProvider {
+                tool_counts: tool_counts.clone(),
+            }),
+            true,
+        )
+        .await;
+
+    let session = Session::new("Cap", SessionMode::General, "cap-model");
+    storage.save_session(&session).unwrap();
+
+    let result = runtime
+        .execute_turn_with_cap(
+            &session.id,
+            "keep going forever",
+            Vec::new(),
+            Some("cap-model"),
+            None,
+            CancellationToken::new(),
+            None,
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+
+    let counts = tool_counts.lock().unwrap().clone();
+    assert_eq!(
+        counts.len(),
+        3,
+        "expected two working steps then one closing call, got {:?}",
+        counts
+    );
+    assert!(
+        counts[0] > 0 && counts[1] > 0,
+        "working steps must be offered tools, got {:?}",
+        counts
+    );
+    assert_eq!(
+        counts[2], 0,
+        "the closing call must be offered no tools, got {:?}",
+        counts
+    );
+    assert!(
+        result.content.text.contains("closing answer"),
+        "the closing answer must reach the operator, got: {}",
+        result.content.text
+    );
+    assert!(
+        result.content.text.contains("Step cap of 2 reached"),
+        "the transcript must stay honest about the cap, got: {}",
+        result.content.text
+    );
+}
+
+/// A capped turn must stay resumable: the session is marked Paused (not
+/// Completed), remaining plan items are not force-closed, and the operator is
+/// told that a follow-up message continues the work.
+#[tokio::test]
+async fn test_step_cap_pauses_the_session_and_asks_to_continue() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, mut event_rx) = create_event_bus(256);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    let tool_counts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    runtime
+        .register_provider(
+            "default",
+            Arc::new(NeverConcludesProvider {
+                tool_counts: tool_counts.clone(),
+            }),
+            true,
+        )
+        .await;
+
+    let session = Session::new("Pause", SessionMode::General, "cap-model");
+    storage.save_session(&session).unwrap();
+
+    let result = runtime
+        .execute_turn_with_cap(
+            &session.id,
+            "keep going forever",
+            Vec::new(),
+            Some("cap-model"),
+            None,
+            CancellationToken::new(),
+            None,
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        result
+            .content
+            .text
+            .contains("Send \"continue\" to resume this session with tools"),
+        "the operator must be told how to resume, got: {}",
+        result.content.text
+    );
+
+    let mut final_state = None;
+    while let Ok(event) = event_rx.try_recv() {
+        if let AgentEvent::StateChanged { state, .. } = event.event {
+            final_state = Some(state);
+        }
+    }
+    assert_eq!(
+        final_state,
+        Some(AgentState::Paused),
+        "a capped turn must pause, not report completion; saw {:?}",
+        final_state
     );
 }
