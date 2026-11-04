@@ -1067,17 +1067,39 @@ export const api = {
     return new WebSocket(this.getTerminalWsUrl());
   },
 
-  subscribeEvents(onEvent: (event: AgentEvent) => void): () => void {
+  subscribeEvents(
+    onEvent: (event: AgentEvent) => void,
+    onReconnect?: () => void,
+    onDisconnect?: () => void,
+  ): () => void {
     let es: EventSource | null = null;
     let closed = false;
     let timer: number | undefined;
+    let retryDelay = 1000;
+    let connected = false;
+
+    const scheduleOpen = () => {
+      if (closed || timer !== undefined) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        open();
+      }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 15000);
+    };
 
     const open = () => {
       if (closed) return;
       const token = this.getApiToken();
       const suffix = token ? `?token=${encodeURIComponent(token)}` : '';
-      es = new EventSource(`${this.getBaseUrl()}/api/events${suffix}`);
-      es.onmessage = (e) => {
+      const next = new EventSource(`${this.getBaseUrl()}/api/events${suffix}`);
+      es = next;
+      next.onopen = () => {
+        retryDelay = 1000;
+        const wasConnected = connected;
+        connected = true;
+        if (wasConnected) onReconnect?.();
+      };
+      next.onmessage = (e) => {
         try {
           const parsed = JSON.parse(e.data);
           onEvent(parsed);
@@ -1085,8 +1107,13 @@ export const api = {
           console.error('Failed to parse SSE event:', err);
         }
       };
-      es.onerror = () => {
-        // EventSource reconnects automatically
+      next.onerror = () => {
+        if (closed || es !== next) return;
+        connected = false;
+        next.close();
+        es = null;
+        onDisconnect?.();
+        scheduleOpen();
       };
     };
 
@@ -1114,8 +1141,9 @@ export const api = {
 
     return () => {
       closed = true;
-      if (timer) window.clearTimeout(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
       es?.close();
+      es = null;
     };
   },
 };

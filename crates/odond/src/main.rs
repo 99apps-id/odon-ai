@@ -6446,7 +6446,11 @@ async fn sse_events(headers: HeaderMap, State(state): State<AppState>) -> axum::
     };
 
     Sse::new(stream)
-        .keep_alive(KeepAlive::default())
+        .keep_alive(
+            KeepAlive::new()
+                .interval(std::time::Duration::from_secs(5))
+                .text("keep-alive"),
+        )
         .into_response()
 }
 
