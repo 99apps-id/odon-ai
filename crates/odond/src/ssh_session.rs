@@ -100,8 +100,9 @@ impl client::Handler for Verifier {
 
     async fn check_server_key(
         &mut self,
-        key: &russh::keys::PublicKey,
+        key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let key = key.public_key();
         let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
         if let Ok(mut slot) = self.check.seen.lock() {
             *slot = Some(fingerprint.clone());

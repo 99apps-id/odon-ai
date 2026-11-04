@@ -1,4 +1,4 @@
-[workspace]
+﻿[workspace]
 # The Tauri desktop shell is built separately (it needs platform webview
 # libraries); see desktop/src-tauri and .github/workflows/release.yml.
 exclude = ["desktop/src-tauri"]
@@ -24,7 +24,7 @@ repository = "https://github.com/99apps-id/odon-ai"
 description = "ODON - Open Digital Orchestration Network: Universal AI assistant & autonomous orchestration runtime"
 
 [workspace.dependencies]
-russh = { version = "0.60", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2.1"
 tokio = { version = "1.43", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

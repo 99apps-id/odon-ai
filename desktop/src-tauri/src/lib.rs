@@ -139,13 +139,29 @@ fn start_daemon(app: &tauri::AppHandle) -> Result<(), String> {
         command.env("ODON_RESOURCE_DIR", dir);
     }
     match command.spawn() {
-        Ok(child) => {
+        Ok(mut child) => {
+            let reachable = wait_for_daemon();
+            if reachable {
+                // Something answers on the port. If the daemon this shell just
+                // spawned already exited, that answer came from a different
+                // instance -- typically an orphan left by an earlier session --
+                // and that instance minted its own token. Reporting success here
+                // would leave the window talking to a daemon whose token it does
+                // not hold, which surfaces as a plain "cannot connect".
+                if let Ok(Some(status)) = child.try_wait() {
+                    let message = format!(
+                        "another ODON daemon already owns {DAEMON_ADDR} (this app's daemon exited with {status}); close the other ODON window or stop that process, then use Restart daemon"
+                    );
+                    log_line(&handle, &message);
+                    return Err(message);
+                }
+            }
             if let Some(state) = app.try_state::<DaemonChild>() {
                 if let Ok(mut slot) = state.0.lock() {
                     *slot = Some(child);
                 }
             }
-            if wait_for_daemon() {
+            if reachable {
                 log_line(&handle, "daemon is up on 127.0.0.1:4096");
                 Ok(())
             } else {
