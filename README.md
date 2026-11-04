@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icons/cat.svg" width="64" height="64" alt="ODON Logo" />
+  <img src="assets/icons/cat.svg" width="72" alt="ODON Logo" />
 </p>
 
 <h1 align="center">ODON (Open Digital Orchestration Network)</h1>
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-19-blue?style=flat-square&logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-5.8-blue?style=flat-square&logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat-square&logo=tailwind-css" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Tools_Registry-227_Registered-emerald?style=flat-square" alt="227 registered tools" />
+  <img src="https://img.shields.io/badge/Tools_Registry-249_Registered-emerald?style=flat-square" alt="249 registered tools" />
   <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=flat-square" alt="License" />
 </p>
 
@@ -62,7 +62,7 @@ Unlike traditional rigid terminal loops, ODON delivers seamless multi-turn thoug
   - **Deny**: Rejects execution and passes feedback back to the agent.
 
 ### 4. 🧠 Explicit, Self-Diagnosing Tool Registry
-ODON exposes 227 registered tools with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`. A turn sends at most 128 tool schemas inline; past that a core set rides with `find_tools` and the rest of the catalogue loads on demand, and `run_subagent` delegates a bounded side task to a child session. Independent tool calls in one step run with bounded parallelism (4). Long sessions are compacted to a context budget before each request (trimming oversized tool outputs first, then eliding the oldest middle turns), and a turn that hits its step cap pauses with everything persisted instead of failing; send "continue" to resume. Tune with `ODON_MAX_TURN_ITERATIONS` (default 100) and `ODON_CONTEXT_BUDGET_TOKENS` (default 120000).
+ODON exposes 249 registered tools (238 model-visible, 11 compatibility-only; 242 stable, 2 experimental, 5 honestly marked unavailable) with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`. A turn sends at most 128 tool schemas inline; past that a core set rides with `find_tools` and the rest of the catalogue loads on demand, and `run_subagent` delegates a bounded side task to a child session. Independent tool calls in one step run with bounded parallelism (4). Long sessions are compacted to a context budget before each request (trimming oversized tool outputs first, then eliding the oldest middle turns), and a turn that hits its step cap pauses with everything persisted instead of failing; send "continue" to resume, and a reply cut by the output budget is resumed automatically up to 4 times. Tune with `ODON_MAX_TURN_ITERATIONS` (default 500 for metered providers, 10000 for OAuth/keyless subscription providers, `0` for no cap) and `ODON_CONTEXT_BUDGET_TOKENS` (default 120000).
 - **Filesystem (17 tools)**: `read_file`, `write_file`, `edit`, `multi_edit`, `list_directory`, `create_directory`, `delete_file`, `move_file`, `copy_file`, `grep`, `glob`, etc.
 - **Git (14 tools)**: `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_add`, `git_checkout`, `git_show`, `git_stash`, `git_pull`, `git_push`, `git_reset`, etc.
 - **Browser Control (4 tools)**: `browser_open`, `browser_navigate`, `browser_screenshot`, and `browser_click`. `browser_click` launches a temporary headless Chrome/Edge instance and clicks via CDP.
@@ -82,14 +82,16 @@ ODON exposes 227 registered tools with complete parameter schemas, risk tiers, a
 - **GitHub Connectors (4 tools)**: `github_get_repo`, `github_list_issues`, `github_create_issue`, `github_list_prs`.
 - **Artifact Synthesis (4 tools)**: `artifact_create_code`, `artifact_create_document`, `artifact_create_image`, `artifact_update`.
 
-### 5. ⚙️ Enriched 7-Tab Settings Center
-- **Providers**: Official OAuth (GitHub Copilot, Google Antigravity, OpenAI Codex, Claude, xAI) + BYOK (DeepSeek, OpenAI, Anthropic, Gemini, Qwen, Mistral, Groq, OpenRouter, Ollama, Meta Muse via the pay-as-you-go Model API at `https://api.meta.ai/v1`).
+### 5. ⚙️ Enriched 9-Tab Settings Center
+- **Providers**: Official OAuth (GitHub Copilot, Google Antigravity, OpenAI Codex, Claude, xAI) + BYOK (DeepSeek, OpenAI, Anthropic, Gemini, Qwen, Mistral, Groq, OpenRouter, Ollama, Meta Muse via the pay-as-you-go Model API at `https://api.meta.ai/v1`). A gateway provider can discover its model list from its own endpoint, and each account is probed so the model menu only offers models that actually resolve to a provider.
+- **Endpoints**: Base URLs, API keys, and per-provider model catalogues for openai-compatible gateways.
 - **Agents & Personas**: Switch between **Autonomous Coder**, **Security Auditor**, **Pentester & RE**, **Systems Architect**, and **Autonomous Sentinel**, with custom system prompt overrides and thinking effort levels.
 - **Skills**: Inspect and author reusable automation routines stored in `.odon/skills/*.md`.
 - **MCP Servers**: Configure `stdio` and `sse` Model Context Protocol endpoints.
 - **Mode Harness & Safety**: Toggle **Autonomous** vs **Supervised** mode, enforce **Plan Mode**, and manage saved approval whitelists.
+- **Messaging Relays**: Telegram and WhatsApp bridges, including WhatsApp QR pairing.
 - **SSH Remote Profiles**: Add and edit remote SSH machine profiles.
-- **System & Daemon**: Monitor the native daemon health, port configurations, and interface themes.
+- **System & Daemon**: Monitor the native daemon health, port configurations, loopback token status, and interface themes.
 
 ### 6. 📎 Documents & Images Attachment
 - Single dedicated **Paperclip** attach button.
@@ -166,7 +168,16 @@ odon tools doctor --filter browser --strict
 
 ## 🏁 Getting Started
 
-### Prerequisites
+### Install the Windows app (recommended)
+Download `ODON_0.1.0_x64-setup.exe` from the releases page and run it. The installer bundles both `odon-desktop.exe` and the `odond` sidecar, so no Rust or Node toolchain is needed. On first launch the desktop shell starts the daemon on `127.0.0.1:4096`, writes a loopback token to `%USERPROFILE%\.odon\api-token`, hands that token to the webview, and stops the daemon when you close the app.
+
+Build the installer yourself with:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
+```
+The signed-out path is `desktop\src-tauri\target\release\bundle\nsis\ODON_0.1.0_x64-setup.exe`. To ship OAuth client credentials inside the packaged daemon, put them in `.env.local` (git-ignored) before building; `scripts/stage-sidecar.mjs` passes them to the cargo build so they are stamped into the binary and the packaged app can log in without a `.env.local` at runtime.
+
+### Prerequisites (for building from source)
 - **Rust Toolchain**: `rustc` and `cargo` (1.80+ recommended)
 - **Node.js**: v20+ or v22+ with `pnpm`
 - **OpenSSH Client**: standard on Windows 10/11, macOS, and Linux
