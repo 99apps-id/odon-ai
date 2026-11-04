@@ -193,6 +193,32 @@ impl ApprovalEngine {
         )
     }
 
+    /// Canonicalise the deepest ancestor that exists, then re-append the
+    /// components that do not exist yet.
+    ///
+    /// A target file is normally still absent when approval is requested, so
+    /// `canonicalize` fails outright. Falling back to a purely lexical join
+    /// keeps whatever spelling the caller used, which does not match the
+    /// canonical root (8.3 short names on Windows, symlinked temp dirs on
+    /// macOS) and makes in-workspace paths look like escapes.
+    fn canonicalize_existing_ancestor(path: &std::path::Path) -> Option<std::path::PathBuf> {
+        let mut probe = path.to_path_buf();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        loop {
+            if let Ok(mut resolved) = probe.canonicalize() {
+                for part in tail.iter().rev() {
+                    resolved.push(part);
+                }
+                return Some(resolved);
+            }
+            let name = probe.file_name()?.to_os_string();
+            tail.push(name);
+            if !probe.pop() {
+                return None;
+            }
+        }
+    }
+
     /// Drop the Windows verbatim prefix (`\\?\`, and `\\?\UNC\` for shares).
     ///
     /// `fs::canonicalize` always returns a verbatim path on Windows, while a
@@ -262,15 +288,23 @@ impl ApprovalEngine {
                 // Join relative paths onto the workspace root; absolute paths
                 // are taken as-is. Never trust the raw spelling — `..`
                 // components must be resolved before containment is decided.
+                //
+                // Join onto the *canonical* root, not the caller's spelling:
+                // `std::env::temp_dir()` can hand back an 8.3 short path (for
+                // example `RUNNER~1`) while `canonicalize` resolves the long
+                // form. Mixing the two made every in-workspace target look
+                // like it escaped.
                 let joined = if raw.is_absolute() {
                     raw.to_path_buf()
                 } else {
-                    workspace_root.join(raw)
+                    root.join(raw)
                 };
                 let normalized = Self::strip_verbatim(
                     joined
                         .canonicalize()
-                        .unwrap_or_else(|_| Self::normalize_lexically(&joined)),
+                        .ok()
+                        .or_else(|| Self::canonicalize_existing_ancestor(&joined))
+                        .unwrap_or_else(|| Self::normalize_lexically(&joined)),
                 );
                 if !Self::path_is_inside(&normalized, &root) {
                     return Some(p_str.to_string());
@@ -1057,6 +1091,38 @@ mod tests {
             std::env::temp_dir().join(format!("odon-{prefix}-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    /// A target that does not exist yet must still be resolved against the
+    /// canonical ancestor, not against whatever spelling the caller used.
+    /// `temp_dir()` can return an 8.3 short path on Windows while
+    /// `canonicalize` resolves the long one, which made every in-workspace
+    /// file look like an escape.
+    #[test]
+    fn missing_target_resolves_against_the_canonical_root() {
+        let root = temp_dir("ws-missing");
+        std::fs::create_dir_all(root.join("nested")).expect("create nested");
+        let canonical = ApprovalEngine::canonical_root(&root);
+
+        let resolved = ApprovalEngine::strip_verbatim(
+            ApprovalEngine::canonicalize_existing_ancestor(&root.join("nested").join("new.txt"))
+                .expect("existing ancestor resolves"),
+        );
+        assert_eq!(resolved, canonical.join("nested").join("new.txt"));
+        assert!(resolved.starts_with(&canonical));
+
+        // The containment answer must not depend on the root's spelling.
+        let spelled = root.join(".");
+        assert_eq!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "path": "nested/new.txt" }),
+                &spelled
+            ),
+            None,
+            "in-workspace target is inside for a non-canonical root spelling"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
