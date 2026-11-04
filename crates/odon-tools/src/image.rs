@@ -3,10 +3,8 @@ use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
-use tokio::time::timeout;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const OUTPUT_LIMIT: usize = 64 * 1024;

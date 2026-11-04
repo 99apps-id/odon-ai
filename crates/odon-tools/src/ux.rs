@@ -2,12 +2,9 @@ use crate::registry::{Tool, ToolContext};
 use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
-use reqwest::Client;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
-use tokio::time::timeout;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
@@ -170,8 +167,10 @@ impl Tool for AxeCoreScanTool {
             .and_then(|v| v.as_u64())
             .map(Duration::from_secs)
             .unwrap_or(COMMAND_TIMEOUT);
-        let command =
-            command_override.unwrap_or_else(|| format!("echo 'axe-core scan requested for {url}'"));
+        let command = command_override.ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "no axe-core runner is configured: pass `command` naming the tool to run (for example `npx @axe-core/cli <url>`)".to_string(),
+        })?;
         let mut parts = command.split_whitespace();
         let program = parts.next().unwrap_or(&command);
         let args_vec: Vec<&str> = parts.collect();
@@ -250,9 +249,12 @@ impl Tool for ResponsiveScreenshotTool {
             .and_then(|v| v.as_u64())
             .map(Duration::from_secs)
             .unwrap_or(COMMAND_TIMEOUT);
-        let command = command_override.unwrap_or_else(|| {
-            format!("echo 'Screenshot requested for {url} viewport={viewport}'")
-        });
+        let command = command_override.ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!(
+                "no screenshot runner is configured: pass `command` naming the tool to run for {url} at {viewport}"
+            ),
+        })?;
         let mut parts = command.split_whitespace();
         let program = parts.next().unwrap_or(&command);
         let args_vec: Vec<&str> = parts.collect();

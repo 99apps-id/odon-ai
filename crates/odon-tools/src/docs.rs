@@ -2,12 +2,9 @@ use crate::registry::{Tool, ToolContext};
 use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
-use reqwest::Client;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
-use tokio::time::timeout;
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
@@ -88,8 +85,10 @@ impl Tool for OpenApiGenerateTool {
             .map(Duration::from_secs)
             .unwrap_or(COMMAND_TIMEOUT);
         let workspace_root = &ctx.workspace_root;
-        let command = command_override
-            .unwrap_or_else(|| "echo 'OpenAPI generation not configured'".to_string());
+        let command = command_override.ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "no OpenAPI generator is configured: pass `command` naming the tool to run (for example `npx @redocly/cli build-docs openapi.yaml`)".to_string(),
+        })?;
         let mut parts = command.split_whitespace();
         let program = parts.next().unwrap_or(&command);
         let args_vec: Vec<&str> = parts.collect();
@@ -156,8 +155,10 @@ impl Tool for ArchitectureDiagramTool {
             .map(Duration::from_secs)
             .unwrap_or(COMMAND_TIMEOUT);
         let workspace_root = &ctx.workspace_root;
-        let command = command_override
-            .unwrap_or_else(|| "echo 'Architecture diagram generation not configured'".to_string());
+        let command = command_override.ok_or_else(|| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: "no diagram generator is configured: pass `command` naming the tool to run (for example `npx mmdc -i diagram.mmd -o out.svg`)".to_string(),
+        })?;
         let mut parts = command.split_whitespace();
         let program = parts.next().unwrap_or(&command);
         let args_vec: Vec<&str> = parts.collect();
@@ -241,5 +242,49 @@ impl Tool for ChangelogGenerateTool {
             "stderr": stderr,
             "stderr_truncated": stderr_truncated
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::ToolContext;
+    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+    use std::sync::Arc;
+
+    fn context() -> ToolContext {
+        let dir = std::env::temp_dir().join(format!("odon-docs-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        ToolContext {
+            session_id: "s1".to_string(),
+            workspace_root: dir.to_string_lossy().to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn openapi_generate_reports_a_missing_generator_instead_of_fake_success() {
+        // The tool used to echo a placeholder and return success, which let a
+        // model believe documentation had been produced.
+        let error = OpenApiGenerateTool
+            .execute(&context(), json!({ "spec_path": "openapi.yaml" }))
+            .await
+            .expect_err("a missing generator must surface as an error");
+        let message = error.to_string();
+        assert!(
+            message.contains("no OpenAPI generator is configured"),
+            "unexpected message: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn architecture_diagram_reports_a_missing_generator() {
+        let error = ArchitectureDiagramTool
+            .execute(&context(), json!({ "source": "src", "output_path": "diagram.svg" }))
+            .await
+            .expect_err("a missing generator must surface as an error");
+        assert!(error.to_string().contains("no diagram generator is configured"));
     }
 }

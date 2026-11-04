@@ -5,7 +5,6 @@ use odon_security::RiskTier;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::Duration;
-use tokio::time::timeout;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const OUTPUT_LIMIT: usize = 64 * 1024;
@@ -63,7 +62,7 @@ impl Tool for MetricDashboardTool {
         RiskTier::Tier2SystemMutating
     }
 
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args
             .get("url")
             .and_then(|v| v.as_str())
@@ -76,7 +75,12 @@ impl Tool for MetricDashboardTool {
             .and_then(|v| v.as_u64())
             .map(Duration::from_secs)
             .unwrap_or(HTTP_TIMEOUT);
-        let client = http_client()?;
+        let (client, url) = crate::net_guard::ValidatedTarget::pinned_client_for(
+            url,
+            reqwest::Client::builder().user_agent("odon-monitoring/0.1"),
+        )
+        .await?;
+        let url = url.as_str();
         let response = tokio::time::timeout(time_limit, client.get(url).send())
             .await
             .map_err(|_| OdonError::Tool {
@@ -133,7 +137,7 @@ impl Tool for UptimeMonitorTool {
         RiskTier::Tier2SystemMutating
     }
 
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args
             .get("url")
             .and_then(|v| v.as_str())
@@ -146,7 +150,12 @@ impl Tool for UptimeMonitorTool {
             .and_then(|v| v.as_u64())
             .map(Duration::from_secs)
             .unwrap_or(HTTP_TIMEOUT);
-        let client = http_client()?;
+        let (client, url) = crate::net_guard::ValidatedTarget::pinned_client_for(
+            url,
+            reqwest::Client::builder().user_agent("odon-monitoring/0.1"),
+        )
+        .await?;
+        let url = url.as_str();
         let response = tokio::time::timeout(time_limit, client.head(url).send())
             .await
             .map_err(|_| OdonError::Tool {

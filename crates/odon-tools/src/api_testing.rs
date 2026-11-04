@@ -84,7 +84,7 @@ impl Tool for RestClientTool {
         RiskTier::Tier2SystemMutating
     }
 
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let method =
             args.get("method")
                 .and_then(|v| v.as_str())
@@ -103,7 +103,15 @@ impl Tool for RestClientTool {
         let body = args.get("body").cloned();
         let time_limit = request_timeout(&args);
 
-        let client = http_client()?;
+        // Reject metadata/loopback targets and pin the approved addresses before
+        // any request goes out; a bare client would let a model reach internal
+        // services such as the daemon API.
+        let (client, url) = crate::net_guard::ValidatedTarget::pinned_client_for(
+            url,
+            reqwest::Client::builder().user_agent("odon-api-testing/0.1"),
+        )
+        .await?;
+        let url = url.as_str();
         let mut request = match method {
             "GET" => client.get(url),
             "POST" => client.post(url),
@@ -214,7 +222,7 @@ impl Tool for GraphqlClientTool {
         RiskTier::Tier2SystemMutating
     }
 
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args
             .get("url")
             .and_then(|v| v.as_str())
@@ -233,7 +241,12 @@ impl Tool for GraphqlClientTool {
         let headers = args.get("headers").and_then(|v| v.as_object()).cloned();
         let time_limit = request_timeout(&args);
 
-        let client = http_client()?;
+        let (client, url) = crate::net_guard::ValidatedTarget::pinned_client_for(
+            url,
+            reqwest::Client::builder().user_agent("odon-api-testing/0.1"),
+        )
+        .await?;
+        let url = url.as_str();
         let mut request = client
             .post(url)
             .json(&json!({ "query": query, "variables": variables }));
@@ -317,7 +330,7 @@ impl Tool for WebhookTestTool {
         RiskTier::Tier2SystemMutating
     }
 
-    async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
+    async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args
             .get("url")
             .and_then(|v| v.as_str())
@@ -333,7 +346,12 @@ impl Tool for WebhookTestTool {
         let payload = args.get("payload").cloned().unwrap_or(Value::Null);
         let time_limit = request_timeout(&args);
 
-        let client = http_client()?;
+        let (client, url) = crate::net_guard::ValidatedTarget::pinned_client_for(
+            url,
+            reqwest::Client::builder().user_agent("odon-api-testing/0.1"),
+        )
+        .await?;
+        let url = url.as_str();
         let mut request = match method {
             "POST" => client.post(url),
             "PUT" => client.put(url),
@@ -379,5 +397,52 @@ impl Tool for WebhookTestTool {
             "body": text,
             "body_truncated": truncated
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_context() -> ToolContext {
+        use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("odon-api-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        ToolContext {
+            session_id: "s1".to_string(),
+            workspace_root: dir.to_string_lossy().to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rest_client_rejects_a_cloud_metadata_target() {
+        // Without the pinned guard a model could read instance credentials or
+        // reach services bound to loopback. Asserting on the message keeps this
+        // honest: a bare client also "fails" here, but only after a network
+        // timeout, which proves nothing about the policy.
+        let started = std::time::Instant::now();
+        let blocked = RestClientTool
+            .execute(
+                &test_context(),
+                json!({ "method": "GET", "url": "http://169.254.169.254/latest/meta-data/" }),
+            )
+            .await;
+
+        let error = blocked.expect_err("metadata address must be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("169.254.169.254")
+                || message.to_lowercase().contains("blocked")
+                || message.to_lowercase().contains("not allowed"),
+            "the guard must name the rejected target, got: {message}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "rejection must be decided before any network attempt"
+        );
     }
 }

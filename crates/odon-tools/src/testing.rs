@@ -4,7 +4,7 @@ use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -340,12 +340,14 @@ impl Tool for CoverageThresholdCheckTool {
             .and_then(|v| v.as_f64())
             .unwrap_or(80.0);
 
-        let workspace_root = Path::new(&ctx.workspace_root);
-        let resolved = if Path::new(report_path).is_absolute() {
-            PathBuf::from(report_path)
-        } else {
-            workspace_root.join(report_path)
-        };
+        // Tier0 must never reach outside the workspace: this tool runs without
+        // approval and stays usable in plan mode, so an absolute path would let a
+        // model read arbitrary files such as credentials or private keys.
+        let resolved = crate::workspace_path::resolve_existing(&ctx.workspace_root, report_path)
+            .map_err(|error| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("coverage report is outside the workspace: {error}"),
+            })?;
 
         let raw = std::fs::read_to_string(&resolved).map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
@@ -388,5 +390,70 @@ impl Tool for CoverageThresholdCheckTool {
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::ToolContext;
+    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+    use std::sync::Arc;
+
+    fn context(workspace: &Path) -> ToolContext {
+        ToolContext {
+            session_id: "s1".to_string(),
+            workspace_root: workspace.to_string_lossy().to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn coverage_threshold_reads_a_report_inside_the_workspace() {
+        let dir = std::env::temp_dir().join(format!("odon-cov-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("coverage.json"),
+            r#"{"totals":{"lines":{"pct":91.5}}}"#,
+        )
+        .unwrap();
+
+        let ctx = context(&dir);
+        let result = CoverageThresholdCheckTool
+            .execute(&ctx, json!({ "report_path": "coverage.json", "threshold": 80.0 }))
+            .await
+            .expect("report inside the workspace must be readable");
+
+        assert_eq!(result["coverage_pct"], 91.5);
+        assert_eq!(result["passed"], true);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn coverage_threshold_rejects_a_report_outside_the_workspace() {
+        // This tool is Tier0: it runs without approval and stays usable in plan
+        // mode. An absolute path used to reach anything on the machine, so this
+        // asserts the sandbox holds.
+        let workspace = std::env::temp_dir().join(format!("odon-cov-ws-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let outside = std::env::temp_dir().join(format!("odon-cov-outside-{}.json", std::process::id()));
+        std::fs::write(&outside, r#"{"totals":{"lines":{"pct":99.0}}}"#).unwrap();
+
+        let ctx = context(&workspace);
+        let result = CoverageThresholdCheckTool
+            .execute(
+                &ctx,
+                json!({ "report_path": outside.to_string_lossy() }),
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a Tier0 tool must not read files outside the workspace"
+        );
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_file(&outside);
     }
 }

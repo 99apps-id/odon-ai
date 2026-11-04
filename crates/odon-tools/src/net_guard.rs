@@ -227,6 +227,19 @@ impl ValidatedTarget {
     pub fn client(&self, builder: reqwest::ClientBuilder) -> Result<reqwest::Client> {
         pinned_client(&[self], builder)
     }
+
+    /// Validate `url` and return a client pinned to the addresses that were just
+    /// approved, together with the URL to request. Use this instead of building a
+    /// bare `reqwest::Client`: an unvalidated client can reach cloud metadata
+    /// endpoints and services bound to loopback.
+    pub async fn pinned_client_for(
+        url: &str,
+        builder: reqwest::ClientBuilder,
+    ) -> Result<(reqwest::Client, String)> {
+        let target = validate_url(url).await?;
+        let client = target.client(builder)?;
+        Ok((client, target.as_str().to_string()))
+    }
 }
 
 /// Pin every target's addresses into `builder`.

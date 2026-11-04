@@ -3,8 +3,7 @@ use async_trait::async_trait;
 use odon_core::error::{OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -113,7 +112,10 @@ impl Tool for PipelineTriggerTool {
             } else if Path::new(workspace_root).join(".gitlab-ci.yml").exists() {
                 "gitlab-runner exec".to_string()
             } else {
-                "echo 'No CI workflow definition detected'".to_string()
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: "no CI workflow definition was detected in the workspace: add one or pass `command` naming the pipeline to run".to_string(),
+                });
             }
         };
 
@@ -268,16 +270,13 @@ impl Tool for ArtifactManagementTool {
             }
             "package" => {
                 let source_path = Path::new(&ctx.workspace_root).join(source);
-                let destination_path = destination
-                    .map(|d| {
-                        let p = Path::new(d);
-                        if p.is_absolute() {
-                            p.to_path_buf()
-                        } else {
-                            Path::new(&ctx.workspace_root).join(p)
-                        }
-                    })
-                    .unwrap_or_else(|| Path::new(&ctx.workspace_root).join("artifacts.zip"));
+                let destination_path = match destination {
+                    Some(d) => crate::workspace_path::resolve_write(&ctx.workspace_root, d)?,
+                    None => crate::workspace_path::resolve_write(
+                        &ctx.workspace_root,
+                        "artifacts.zip",
+                    )?,
+                };
                 std::fs::create_dir_all(destination_path.parent().unwrap_or(Path::new(".")))
                     .map_err(|e| OdonError::Tool {
                         tool: self.name().to_string(),
