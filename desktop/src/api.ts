@@ -27,6 +27,7 @@ async function readGitHubError(res: Response): Promise<string> {
 }
 
 export interface OAuthAccountInfo {
+  id: string;
   provider: string;
   email: string | null;
   plan: string | null;
@@ -39,7 +40,7 @@ export interface OAuthLoginResponse {
   user_code?: string;
   verification_uri?: string;
   device_code?: string;
-  status: 'pending_browser' | 'pending_device' | 'completed';
+  status: 'pending_browser' | 'pending_device' | 'pending_manual' | 'completed';
   account?: OAuthAccountInfo;
 }
 
@@ -120,6 +121,17 @@ export interface WhatsAppBridgeStatus {
   push_name?: string | null;
   error?: string | null;
   updated_at?: string;
+}
+
+/** One remote directory entry returned by the SFTP panel. */
+export interface SftpEntry {
+  name: string;
+  path: string;
+  /** `dir`, `file` or `link`. */
+  kind: string;
+  size: number;
+  mode: string;
+  mtime: number;
 }
 
 export interface SshProfile {
@@ -781,6 +793,20 @@ export const api = {
     return res.json();
   },
 
+  /// Claude's public client only accepts its registered https redirect, so the
+  /// provider shows a code instead of calling back. Send the pasted code back.
+  async completeOAuth(provider: string, code: string): Promise<void> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/oauth/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, code }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `OAuth completion failed with status ${res.status}`);
+    }
+  },
+
   async getOAuthAccounts(): Promise<OAuthAccountInfo[]> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/oauth/accounts`);
     if (!res.ok) return [];
@@ -1091,6 +1117,89 @@ export const api = {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/ssh/profiles`);
     if (!res.ok) return { profiles: [] };
     return res.json();
+  },
+
+  // ── SFTP file panel ──────────────────────────────────────────────────
+  async sftpHome(profileId: string): Promise<string> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/sftp/home?profile_id=${encodeURIComponent(profileId)}`
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Reading the remote home failed with status ${res.status}`);
+    }
+    return body.home as string;
+  },
+
+  async sftpList(profileId: string, path: string): Promise<{ path: string; parent: string; entries: SftpEntry[] }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/sftp/list?profile_id=${encodeURIComponent(profileId)}&path=${encodeURIComponent(path)}`
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Listing ${path} failed with status ${res.status}`);
+    }
+    return { path: body.path, parent: body.parent, entries: body.entries || [] };
+  },
+
+  async sftpReadFile(profileId: string, path: string): Promise<{ content: string; truncated: boolean }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/sftp/file?profile_id=${encodeURIComponent(profileId)}&path=${encodeURIComponent(path)}`
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Opening ${path} failed with status ${res.status}`);
+    }
+    return { content: body.content ?? '', truncated: !!body.truncated };
+  },
+
+  async sftpWriteFile(profileId: string, path: string, content: string): Promise<void> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sftp/file`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, path, content }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Saving ${path} failed with status ${res.status}`);
+    }
+  },
+
+  async sftpCreate(profileId: string, dir: string, name: string, kind: 'file' | 'dir'): Promise<string> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sftp/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, dir, name, kind }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Creating ${name} failed with status ${res.status}`);
+    }
+    return body.path as string;
+  },
+
+  async sftpRename(profileId: string, from: string, to: string): Promise<void> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sftp/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, from, to }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Renaming failed with status ${res.status}`);
+    }
+  },
+
+  async sftpDelete(profileId: string, path: string, dir: boolean): Promise<void> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sftp/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, path, dir }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) {
+      throw new Error(body.error || `Deleting ${path} failed with status ${res.status}`);
+    }
   },
 
   async saveSshProfile(profile: SshProfile): Promise<{ success: boolean; profiles: SshProfile[] }> {

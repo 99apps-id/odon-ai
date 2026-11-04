@@ -34,7 +34,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, OAuthAccountInfo, OAuthLoginResponse, SshProfile, SkillItemInfo } from '../api';
-import { isDesktopShell, restartDaemon } from '../lib/desktop';
+import { isDesktopShell, openExternal, restartDaemon } from '../lib/desktop';
 
 /** Presentation for the /api/health probe shown beside the API token field. */
 const AUTH_PROBE_PILLS = {
@@ -247,7 +247,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     userCode?: string;
     verificationUri?: string;
     authUrl?: string;
+    /** Claude registers a fixed redirect, so the code has to be pasted back. */
+    manualCode?: boolean;
   } | null>(null);
+  const [manualCode, setManualCode] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
   // BYOK keys & base urls state
@@ -526,7 +530,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setCopiedCode(false);
     try {
       const resp: OAuthLoginResponse = await api.loginOAuth(providerId);
-      if (resp.status === 'pending_device' && resp.user_code) {
+      if (resp.status === 'pending_manual' && resp.auth_url) {
+        // No loopback callback for this provider: keep the URL visible and ask
+        // for the code the provider displays after sign-in.
+        setManualCode('');
+        setOauthPrompt({
+          provider: providerId,
+          authUrl: resp.auth_url,
+          manualCode: true,
+        });
+        const opened = await openExternal(resp.auth_url);
+        if (!opened) {
+          setKeyError('Could not open the browser. Use the link below to open it.');
+        }
+      } else if (resp.status === 'pending_device' && resp.user_code) {
         setOauthPrompt({
           provider: providerId,
           userCode: resp.user_code,
@@ -537,14 +554,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           provider: providerId,
           authUrl: resp.auth_url,
         });
-        try {
-          // Installed Tauri apps must use the operating system browser so the
-          // localhost callback reaches odond. Browser development keeps the
-          // normal fallback.
-          const { openUrl } = await import('@tauri-apps/plugin-opener');
-          await openUrl(resp.auth_url);
-        } catch {
-          window.open(resp.auth_url, '_blank', 'noopener,noreferrer');
+        // The desktop shell must hand the page to the OS browser: the webview
+        // cannot navigate there, and the PKCE callback to 127.0.0.1 only
+        // completes when a real browser visits the provider.
+        const opened = await openExternal(resp.auth_url);
+        if (!opened) {
+          setKeyError(
+            'Could not open the browser. Use "Open authorization page" below to try again.'
+          );
         }
       }
 
@@ -1280,13 +1297,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       /* Disconnected state */
                       <div className="space-y-3">
                         {oauthPrompt && oauthPrompt.provider === currentProvider.id ? (
-                          /* Device Code prompt (GitHub Copilot, xAI) */
+                          /* Device code or browser authorization prompt. */
                           <div className="p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 space-y-3">
                             <div className="text-xs font-semibold text-blue-900 dark:text-blue-200">
-                              Device Authorization Required
+                              {oauthPrompt.userCode
+                                ? 'Device Authorization Required'
+                                : 'Authorization Required'}
                             </div>
                             <p className="text-[11.5px] text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                              Copy the one-time user code below and open the authorization page:
+                              {oauthPrompt.userCode
+                                ? 'Copy the one-time user code below and open the authorization page:'
+                                : 'Open the authorization page below to finish signing in. If your browser did not open automatically, copy the link.'}
                             </p>
 
                             {oauthPrompt.userCode && (
@@ -1304,16 +1325,89 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               </div>
                             )}
 
-                            {oauthPrompt.verificationUri && (
-                              <a
-                                href={oauthPrompt.verificationUri}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline pt-1"
-                              >
-                                <span>Open {oauthPrompt.verificationUri}</span>
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
+                            {(oauthPrompt.verificationUri || oauthPrompt.authUrl) && (
+                              <div className="space-y-2">
+                                {/* The raw URL stays selectable so a failed opener is recoverable. */}
+                                <div className="px-3 py-2 rounded-lg bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 font-mono text-[10.5px] text-neutral-700 dark:text-neutral-300 break-all select-all">
+                                  {oauthPrompt.verificationUri || oauthPrompt.authUrl}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openExternal(
+                                        (oauthPrompt.verificationUri || oauthPrompt.authUrl) as string
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span>Open authorization page</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleCopyCode(
+                                        (oauthPrompt.verificationUri || oauthPrompt.authUrl) as string
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                                  >
+                                    {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                    <span>{copiedCode ? 'Copied!' : 'Copy link'}</span>
+                                  </button>
+                                </div>
+                                {oauthPrompt.manualCode && (
+                                  <div className="pt-2 space-y-2">
+                                    <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
+                                      After signing in, the provider shows a code. Paste it here
+                                      (a <code className="font-mono">code#state</code> pair is
+                                      fine).
+                                    </p>
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        type="text"
+                                        value={manualCode}
+                                        onChange={(e) => setManualCode(e.target.value)}
+                                        placeholder="Paste the authorization code"
+                                        className="flex-1 px-3 py-1.5 rounded-lg bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 font-mono text-[11px] text-neutral-800 dark:text-neutral-200"
+                                      />
+                                      <button
+                                        type="button"
+                                        disabled={manualBusy || manualCode.trim().length === 0}
+                                        onClick={async () => {
+                                          setManualBusy(true);
+                                          setKeyError(null);
+                                          try {
+                                            await api.completeOAuth(oauthPrompt.provider, manualCode.trim());
+                                            setOauthPrompt(null);
+                                            setManualCode('');
+                                            const list = await api.getOAuthAccounts();
+                                            setOauthAccounts(
+                                              (list || []).reduce<Record<string, OAuthAccountInfo>>(
+                                                (acc, a) => {
+                                                  acc[a.id.toLowerCase()] = a;
+                                                  return acc;
+                                                },
+                                                {}
+                                              )
+                                            );
+                                          } catch (e) {
+                                            setKeyError(
+                                              e instanceof Error ? e.message : 'Could not complete sign-in'
+                                            );
+                                          } finally {
+                                            setManualBusy(false);
+                                          }
+                                        }}
+                                        className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold disabled:opacity-50"
+                                      >
+                                        {manualBusy ? 'Checking…' : 'Complete sign-in'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                         ) : (

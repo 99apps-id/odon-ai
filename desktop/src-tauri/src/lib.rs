@@ -294,6 +294,21 @@ fn daemon_boot_failure(state: tauri::State<'_, BootFailure>) -> Option<String> {
     state.0.lock().ok().and_then(|slot| slot.clone())
 }
 
+/// Opens an OAuth authorization page in the operating system browser.
+///
+/// A webview cannot navigate to the provider page itself: `window.open` is
+/// blocked and an `target="_blank"` anchor does nothing, so the PKCE callback
+/// to 127.0.0.1 would never happen. Only http(s) is accepted here so a crafted
+/// URL cannot launch an arbitrary protocol handler.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let lowered = url.trim().to_ascii_lowercase();
+    if !(lowered.starts_with("https://") || lowered.starts_with("http://")) {
+        return Err("only http and https urls can be opened".to_string());
+    }
+    tauri_plugin_opener::open_url(url.trim(), None::<&str>).map_err(|err| err.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -305,7 +320,8 @@ pub fn run() {
             pick_folder,
             restart_daemon,
             daemon_token,
-            daemon_boot_failure
+            daemon_boot_failure,
+            open_external
         ])
         .setup(|app| {
             spawn_daemon(app);

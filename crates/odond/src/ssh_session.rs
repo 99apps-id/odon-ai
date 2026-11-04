@@ -131,6 +131,50 @@ pub struct SshSession {
 
 impl SshSession {
     pub async fn connect(opts: &ConnectOptions) -> Result<Self> {
+        let Authenticated { handle, fingerprint } = authenticate(opts).await?;
+        let channel = handle.channel_open_session().await?;
+        channel
+            .request_pty(true, TERM, opts.cols, opts.rows, 0, 0, &[])
+            .await?;
+        channel.request_shell(true).await?;
+        Ok(Self {
+            handle,
+            channel,
+            fingerprint,
+        })
+    }
+
+    /// Split into a read half and a write half.
+    ///
+    /// The terminal loop needs to wait on remote output and ship keystrokes at
+    /// the same time; one `Channel` cannot be borrowed both ways at once, so the
+    /// two halves are handed out separately.
+    pub fn into_parts(
+        self,
+    ) -> (
+        Handle<Verifier>,
+        ChannelReadHalf,
+        ChannelWriteHalf<russh::client::Msg>,
+        String,
+    ) {
+        let (read, write) = self.channel.split();
+        (self.handle, read, write, self.fingerprint)
+    }
+}
+
+/// A transport that has completed handshake and public-key auth but has not
+/// opened any channel yet.
+///
+/// The terminal opens a shell channel from it; the SFTP browser opens an
+/// `sftp` subsystem channel from its own connection. Sharing the handshake
+/// (host-key pinning, key loading, auth) keeps both paths identical instead of
+/// duplicating security-relevant code.
+pub struct Authenticated {
+    pub handle: Handle<Verifier>,
+    pub fingerprint: String,
+}
+
+pub async fn authenticate(opts: &ConnectOptions) -> Result<Authenticated> {
         let expected = load_known_host(&opts.store_path, &opts.store_key);
         let check = Arc::new(KeyCheck::default());
         let config = Arc::new(client::Config {
@@ -196,41 +240,16 @@ impl SshSession {
             );
         }
 
-        let channel = handle.channel_open_session().await?;
-        channel
-            .request_pty(true, TERM, opts.cols, opts.rows, 0, 0, &[])
-            .await?;
-        channel.request_shell(true).await?;
-
         // Pin the fingerprint on first use, and remember a rotation only after
         // the caller has seen the mismatch path above.
         if expected.is_none() {
             let _ = save_known_host(&opts.store_path, &opts.store_key, &fingerprint);
         }
 
-        Ok(Self {
+        Ok(Authenticated {
             handle,
-            channel,
             fingerprint,
         })
-    }
-
-    /// Split into a read half and a write half.
-    ///
-    /// The terminal loop needs to wait on remote output and ship keystrokes at
-    /// the same time; one `Channel` cannot be borrowed both ways at once, so the
-    /// two halves are handed out separately.
-    pub fn into_parts(
-        self,
-    ) -> (
-        Handle<Verifier>,
-        ChannelReadHalf,
-        ChannelWriteHalf<russh::client::Msg>,
-        String,
-    ) {
-        let (read, write) = self.channel.split();
-        (self.handle, read, write, self.fingerprint)
-    }
 }
 
 /// Text to show in the terminal for a failed session, so the user gets the

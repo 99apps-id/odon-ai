@@ -69,3 +69,30 @@ export async function daemonBootFailure(): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * Opens an http(s) URL in the operating system browser.
+ *
+ * The desktop webview cannot navigate to an OAuth page by itself, so the shell
+ * hands the URL to the default browser where the loopback callback still
+ * reaches the daemon. In a browser tab the normal `window.open` path is used.
+ * Returns true when a browser was asked to open the page.
+ */
+export async function openExternal(url: string): Promise<boolean> {
+  const target = url.trim();
+  if (!target) return false;
+  if (isDesktopShell()) {
+    try {
+      await invoke<null>("open_external", { url: target });
+      return true;
+    } catch {
+      /* fall through to the browser path */
+    }
+  }
+  try {
+    const win = window.open(target, "_blank", "noopener,noreferrer");
+    return win !== null;
+  } catch {
+    return false;
+  }
+}

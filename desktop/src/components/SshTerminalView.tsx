@@ -22,9 +22,17 @@ import {
   FileKey,
   FileText,
   Clipboard,
+  Pencil,
 } from 'lucide-react';
 import { api, SshProfile } from '../api';
 import { NativeTerminal } from './NativeTerminal';
+import SftpExplorer from './SftpExplorer';
+
+/** Persisted SFTP pane width, so the panel does not reset every visit. */
+const FILES_WIDTH_KEY = 'odon_ssh_files_width';
+const DEFAULT_FILES_WIDTH = 360;
+const MIN_FILES_WIDTH = 240;
+const MAX_FILES_WIDTH = 720;
 
 export const SshTerminalView: React.FC = () => {
   const [profiles, setProfiles] = useState<SshProfile[]>([]);
@@ -32,9 +40,46 @@ export const SshTerminalView: React.FC = () => {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
+
+  // SFTP pane: off by default so the terminal keeps the full width.
+  const [showFiles, setShowFiles] = useState<boolean>(false);
+  const [filesWidth, setFilesWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(FILES_WIDTH_KEY));
+    if (Number.isFinite(saved) && saved >= MIN_FILES_WIDTH && saved <= MAX_FILES_WIDTH) {
+      return saved;
+    }
+    return DEFAULT_FILES_WIDTH;
+  });
+
+  const startFileResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = filesWidth;
+    const onMove = (move: MouseEvent) => {
+      // The handle sits on the pane's left edge: dragging left widens it.
+      const next = Math.min(
+        MAX_FILES_WIDTH,
+        Math.max(MIN_FILES_WIDTH, startWidth - (move.clientX - startX))
+      );
+      setFilesWidth(next);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      setFilesWidth((w) => {
+        localStorage.setItem(FILES_WIDTH_KEY, String(w));
+        return w;
+      });
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   // Profile modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  /** When set, the modal edits this profile instead of creating one. */
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newAlias, setNewAlias] = useState<string>('');
   const [newHost, setNewHost] = useState<string>('');
   const [newPort, setNewPort] = useState<number>(22);
@@ -67,13 +112,35 @@ export const SshTerminalView: React.FC = () => {
     loadProfiles();
   }, []);
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     if (!selectedProfile) return;
     setIsConnecting(true);
-    setTimeout(() => {
-      setIsConnected(true);
+    setConnectError(null);
+    // Verify the profile for real before claiming a connection: a wrong host, a
+    // missing key, or a rejected key must be reported here instead of opening an
+    // empty terminal that looks connected.
+    try {
+      const result = await api.execSsh({
+        profile_id: selectedProfile.id,
+        command: 'echo odon-ok',
+      });
+      if (result.success) {
+        setIsConnected(true);
+      } else {
+        const detail = (result.stderr || result.stdout || '').trim();
+        setConnectError(
+          detail
+            ? `Connection failed: ${detail.slice(0, 300)}`
+            : 'Connection failed: the host rejected the session.'
+        );
+      }
+    } catch (err) {
+      setConnectError(
+        `Connection failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
       setIsConnecting(false);
-    }, 400);
+    }
   };
 
   const handleDisconnect = () => {
@@ -161,8 +228,9 @@ export const SshTerminalView: React.FC = () => {
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? `ssh-${crypto.randomUUID()}`
         : `ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const existing = editingId ? profiles.find((p) => p.id === editingId) : undefined;
     const newProfile: SshProfile = {
-      id: generatedId,
+      id: existing?.id ?? generatedId,
       alias: newAlias.trim(),
       host: newHost.trim(),
       port: newPort || 22,
@@ -171,7 +239,7 @@ export const SshTerminalView: React.FC = () => {
       certificate_filename: finalCertName || undefined,
       auth_type: finalKeyPath || finalCertName ? 'certificate' : 'password',
       description: newDesc.trim() || undefined,
-      created_at: new Date().toISOString(),
+      created_at: existing?.created_at ?? new Date().toISOString(),
     };
 
     try {
@@ -183,6 +251,22 @@ export const SshTerminalView: React.FC = () => {
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  /** Prefill the modal with an existing profile so it can be edited in place. */
+  const openEditProfile = (profile: SshProfile, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setEditingId(profile.id);
+    setNewAlias(profile.alias || '');
+    setNewHost(profile.host || '');
+    setNewPort(profile.port || 22);
+    setNewUser(profile.user || 'root');
+    setNewKeyPath(profile.key_path || '');
+    setNewDesc(profile.description || '');
+    setImportedCertName(profile.certificate_filename || null);
+    setKeyInputTab(profile.key_path ? 'path' : 'file');
+    setSaveError(null);
+    setIsModalOpen(true);
   };
 
   const handleDeleteProfile = async (id: string, e: React.MouseEvent) => {
@@ -202,6 +286,7 @@ export const SshTerminalView: React.FC = () => {
 
   const resetModalForm = () => {
     setSaveError(null);
+    setEditingId(null);
     setNewAlias('');
     setNewHost('');
     setNewPort(22);
@@ -255,6 +340,7 @@ export const SshTerminalView: React.FC = () => {
                     if (selectedProfile?.id !== p.id) {
                       setSelectedProfile(p);
                       setIsConnected(false);
+                      setConnectError(null);
                     }
                   }}
                   className={`group p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-start justify-between ${
@@ -281,13 +367,22 @@ export const SshTerminalView: React.FC = () => {
                     )}
                   </div>
 
-                  <button
-                    onClick={(e) => handleDeleteProfile(p.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-clay-600 rounded transition-opacity"
-                    title="Delete profile"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      onClick={(e) => openEditProfile(p, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-blue-700 rounded transition-opacity"
+                      title="Edit profile"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteProfile(p.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-neutral-400 hover:text-clay-600 rounded transition-opacity"
+                      title="Delete profile"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })
@@ -298,23 +393,38 @@ export const SshTerminalView: React.FC = () => {
       {/* ───────────────────────────────────────────────────────────
           RIGHT: NATIVE FULL COMMAND TERMINAL PANE
       ─────────────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-neutral-900">
+      <div className="flex-1 flex overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col overflow-hidden bg-neutral-900 min-w-0">
         {/* Terminal Header */}
-        <div className="px-4 py-2 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <TerminalIcon className="w-4 h-4 text-blue-400" />
-            <span className="font-bold text-xs text-white">
+        <div className="px-4 py-2 bg-neutral-800 border-b border-neutral-700 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            <TerminalIcon className="w-4 h-4 text-blue-400 shrink-0" />
+            <span className="font-bold text-xs text-white truncate">
               {selectedProfile ? `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}` : 'SSH Remote Terminal'}
             </span>
             {selectedProfile?.alias && (
-              <span className="px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300 font-mono text-[10.5px]">
+              <span className="px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300 font-mono text-[10.5px] shrink-0">
                 {selectedProfile.alias}
               </span>
             )}
-            <span className="text-[10px] text-neutral-400 font-mono hidden md:inline">• Full Command Interactive Terminal</span>
+            <span className="text-[10px] text-neutral-400 font-mono hidden xl:inline truncate">• Full Command Interactive Terminal</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {selectedProfile && (
+              <button
+                onClick={() => setShowFiles((v) => !v)}
+                title={showFiles ? 'Hide the remote file panel' : 'Show the remote file panel (SFTP)'}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                  showFiles
+                    ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700'
+                    : 'bg-neutral-800 text-neutral-200 border-neutral-600 hover:bg-neutral-700'
+                }`}
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span>Files</span>
+              </button>
+            )}
             {isConnected ? (
               <button
                 onClick={handleDisconnect}
@@ -371,9 +481,40 @@ export const SshTerminalView: React.FC = () => {
                   <span>Launch Interactive SSH Terminal</span>
                 </button>
               )}
+
+              {connectError && (
+                <div className="max-w-md rounded-xl border border-clay-500/40 bg-clay-600/15 px-3 py-2 text-left">
+                  <p className="text-[11px] font-semibold text-clay-300">Connection failed</p>
+                  <p className="mt-1 text-[11px] font-mono leading-relaxed text-clay-200/90 break-words">
+                    {connectError.replace(/^Connection failed:\s*/, '')}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
+      </div>
+
+      {showFiles && selectedProfile && (
+        <>
+          <div
+            onMouseDown={startFileResize}
+            title="Drag to resize the file panel"
+            className="w-1 shrink-0 cursor-col-resize bg-neutral-200 hover:bg-blue-400 transition-colors"
+          />
+          <div
+            className="shrink-0 overflow-hidden border-l border-neutral-200"
+            style={{ width: `${filesWidth}px`, maxWidth: '55%' }}
+          >
+            <SftpExplorer
+              profileId={selectedProfile.id}
+              hostLabel={`${selectedProfile.user}@${selectedProfile.host}`}
+              onClose={() => setShowFiles(false)}
+              onError={(message) => setSaveError(message)}
+            />
+          </div>
+        </>
+      )}
       </div>
 
       {/* ───────────────────────────────────────────────────────────
@@ -385,7 +526,7 @@ export const SshTerminalView: React.FC = () => {
             <div className="flex items-center justify-between font-bold text-sm text-neutral-900">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-blue-600" />
-                <span>Add Remote SSH Host</span>
+                <span>{editingId ? 'Edit SSH Host' : 'Add Remote SSH Host'}</span>
               </div>
               <button onClick={() => setIsModalOpen(false)} className="text-neutral-400 hover:text-neutral-700 cursor-pointer">
                 <X className="w-4 h-4" />

@@ -1,5 +1,6 @@
 #![recursion_limit = "512"]
 
+mod sftp;
 mod ssh_session;
 
 use axum::{
@@ -2783,6 +2784,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/providers/test", post(test_provider))
                 .route("/api/oauth/accounts", get(get_oauth_accounts))
                 .route("/api/oauth/login", post(login_oauth))
+            .route("/api/oauth/complete", post(complete_oauth))
                 .route("/api/oauth/disconnect", post(disconnect_oauth))
                 .route("/api/terminal/info", get(get_terminal_info))
                 .route("/api/terminal/exec", post(execute_terminal))
@@ -2832,6 +2834,14 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .route("/api/ssh/exec", post(exec_ssh_command))
                 .route("/api/ssh/certificates/import", post(import_ssh_certificate))
+                // SFTP file panel (independent sftp subsystem channel)
+                .route("/api/sftp/home", get(sftp_home))
+                .route("/api/sftp/list", get(sftp_list))
+                .route("/api/sftp/file", get(sftp_read_file).put(sftp_write_file))
+                .route("/api/sftp/mkdir", post(sftp_mkdir))
+                .route("/api/sftp/create", post(sftp_create))
+                .route("/api/sftp/rename", post(sftp_rename))
+                .route("/api/sftp/delete", post(sftp_delete))
                 // Skills APIs
                 .route("/api/skills", get(get_skills_list).post(save_skill_item))
                 .route(
@@ -5460,7 +5470,7 @@ async fn login_oauth(
     State(state): State<AppState>,
     Json(req): Json<OAuthLoginRequest>,
 ) -> impl IntoResponse {
-    use odon_provider::{LoginResponse, OAuthProvider, OAuthService};
+    use odon_provider::{LoginResponse, OAuthProvider, OAuthService, PendingLogin};
 
     let provider: OAuthProvider = match req.provider.parse() {
         Ok(p) => p,
@@ -5474,6 +5484,13 @@ async fn login_oauth(
             );
         }
     };
+
+    // A browser login holds a fixed loopback port (Claude uses 54545) until it
+    // finishes or expires. Starting another login for the same provider must
+    // release that listener first, otherwise the second attempt fails with
+    // "could not listen on 127.0.0.1:54545".
+    let catalog_id = oauth_catalog_id(provider);
+    cancel_previous_login(&catalog_id).await;
 
     let service = match OAuthService::new() {
         Ok(s) => s,
@@ -5495,15 +5512,72 @@ async fn login_oauth(
     };
     let response = pending.response().clone();
 
+    // Open the browser from the daemon (Termigo pattern): the desktop shell does
+    // not always have a working opener, and a same-machine daemon can always
+    // launch the default browser. Failures stay non-fatal because the UI still
+    // renders the URL as a copyable link.
+    match &response {
+        LoginResponse::Browser {
+            authorization_url, ..
+        } => {
+            if let Err(e) = open_in_browser(authorization_url) {
+                tracing::warn!("could not open the browser automatically: {e}");
+            }
+        }
+        LoginResponse::ManualCode {
+            authorization_url, ..
+        } => {
+            if let Err(e) = open_in_browser(authorization_url) {
+                tracing::warn!("could not open the browser automatically: {e}");
+            }
+        }
+        LoginResponse::Device { verification_uri, .. } => {
+            if let Err(e) = open_in_browser(verification_uri) {
+                tracing::warn!("could not open the browser automatically: {e}");
+            }
+        }
+    }
+
+    // The manual flow has no callback to await: park it until the operator
+    // pastes the authorization code into /api/oauth/complete.
+    if let (PendingLogin::ManualCode(_), LoginResponse::ManualCode { .. }) = (&pending, &response) {
+        let redirect_uri = match &response {
+            LoginResponse::ManualCode { redirect_uri, .. } => redirect_uri.clone(),
+            _ => unreachable!("checked above"),
+        };
+        let auth_url = match &response {
+            LoginResponse::ManualCode {
+                authorization_url, ..
+            } => authorization_url.clone(),
+            _ => unreachable!("checked above"),
+        };
+        if let Ok(mut reg) = oauth_manual_pending().lock() {
+            reg.insert(catalog_id.to_string(), pending);
+        }
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "status": "pending_manual",
+                "auth_url": auth_url,
+                "redirect_uri": redirect_uri,
+                "hint": "Complete sign-in in the browser, then paste the code it shows.",
+            })),
+        );
+    }
+
     // Finish the exchange in the background; the UI polls /api/oauth/accounts.
-    let catalog_id = oauth_catalog_id(provider);
     let st = state.clone();
-    tokio::spawn(async move {
+    let pending_task = tokio::spawn(async move {
         match pending.complete().await {
             Ok(token) => register_oauth_provider(&st, catalog_id, token).await,
             Err(e) => tracing::warn!("OAuth login for {catalog_id} failed: {e}"),
         }
     });
+    {
+        if let Ok(mut reg) = oauth_pending_registry().lock() {
+            reg.insert(catalog_id.to_string(), pending_task);
+        }
+    }
 
     let body = match response {
         LoginResponse::Browser {
@@ -5528,8 +5602,130 @@ async fn login_oauth(
             "expires_in": expires_in,
             "interval": interval,
         }),
+        // Unreachable: the manual flow returns above. Kept explicit so a future
+        // variant cannot silently produce an empty body.
+        LoginResponse::ManualCode {
+            authorization_url,
+            redirect_uri,
+            ..
+        } => json!({
+            "status": "pending_manual",
+            "auth_url": authorization_url,
+            "redirect_uri": redirect_uri,
+        }),
     };
     (StatusCode::OK, Json(body))
+}
+
+/// Pending manual-code logins keyed by catalog id. They hold the PKCE verifier
+/// and state until the operator pastes the code the provider displayed.
+fn oauth_manual_pending() -> &'static std::sync::Mutex<
+    std::collections::HashMap<String, odon_provider::PendingLogin>,
+> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, odon_provider::PendingLogin>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[derive(serde::Deserialize)]
+struct OAuthCompleteRequest {
+    provider: String,
+    code: String,
+}
+
+/// Exchange a pasted authorization code for a token.
+async fn complete_oauth(
+    State(state): State<AppState>,
+    Json(req): Json<OAuthCompleteRequest>,
+) -> impl IntoResponse {
+    use odon_provider::{OAuthProvider, PendingLogin};
+
+    let provider: OAuthProvider = match req.provider.parse() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(json!({ "error": format!("OAuth for '{}' is not available", req.provider) })),
+            )
+        }
+    };
+    let catalog_id = oauth_catalog_id(provider);
+
+    let pending = match oauth_manual_pending().lock() {
+        Ok(mut reg) => reg.remove(catalog_id),
+        Err(_) => None,
+    };
+    let Some(pending) = pending else {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no sign-in is waiting for a code; start the login again" })),
+        );
+    };
+
+    let PendingLogin::ManualCode(login) = pending else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "this provider does not use a pasted code" })),
+        );
+    };
+
+    match login.complete_with_code(&req.code).await {
+        Ok(token) => {
+            register_oauth_provider(&state, catalog_id, token).await;
+            (StatusCode::OK, Json(json!({ "status": "connected" })))
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+/// Open a URL in the operator's browser. Best effort: the UI still shows the
+/// link, so a failure here is never fatal (Termigo does the same).
+pub fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        // Empty title argument keeps `start` from treating the URL as a title.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(url).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
+    }
+    Ok(())
+}
+
+/// Pending logins keyed by catalog id. A browser login keeps a fixed loopback
+/// listener until it completes, so a superseded login for the same provider has
+/// to be cancelled to release that port for the next attempt.
+fn oauth_pending_registry() -> &'static std::sync::Mutex<
+    std::collections::HashMap<String, tokio::task::JoinHandle<()>>,
+> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Abort a still-pending login for this provider so its loopback port is free.
+async fn cancel_previous_login(catalog_id: &str) {
+    let handle = match oauth_pending_registry().lock() {
+        Ok(mut reg) => reg.remove(catalog_id),
+        Err(_) => None,
+    };
+    if let Some(handle) = handle {
+        handle.abort();
+        // Give the aborted future a moment to drop its listener.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 }
 
 fn oauth_catalog_id(provider: odon_provider::OAuthProvider) -> &'static str {
@@ -8303,7 +8499,224 @@ async fn delete_ssh_profile(Path(id): Path<String>) -> impl IntoResponse {
     let mut profiles = load_ssh_profiles();
     profiles.retain(|p| p.id != id);
     save_ssh_profiles_to_disk(&profiles);
+    crate::sftp::forget(&id).await;
     Json(json!({ "success": true, "profiles": profiles }))
+}
+
+// ---------------------------------------------------------------------------
+// SFTP file panel
+// ---------------------------------------------------------------------------
+
+/// Resolve a saved profile into SFTP connect options.
+fn sftp_profile_options(profile_id: &str) -> Result<crate::ssh_session::ConnectOptions, String> {
+    let profiles = load_ssh_profiles();
+    let profile = profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("unknown SSH profile: {profile_id}"))?;
+    crate::ssh_session::ConnectOptions::for_profile(
+        &profile.host,
+        &profile.user,
+        profile.port,
+        profile.key_path.as_deref(),
+        0,
+        0,
+    )
+    .map_err(|e| e.to_string())
+}
+
+async fn sftp_client(profile_id: &str) -> Result<std::sync::Arc<crate::sftp::Client>, String> {
+    let opts = sftp_profile_options(profile_id)?;
+    crate::sftp::client(profile_id, &opts)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn sftp_error(status: StatusCode, message: String) -> (StatusCode, Json<Value>) {
+    (status, Json(json!({ "success": false, "error": message })))
+}
+
+async fn sftp_home(Query(q): Query<HashMap<String, String>>) -> impl IntoResponse {
+    let Some(profile_id) = q.get("profile_id") else {
+        return sftp_error(StatusCode::BAD_REQUEST, "profile_id is required".into());
+    };
+    let client = match sftp_client(profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::home(&client).await {
+        Ok(home) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "home": home })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+async fn sftp_list(Query(q): Query<HashMap<String, String>>) -> impl IntoResponse {
+    let Some(profile_id) = q.get("profile_id") else {
+        return sftp_error(StatusCode::BAD_REQUEST, "profile_id is required".into());
+    };
+    let path = q.get("path").cloned().unwrap_or_else(|| "/".to_string());
+    let client = match sftp_client(profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::list(&client, &path).await {
+        Ok(entries) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "path": crate::sftp::normalize_remote(&path).unwrap_or_else(|_| path.clone()),
+                "parent": crate::sftp::parent_remote(&path),
+                "entries": entries,
+            })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+async fn sftp_read_file(Query(q): Query<HashMap<String, String>>) -> impl IntoResponse {
+    let (Some(profile_id), Some(path)) = (q.get("profile_id"), q.get("path")) else {
+        return sftp_error(
+            StatusCode::BAD_REQUEST,
+            "profile_id and path are required".into(),
+        );
+    };
+    let client = match sftp_client(profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::read_text(&client, path).await {
+        Ok((content, truncated)) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "path": path,
+                "content": content,
+                "truncated": truncated,
+            })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct SftpWritePayload {
+    profile_id: String,
+    path: String,
+    content: String,
+}
+
+async fn sftp_write_file(Json(payload): Json<SftpWritePayload>) -> impl IntoResponse {
+    let client = match sftp_client(&payload.profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::write_text(&client, &payload.path, &payload.content).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "path": payload.path })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct SftpMkdirPayload {
+    profile_id: String,
+    path: String,
+}
+
+async fn sftp_mkdir(Json(payload): Json<SftpMkdirPayload>) -> impl IntoResponse {
+    let client = match sftp_client(&payload.profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::create_dir(&client, &payload.path).await {
+        Ok(path) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "path": path })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct SftpRenamePayload {
+    profile_id: String,
+    from: String,
+    to: String,
+}
+
+async fn sftp_rename(Json(payload): Json<SftpRenamePayload>) -> impl IntoResponse {
+    let client = match sftp_client(&payload.profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::rename(&client, &payload.from, &payload.to).await {
+        Ok(path) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "path": path })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+#[derive(Deserialize)]
+struct SftpDeletePayload {
+    profile_id: String,
+    path: String,
+    #[serde(default)]
+    dir: bool,
+}
+
+async fn sftp_delete(Json(payload): Json<SftpDeletePayload>) -> impl IntoResponse {
+    let client = match sftp_client(&payload.profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    match crate::sftp::delete(&client, &payload.path, payload.dir).await {
+        Ok(path) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "path": path })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
+}
+
+/// Create a remote file or folder from the panel's "new" control.
+#[derive(Deserialize)]
+struct SftpCreatePayload {
+    profile_id: String,
+    dir: String,
+    name: String,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+async fn sftp_create(Json(payload): Json<SftpCreatePayload>) -> impl IntoResponse {
+    let client = match sftp_client(&payload.profile_id).await {
+        Ok(c) => c,
+        Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
+    };
+    let path = match crate::sftp::join_remote(&payload.dir, &payload.name) {
+        Ok(p) => p,
+        Err(e) => return sftp_error(StatusCode::BAD_REQUEST, e.to_string()),
+    };
+    let is_dir = payload.kind.as_deref() == Some("dir");
+    let result = if is_dir {
+        crate::sftp::create_dir(&client, &path).await
+    } else {
+        crate::sftp::write_text(&client, &path, "").await.map(|()| path.clone())
+    };
+    match result {
+        Ok(path) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "path": path })),
+        ),
+        Err(e) => sftp_error(StatusCode::BAD_GATEWAY, crate::sftp::error_text(&e)),
+    }
 }
 
 #[derive(Deserialize)]

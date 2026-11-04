@@ -40,3 +40,4 @@ hmac = { workspace = true }
 ring = { workspace = true }
 portable-pty = "0.9.0"
 russh = { workspace = true }
+russh-sftp = { workspace = true }

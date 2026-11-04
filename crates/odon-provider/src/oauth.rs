@@ -32,6 +32,12 @@ const OPENAI_SCOPE: &str = "openid profile email offline_access";
 const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 const CLAUDE_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
+
+/// Anthropic registers this redirect for the public Claude Code client id. The
+/// `code=true` manual flow only accepts it, so Claude cannot use a loopback
+/// listener the way Codex and Antigravity do: claude.ai rejects an unregistered
+/// redirect and shows a misleading "Missing client_id parameter" page.
+const CLAUDE_MANUAL_REDIRECT: &str = "https://console.anthropic.com/oauth/code/callback";
 const CLAUDE_SCOPE: &str = "org:create_api_key user:profile user:inference";
 
 const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -242,6 +248,11 @@ pub enum LoginResponse {
         authorization_url: String,
         redirect_uri: String,
     },
+    ManualCode {
+        provider: String,
+        authorization_url: String,
+        redirect_uri: String,
+    },
     Device {
         provider: String,
         user_code: String,
@@ -254,7 +265,9 @@ pub enum LoginResponse {
 impl LoginResponse {
     pub fn provider(&self) -> &str {
         match self {
-            Self::Browser { provider, .. } | Self::Device { provider, .. } => provider,
+            Self::Browser { provider, .. }
+            | Self::ManualCode { provider, .. }
+            | Self::Device { provider, .. } => provider,
         }
     }
 }
@@ -291,9 +304,13 @@ impl OAuthService {
 
     pub async fn begin_login(&self, provider: OAuthProvider) -> Result<PendingLogin> {
         match provider {
-            OAuthProvider::OpenAiCodex
-            | OAuthProvider::ClaudeOauth
-            | OAuthProvider::Antigravity => self
+            // Claude's public client id only accepts its registered https
+            // redirect, so it needs the manual paste flow.
+            OAuthProvider::ClaudeOauth => self
+                .begin_manual_login(provider)
+                .await
+                .map(|p| PendingLogin::ManualCode(Box::new(p))),
+            OAuthProvider::OpenAiCodex | OAuthProvider::Antigravity => self
                 .begin_browser_login(provider)
                 .await
                 .map(PendingLogin::Browser),
@@ -306,6 +323,42 @@ impl OAuthService {
 
     pub async fn begin_login_for(&self, provider: &str) -> Result<PendingLogin> {
         self.begin_login(provider.parse()?).await
+    }
+
+    async fn begin_manual_login(&self, provider: OAuthProvider) -> Result<PendingManualLogin> {
+        let (verifier, challenge) = OAuthHandler::generate_pkce()?;
+        let state = secure_random_b64(32)?;
+        let config = browser_config(provider)?;
+        let redirect_uri = CLAUDE_MANUAL_REDIRECT.to_string();
+
+        let mut url = Url::parse(config.authorize_url)
+            .map_err(|e| auth_error(format!("invalid authorization endpoint: {e}")))?;
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("response_type", "code")
+                .append_pair("client_id", config.client_id)
+                .append_pair("redirect_uri", &redirect_uri)
+                .append_pair("scope", config.scope)
+                .append_pair("code_challenge", &challenge)
+                .append_pair("code_challenge_method", "S256")
+                .append_pair("state", &state)
+                .append_pair("code", "true");
+        }
+
+        let response = LoginResponse::ManualCode {
+            provider: provider.to_string(),
+            authorization_url: url.into(),
+            redirect_uri: redirect_uri.clone(),
+        };
+        Ok(PendingManualLogin {
+            client: self.client.clone(),
+            config,
+            verifier,
+            state,
+            redirect_uri,
+            response,
+        })
     }
 
     async fn begin_browser_login(&self, provider: OAuthProvider) -> Result<PendingBrowserLogin> {
@@ -548,6 +601,9 @@ impl OAuthService {
 
 pub enum PendingLogin {
     Browser(PendingBrowserLogin),
+    /// Manual paste flow: no listener. Claude registers a fixed redirect, so the
+    /// operator copies the `code#state` displayed by the provider and pastes it.
+    ManualCode(Box<PendingManualLogin>),
     Device(PendingDeviceLogin),
 }
 
@@ -555,6 +611,7 @@ impl PendingLogin {
     pub fn response(&self) -> &LoginResponse {
         match self {
             Self::Browser(login) => login.response(),
+            Self::ManualCode(login) => login.response(),
             Self::Device(login) => login.response(),
         }
     }
@@ -562,6 +619,7 @@ impl PendingLogin {
     pub async fn complete(self) -> Result<OAuthToken> {
         match self {
             Self::Browser(login) => login.complete().await,
+            Self::ManualCode(login) => login.complete().await,
             Self::Device(login) => login.complete().await,
         }
     }
@@ -660,6 +718,93 @@ impl PendingBrowserLogin {
         if self.config.provider == OAuthProvider::Antigravity {
             token.plan = Some("Antigravity".to_string());
         }
+        Ok(token)
+    }
+}
+
+/// Claude's manual paste login: after sign-in the provider displays a
+/// `code#state` string, which the operator pastes back. There is no listener.
+pub struct PendingManualLogin {
+    client: reqwest::Client,
+    config: BrowserConfig,
+    verifier: String,
+    state: String,
+    redirect_uri: String,
+    response: LoginResponse,
+}
+
+impl PendingManualLogin {
+    pub fn response(&self) -> &LoginResponse {
+        &self.response
+    }
+
+    pub fn redirect_uri(&self) -> &str {
+        &self.redirect_uri
+    }
+
+    /// A manual login cannot be awaited: it needs the pasted code.
+    pub async fn complete(self) -> Result<OAuthToken> {
+        Err(auth_error(
+            "this login needs the authorization code pasted from the browser",
+        ))
+    }
+
+    /// Exchange the pasted `code#state` (a bare code is accepted too).
+    pub async fn complete_with_code(self, pasted: &str) -> Result<OAuthToken> {
+        let trimmed = pasted.trim();
+        if trimmed.is_empty() {
+            return Err(auth_error(
+                "paste the authorization code shown after sign-in",
+            ));
+        }
+        let (code, pasted_state) = match trimmed.split_once('#') {
+            Some((code, state)) => (code.trim().to_string(), Some(state.trim().to_string())),
+            None => (trimmed.to_string(), None),
+        };
+        if code.is_empty() {
+            return Err(auth_error("the pasted value has no authorization code"));
+        }
+        if let Some(state) = pasted_state {
+            if state != self.state {
+                return Err(auth_error(
+                    "authorization state does not match this login; start the sign-in again",
+                ));
+            }
+        }
+
+        let response = self
+            .client
+            .post(self.config.token_url)
+            .header("user-agent", "claude-cli/2.1.280 (external, sdk-cli)")
+            .json(&serde_json::json!({
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": self.redirect_uri,
+                "client_id": self.config.client_id,
+                "code_verifier": self.verifier,
+                "state": self.state,
+            }))
+            .send()
+            .await
+            .map_err(|e| auth_error(format!("Claude token exchange failed: {e}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(auth_error(format!(
+                "Claude token exchange failed ({status}): {body}"
+            )));
+        }
+        let mut token = parse_oauth_token_response(
+            response,
+            self.config.provider,
+            None,
+            Duration::from_secs(14_400),
+        )
+        .await?;
+        if token.refresh_token.is_none() {
+            return Err(auth_error("Claude OAuth did not return a refresh token"));
+        }
+        token.plan = Some("Claude OAuth".to_string());
         Ok(token)
     }
 }
@@ -879,11 +1024,36 @@ struct RawTokenResponse {
 /// Binds the loopback listener and returns the port actually bound. Port 0 asks
 /// the OS for an ephemeral port (Google's installed-app flow ignores the port).
 async fn bind_loopback_port(port: u16) -> Result<(TcpListener, u16)> {
-    let listener = TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| {
-        auth_error(format!(
-            "could not listen on 127.0.0.1:{port} ({e}); close the process using that port and retry"
-        ))
-    })?;
+    // A cancelled or superseded login may hold the fixed loopback port for a
+    // moment after its listener is dropped, so retry briefly before reporting
+    // the port as taken (Claude uses a fixed redirect port that cannot move).
+    let mut last_error = None;
+    let mut listener = None;
+    for attempt in 0..20 {
+        match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(l) => {
+                listener = Some(l);
+                break;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < 19 {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                }
+            }
+        }
+    }
+    let listener = match listener {
+        Some(l) => l,
+        None => {
+            let e = last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unknown bind error".to_string());
+            return Err(auth_error(format!(
+                "could not listen on 127.0.0.1:{port} ({e}); a previous login is still holding the port, close it or wait a few seconds and retry"
+            )));
+        }
+    };
     let bound = listener
         .local_addr()
         .map_err(|e| auth_error(format!("could not read the bound port: {e}")))?
