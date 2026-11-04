@@ -140,6 +140,10 @@ pub struct AgentRuntime {
     audit: Arc<AuditLogger>,
     providers: Arc<RwLock<HashMap<String, Arc<dyn ModelProvider>>>>,
     default_provider: Arc<RwLock<String>>,
+    /// Model id → provider id. Lets a bare model name (an automation or a relay
+    /// message) reach the provider that actually lists it, instead of whatever
+    /// provider happens to hold the `default` slot.
+    model_routes: Arc<RwLock<HashMap<String, String>>>,
     event_tx: EventSender,
     workspace_root: String,
     max_turn_iterations: AtomicUsize,
@@ -166,6 +170,7 @@ impl AgentRuntime {
             audit,
             providers: Arc::new(RwLock::new(HashMap::new())),
             default_provider: Arc::new(RwLock::new("default".to_string())),
+            model_routes: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             workspace_root,
             max_turn_iterations: AtomicUsize::new(normalize_step_cap(env_usize(
@@ -250,6 +255,36 @@ impl AgentRuntime {
                 .cloned()
                 .unwrap_or_else(|| "default".to_string());
         }
+    }
+
+    /// Replace the model → provider index. One provider may claim many models.
+    pub async fn set_model_routes(&self, routes: HashMap<String, String>) {
+        *self.model_routes.write().await = routes;
+    }
+
+    /// Record that `provider` serves `model`.
+    pub async fn register_model_route(&self, model: &str, provider: &str) {
+        let model = model.trim();
+        if model.is_empty() || model == "odon-auto" {
+            return;
+        }
+        self.model_routes
+            .write()
+            .await
+            .insert(model.to_string(), provider.to_string());
+    }
+
+    /// The provider that lists this exact model, if any.
+    pub async fn provider_for_model(&self, model: &str) -> Option<String> {
+        self.model_routes.read().await.get(model.trim()).cloned()
+    }
+
+    /// Drop every model route that pointed at a removed provider.
+    pub async fn remove_model_routes_for_provider(&self, provider: &str) {
+        self.model_routes
+            .write()
+            .await
+            .retain(|_, owner| owner != provider);
     }
 
     pub async fn get_provider(&self, name: Option<&str>) -> Option<Arc<dyn ModelProvider>> {
@@ -676,17 +711,24 @@ impl AgentRuntime {
         // 3. Resolve provider and wire model independently. Model selections use
         // `provider::model`, preventing a display/model id from being mistaken for
         // a provider registry key.
-        let (provider_override, requested_model) = model_override
+        let (explicit_provider, requested_model) = model_override
             .and_then(|value| value.split_once("::"))
-            .map(|(provider, model)| (Some(provider), model))
+            .map(|(provider, model)| (Some(provider.to_string()), model))
             .unwrap_or((None, model_override.unwrap_or("odon-auto")));
+        // A bare model id resolves to the provider that lists it, so an
+        // automation or relay message cannot land on an unrelated default.
+        let routed_provider = match explicit_provider {
+            Some(name) => Some(name),
+            None => self.provider_for_model(requested_model).await,
+        };
+        let routed_label = routed_provider.as_deref().unwrap_or("default").to_string();
         // Kept for the failure lesson, which must name the model that was refused.
         let model_for_lesson = requested_model.to_string();
-        let provider = match self.get_provider(provider_override).await {
+        let provider = match self.get_provider(routed_provider.as_deref()).await {
             Some(p) => {
                 if p.provider_name() == "odon-simulated" && requested_model != "odon-simulated" {
                     return Err(OdonError::Provider {
-                        provider: provider_override.unwrap_or("default").to_string(),
+                        provider: routed_label,
                         message: "Mock provider is disabled. Please configure your API key in Settings (BYOK) or sign in with GitHub Copilot / Antigravity to chat with real AI models.".to_string(),
                     });
                 }
@@ -694,10 +736,10 @@ impl AgentRuntime {
             }
             None => {
                 return Err(OdonError::Provider {
-                    provider: provider_override.unwrap_or("default").to_string(),
+                    provider: routed_label.clone(),
                     message: format!(
                         "Provider '{}' is not configured or missing an API key. Please open Settings and configure your credentials to enable real AI responses.",
-                        provider_override.unwrap_or("default")
+                        routed_label
                     ),
                 });
             }
@@ -2184,6 +2226,7 @@ impl AgentRuntime {
             audit: self.audit.clone(),
             providers: self.providers.clone(),
             default_provider: self.default_provider.clone(),
+            model_routes: self.model_routes.clone(),
             event_tx: self.event_tx.clone(),
             workspace_root,
             max_turn_iterations: AtomicUsize::new(self.max_turn_iterations()),

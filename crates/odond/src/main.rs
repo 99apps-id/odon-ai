@@ -5206,9 +5206,20 @@ async fn init_providers(
 
     // C. Load saved BYOK configs from SQLite database
     if let Ok(configs) = storage.list_provider_configs() {
-        for c in configs {
+        // Honour an explicit default before falling back to list order: the
+        // previous `c.is_default || !has_default` let whichever config came
+        // first win, so a gateway could silently become the default even when
+        // another provider was marked default.
+        let explicit_default = configs
+            .iter()
+            .find(|c| c.is_default)
+            .map(|c| c.provider_id.to_lowercase());
+        for c in &configs {
             let pid = c.provider_id.to_lowercase();
-            let base_url = c.base_url.unwrap_or_else(|| default_base_url_for(&pid));
+            let base_url = c
+                .base_url
+                .clone()
+                .unwrap_or_else(|| default_base_url_for(&pid));
             info!("Loading saved BYOK provider: {} (url: {})", pid, base_url);
 
             let prov: Arc<dyn odon_provider::ModelProvider> = if pid == "anthropic" {
@@ -5221,11 +5232,21 @@ async fn init_providers(
                 ))
             };
 
-            let is_def = c.is_default || !has_default;
+            let is_def = match explicit_default.as_deref() {
+                Some(default_id) => default_id == pid,
+                None => !has_default,
+            };
             runtime.register_provider(&pid, prov.clone(), is_def).await;
             if is_def {
                 runtime.register_provider("default", prov, true).await;
                 has_default = true;
+            }
+            // Index the models this provider lists, so a bare model id reaches
+            // the provider that serves it instead of the default slot.
+            for model in
+                serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default()
+            {
+                runtime.register_model_route(&model, &pid).await;
             }
         }
     }
@@ -5382,6 +5403,13 @@ async fn save_provider_config(
     if is_def {
         state.runtime.register_provider("default", prov, true).await;
     }
+    // Keep the model → provider index in step with what Settings saved, so
+    // automations and relays using a bare model id reach this provider.
+    if let Ok(models) = serde_json::from_str::<Vec<String>>(&models_json) {
+        for model in models {
+            state.runtime.register_model_route(&model, &pid).await;
+        }
+    }
 
     (
         StatusCode::OK,
@@ -5395,6 +5423,10 @@ async fn delete_provider_config(
 ) -> impl IntoResponse {
     let _ = state.storage.delete_provider_config(&provider_id);
     state.runtime.unregister_provider(&provider_id).await;
+    state
+        .runtime
+        .remove_model_routes_for_provider(&provider_id.to_lowercase())
+        .await;
     StatusCode::OK
 }
 
@@ -6025,6 +6057,11 @@ async fn discover_provider_models(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": error.to_string() })),
         );
+    }
+
+    // Make the freshly discovered models routable straight away.
+    for model in &models {
+        state.runtime.register_model_route(model, &pid).await;
     }
 
     (

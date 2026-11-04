@@ -19,6 +19,24 @@ import {
   ToggleRight,
 } from 'lucide-react';
 import { api } from '../api';
+import type { ProviderItem } from '../types';
+
+/**
+ * The model the operator is currently chatting with. An automation should run
+ * on that model unless the form explicitly picks another one, because a bare
+ * `odon-auto` id used to fall through to whatever provider held the default
+ * slot rather than the model actually in use.
+ */
+function activeModelId(): string {
+  try {
+    const provider = localStorage.getItem('odon_active_provider') || '';
+    const model = localStorage.getItem('odon_selected_model') || '';
+    if (provider && model) return `${provider}::${model}`;
+    return model;
+  } catch {
+    return '';
+  }
+}
 
 interface AutomationJob {
   id: string;
