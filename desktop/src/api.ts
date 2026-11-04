@@ -1093,6 +1093,7 @@ export const api = {
     onEvent: (event: AgentEvent) => void,
     onReconnect?: () => void,
     onDisconnect?: () => void,
+    activeSessionId?: string | null,
   ): () => void {
     let es: EventSource | null = null;
     let closed = false;
@@ -1112,8 +1113,12 @@ export const api = {
     const open = () => {
       if (closed) return;
       const token = this.getApiToken();
-      const suffix = token ? `?token=${encodeURIComponent(token)}` : '';
-      const next = new EventSource(`${this.getBaseUrl()}/api/events${suffix}`);
+      const params = new URLSearchParams();
+      if (token) params.set('token', token);
+      if (activeSessionId) params.set('session_id', activeSessionId);
+      const next = new EventSource(
+        `${this.getBaseUrl()}/api/events${params.toString() ? '?' + params.toString() : ''}`,
+      );
       es = next;
       next.onopen = () => {
         retryDelay = 1000;

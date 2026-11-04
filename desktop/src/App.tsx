@@ -835,14 +835,16 @@ export default function App() {
       // Use fallback
     });
 
-    const unsubscribe = api.subscribeEvents((event) => {
-      // Filter first, before any state is touched: the daemon broadcasts every
-      // session's events on one stream, so a background session or subagent
-      // would otherwise type into the view of the session on screen. The id is
-      // read from the ref per event (not captured by this effect), so a session
-      // switch cannot leave the callback filtering against the previous session.
-      const activeSessionId = currentSessionIdRef.current;
-      if (!isAgentEventForSession(event, activeSessionId)) return;
+    const unsubscribe = api.subscribeEvents(
+      (event) => {
+        // Filter first, before any state is touched: the daemon broadcasts every
+        // session's events on one stream, so a background session or subagent
+        // would otherwise type into the view of the session on screen. The id
+        // is read from the ref per event (not captured by this effect), so a
+        // session switch cannot leave the callback filtering against the
+        // previous session.
+        const activeSessionId = currentSessionIdRef.current;
+        if (!isAgentEventForSession(event, activeSessionId)) return;
       if (event.type === 'text_delta') {
         setStreamingText((prev) => prev + event.payload.delta);
       } else if (event.type === 'thought_delta') {
@@ -904,7 +906,7 @@ export default function App() {
           }
         }
       }
-    });
+    }, undefined, undefined, currentSessionIdRef.current);
 
     return () => {
       statusPollingStopped = true;

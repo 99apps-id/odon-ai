@@ -6404,7 +6404,11 @@ async fn serve_file(
     }
 }
 
-async fn sse_events(headers: HeaderMap, State(state): State<AppState>) -> axum::response::Response {
+async fn sse_events(
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
     // Origin is the real gate here: EventSource cannot set headers, so the
     // token may arrive as a query parameter and a foreign page could otherwise
     // subscribe to every event this daemon emits.
@@ -6421,6 +6425,7 @@ async fn sse_events(headers: HeaderMap, State(state): State<AppState>) -> axum::
         )
             .into_response();
     }
+    let requested_session_id = params.get("session_id").cloned();
     let mut rx = state.event_tx.subscribe();
     let stream = async_stream::stream! {
         loop {
