@@ -2483,7 +2483,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     )}
 
                     <div className="pl-7 select-text">
-                      <MarkdownView content={msg.content} />
+                      <MarkdownView content={msg.content} preserveLineBreaks />
                     </div>
 
                     {/* Dynamic Artifacts Card for this turn */}
@@ -2690,7 +2690,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
                     <div className="pl-7 select-text">
                       {streamingText ? (
-                        <MarkdownView content={streamingText} />
+                        <MarkdownView content={streamingText} preserveLineBreaks />
                       ) : (
                         <span className="text-xs text-neutral-400 italic">
                           Orchestrating tools and synthesizing solution...

@@ -60,6 +60,13 @@
 
   --color-ink: #221f1c;
 
+  /* Highlight washes. The old find wash (#f3e3c8) sat 50 RGB units from the
+   * paper surface and read as "barely tinted"; selection was worse at 26.
+   * Measured against paper #faf8f5: find-wash 100, select-wash 92. Text stays
+   * comfortable at 12.68:1 (ink on find) and 7.79:1 (clay-900 on select). */
+  --color-find-wash: #ffdf94;
+  --color-select-wash: #f3c9a6;
+
   /* Accent: the stock `blue` ramp is the electric product-blue every AI tool
    * ships with. This ramp keeps the hue semantics (blue = interactive) but
    * desaturates it into a slate ink, so primary buttons and links stop
@@ -156,6 +163,16 @@
 }
 
 .reasoning-markdown p {
+  white-space: pre-line;
+}
+
+/* Answer text needs the same treatment as reasoning: markdown collapses single
+ * newlines inside a paragraph, so a model that emits "Step 1 …" then
+ * "Step 2 …" on the next line without a blank line renders them piled on one
+ * line. `pre-line` keeps the authored breaks while still collapsing runs of
+ * spaces, so wrapped prose and tables are unaffected. */
+.preserve-line-breaks p,
+.preserve-line-breaks li {
   white-space: pre-line;
 }
 
@@ -319,8 +336,8 @@
  * Every match gets a quiet sand wash; the match you are standing on gets the
  * ink treatment so stepping is obvious at a glance. */
 ::highlight(odon-find-all) {
-  background-color: #f3e3c8;
-  color: #221f1c;
+  background-color: var(--color-find-wash);
+  color: var(--color-ink);
 }
 
 ::highlight(odon-find-current) {
@@ -353,7 +370,7 @@
   }
 
   ::selection {
-    background-color: var(--color-clay-100);
+    background-color: var(--color-select-wash);
     color: var(--color-clay-900);
   }
 }

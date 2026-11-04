@@ -470,7 +470,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
     return elements;
   };
 
-  return <div className={`font-sans select-text break-words [overflow-wrap:anywhere] max-w-full min-w-0 overflow-x-hidden ${preserveLineBreaks ? 'reasoning-markdown' : ''} ${className}`}>{renderFormatted(content)}</div>;
+  return <div className={`font-sans select-text break-words [overflow-wrap:anywhere] max-w-full min-w-0 overflow-x-hidden ${preserveLineBreaks ? 'reasoning-markdown preserve-line-breaks' : ''} ${className}`}>{renderFormatted(content)}</div>;
 };
 
 // ─────────────────────────────────────────────────────────────
