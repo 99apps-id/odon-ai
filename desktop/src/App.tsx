@@ -56,6 +56,7 @@ import {
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { BootSplash } from './components/BootSplash';
+import { FindBar } from './components/FindBar';
 import { classifyBootFailure, type BootFailure } from './lib/bootFailure';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView, type BrowserSeed } from './components/BrowserPreviewView';
@@ -747,6 +748,9 @@ export default function App() {
   } | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  // Scroll container the find bar searches; held as a ref so opening the bar
+  // never re-renders the transcript.
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const currentSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -2115,6 +2119,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             CENTER MAIN CHAT / HERO CARD
         ─────────────────────────────────────────────────────────── */}
         <main className="flex-1 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col justify-between overflow-hidden relative min-w-0">
+          <FindBar containerRef={transcriptRef} scopeKey={currentSessionId ?? 'home'} />
           {/* Top Bar inside Center Card */}
           <div className="h-12 border-b border-neutral-100 flex items-center justify-between shrink-0 px-4">
             <div className="flex items-center gap-2">
@@ -2279,7 +2284,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           {/* Center Content Area for Chat / Documents / Creative Tasks */}
           {activeNav !== 'github' && activeNav !== 'automations' && activeNav !== 'mcp' && activeNav !== 'terminal' && activeNav !== 'code' && activeNav !== 'files' && activeNav !== 'explorer' && activeNav !== 'ssh' && (
             <>
-              <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 flex flex-col justify-start select-text min-w-0 w-full">
+              <div ref={transcriptRef} className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 flex flex-col justify-start select-text min-w-0 w-full">
 
             {/* VIEW A: WELCOME HERO (EXACT MATCH TO DESIGN) */}
             {!inChatMode && (

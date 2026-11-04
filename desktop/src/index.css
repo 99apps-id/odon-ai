@@ -312,6 +312,22 @@
   }
 }
 
+/* Find-in-transcript matches.
+ *
+ * Painted through the CSS Custom Highlight API (see lib/findInPage.ts), which
+ * tints existing text without rewriting the transcript's React-owned DOM.
+ * Every match gets a quiet sand wash; the match you are standing on gets the
+ * ink treatment so stepping is obvious at a glance. */
+::highlight(odon-find-all) {
+  background-color: #f3e3c8;
+  color: #221f1c;
+}
+
+::highlight(odon-find-current) {
+  background-color: #3f5b70;
+  color: #faf8f5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .odon-splash-ring,
   .odon-splash-halo,
