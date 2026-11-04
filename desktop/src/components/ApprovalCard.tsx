@@ -33,7 +33,7 @@ export interface ApprovalCardProps {
 /* Every option shares one geometry so the stack lines up: same width, padding,
  * radius and centred row. Only colour and elevation differ per intent. */
 const optionBase =
-  'approval-option group flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs whitespace-nowrap transition-[background-color,border-color,box-shadow,transform] duration-150 active:translate-y-px cursor-pointer';
+  'approval-option group flex min-w-0 items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs whitespace-normal transition-[background-color,border-color,box-shadow,transform] duration-150 active:translate-y-px cursor-pointer';
 
 const optionRowClass = `${optionBase} border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/60 text-neutral-800 dark:text-neutral-200 shadow-[0_1px_2px_rgba(34,31,28,0.05),0_3px_10px_-4px_rgba(34,31,28,0.10)] hover:border-blue-300 dark:hover:border-blue-500 hover:bg-blue-50/60 dark:hover:bg-blue-950/30 hover:shadow-[0_2px_4px_rgba(34,31,28,0.06),0_6px_16px_-6px_rgba(63,91,112,0.30)]`;
 
@@ -212,7 +212,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
       </div>
 
       {/* Codex-style numbered options */}
-      <div className="px-4 py-3 border-t border-neutral-200 dark:border-neutral-700 bg-neutral-50/80 dark:bg-neutral-800/40 flex flex-wrap items-center gap-2">
+      <div className="grid grid-cols-1 gap-2 border-t border-neutral-200 bg-neutral-50/80 px-4 py-3 dark:border-neutral-700 dark:bg-neutral-800/40 sm:grid-cols-2 xl:grid-cols-4">
         <button
           type="button"
           onClick={() => onDecide('approve_once')}
@@ -283,7 +283,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
             </kbd>
           </button>
         ) : (
-          <div className="basis-full rounded-lg border border-clay-200 dark:border-clay-800/60 bg-clay-50/60 dark:bg-clay-950/20 p-3 space-y-2">
+          <div className="col-span-full rounded-lg border border-clay-200 dark:border-clay-800/60 bg-clay-50/60 dark:bg-clay-950/20 p-3 space-y-2">
             <label
               htmlFor="approval-deny-feedback"
               className="block text-[11px] font-medium text-clay-800 dark:text-clay-200"
@@ -319,7 +319,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
           </div>
         )}
 
-        <p className="text-[10px] text-neutral-400 dark:text-neutral-500 pt-0.5">
+        <p className="col-span-full pt-0.5 text-[10px] text-neutral-400 dark:text-neutral-500">
           Press <kbd className={kbdClass}>1</kbd>–<kbd className={kbdClass}>4</kbd>{' '}
           to choose. “Don&apos;t ask again” still shows this card for other
           tools or other folders.

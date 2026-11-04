@@ -134,10 +134,32 @@
   animation-delay: 1.5s;
 }
 
+@keyframes odon-reasoning-shimmer {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.96) rotate(-4deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08) rotate(4deg);
+  }
+}
+
+.odon-reasoning-mark {
+  display: inline-flex;
+  color: var(--color-blue-600);
+}
+
+.odon-reasoning-mark.is-live {
+  animation: odon-reasoning-shimmer 1.8s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .approval-option::after {
+  .approval-option::after,
+  .odon-reasoning-mark.is-live {
     animation: none;
-    opacity: 0;
+    opacity: 1;
   }
 }
 

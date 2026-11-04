@@ -67,6 +67,8 @@ import { TerminalPeek, commandOf, isTerminalTool, outputToText, type TerminalEnt
 import { ApprovalCard } from './components/ApprovalCard';
 import { ApprovalCenterModal } from './components/ApprovalCenterModal';
 import { TodoPanel } from './components/TodoPanel';
+import { ReasoningBlock } from './components/ReasoningBlock';
+import { ToolActivityBlock } from './components/ToolActivityBlock';
 import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
@@ -2010,7 +2012,6 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             {/* VIEW B: CONVERSATION STREAM */}
             {inChatMode && (
               <div className={`w-full ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} flex flex-col space-y-6 mx-auto select-text min-w-0 overflow-x-hidden`}>
-                <TodoPanel items={todos} live={isGenerating} />
                 {messages.map((msg) => (
                   <div key={msg.id} className="flex flex-col space-y-2 group">
                     <div className="flex items-center justify-between">
@@ -2306,6 +2307,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   </div>
                 ))}
 
+                <TodoPanel items={todos} live={isGenerating} />
+
                 {/* Active Generating / Streaming Turn */}
                 {pendingApproval && (
                   <div className="flex gap-4 mb-4 max-w-3xl" role="alert" aria-live="assertive">
@@ -2335,12 +2338,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       </span>
                     </div>
 
-                    {streamingTool && (
-                      <div className="ml-7 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60 text-[11px] font-medium animate-pulse">
-                        <Terminal className="w-3 h-3" />
-                        <span>Running tool: {streamingTool}...</span>
-                      </div>
-                    )}
+                    {streamingTool && <ToolActivityBlock toolName={streamingTool} />}
 
                     {liveTerminal.length > 0 && (
                       <div className="ml-7">
@@ -2354,21 +2352,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       </div>
                     )}
 
-                    {streamingThought && (
-                      <div className="ml-7 my-1.5">
-                        <div className="rounded-xl bg-amber-50/40 border border-amber-200/70 overflow-hidden shadow-2xs">
-                          <div className="px-3 py-1.5 bg-amber-100/50 border-b border-amber-200/60 text-xs font-semibold text-amber-900 flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              <Activity className="w-3 h-3 text-clay-700 animate-pulse" />
-                              <span className="text-[11.5px]">ODON is reasoning...</span>
-                            </div>
-                            <span className="text-[10px] text-amber-700 font-mono animate-pulse">Live</span>
-                          </div>
-                          <div className="p-3 text-[11px] leading-snug text-neutral-600 max-h-60 overflow-y-auto select-text bg-white/60 max-w-full min-w-0 overflow-x-hidden break-words">
-                            <MarkdownView content={streamingThought} dense />
-                          </div>
-                        </div>
-                      </div>
+                    {(streamingThought || isGenerating) && (
+                      <ReasoningBlock content={streamingThought} live />
                     )}
 
                     <div className="pl-7 select-text">
