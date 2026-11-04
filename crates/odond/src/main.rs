@@ -1951,7 +1951,10 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             None,
         )
         .await;
-    state.active_turns.write().await.remove(&session_id);
+    {
+        let mut turns = state.active_turns.write().await;
+        retire_turn_handle(&mut turns, &session_id, &turn_id);
+    }
 
     let (reply, attachments) = match result {
         Ok(turn) => {
@@ -2049,6 +2052,27 @@ struct TurnHandle {
     turn_id: String,
     cancel: tokio_util::sync::CancellationToken,
     steer: SteerQueue,
+}
+
+/// Retire a finished turn's handle, but only if it is still the active one.
+///
+/// A newer message cancels the running turn and installs its own handle for the
+/// same session. Removing unconditionally would then delete that newer handle,
+/// so the session would report idle (and reject steering) while a turn is still
+/// running. Returns true when a handle was removed.
+fn retire_turn_handle(
+    turns: &mut std::collections::HashMap<String, TurnHandle>,
+    session_id: &str,
+    turn_id: &str,
+) -> bool {
+    let is_current = turns
+        .get(session_id)
+        .map(|handle| handle.turn_id == turn_id)
+        .unwrap_or(false);
+    if is_current {
+        turns.remove(session_id);
+    }
+    is_current
 }
 
 #[derive(Clone)]
@@ -3861,13 +3885,7 @@ async fn send_message(
 
     {
         let mut turns = state.active_turns.write().await;
-        if turns
-            .get(&session_id)
-            .map(|handle| handle.turn_id == turn_id)
-            .unwrap_or(false)
-        {
-            turns.remove(&session_id);
-        }
+        retire_turn_handle(&mut turns, &session_id, &turn_id);
     }
 
     match res {
@@ -8290,6 +8308,43 @@ mod tests {
             PathBuf::from("/missing/b.mjs"),
         ])
         .is_none());
+    }
+
+    fn handle(turn_id: &str) -> TurnHandle {
+        TurnHandle {
+            turn_id: turn_id.to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            steer: SteerQueue::new(),
+        }
+    }
+
+    #[test]
+    fn retiring_a_finished_turn_keeps_the_newer_turns_handle() {
+        // Turn A is running, then a newer message cancels it and installs B.
+        let mut turns = std::collections::HashMap::new();
+        turns.insert("s1".to_string(), handle("A"));
+        turns.insert("s1".to_string(), handle("B"));
+
+        // A now finishes. It must not delete B's handle, otherwise the session
+        // reports idle (and rejects steering) while B is still running.
+        assert!(!retire_turn_handle(&mut turns, "s1", "A"));
+        assert_eq!(
+            turns.get("s1").map(|h| h.turn_id.as_str()),
+            Some("B"),
+            "the newer turn's handle was removed by the finished turn"
+        );
+    }
+
+    #[test]
+    fn retiring_the_current_turn_removes_its_handle() {
+        let mut turns = std::collections::HashMap::new();
+        turns.insert("s1".to_string(), handle("B"));
+
+        assert!(retire_turn_handle(&mut turns, "s1", "B"));
+        assert!(turns.get("s1").is_none());
+
+        // Retiring twice is harmless.
+        assert!(!retire_turn_handle(&mut turns, "s1", "B"));
     }
 }
 
