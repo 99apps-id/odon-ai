@@ -42,3 +42,17 @@ export async function pickFolder(): Promise<string | null> {
 export async function restartDaemon(): Promise<string> {
   return invoke<string>("restart_daemon");
 }
+
+/**
+ * The loopback token the daemon generated for this session, read by the
+ * shell from ~/.odon/api-token. Returns null when the shell is not
+ * available or the daemon has not written the file yet.
+ */
+export async function daemonToken(): Promise<string | null> {
+  try {
+    const token = await invoke<string | null>("daemon_token");
+    return typeof token === "string" && token.trim() ? token.trim() : null;
+  } catch {
+    return null;
+  }
+}

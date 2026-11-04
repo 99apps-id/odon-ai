@@ -73,7 +73,7 @@ import { McpView } from './components/McpView';
 import { PromptStartersGrid } from './components/PromptStartersGrid';
 import { ArtifactVersionsModal } from './components/ArtifactVersionsModal';
 import { api, WorkspaceInfo, WorkspaceBrowseResult, type TodoItem } from './api';
-import { isDesktopShell, pickFolder } from './lib/desktop';
+import { isDesktopShell, pickFolder, daemonToken } from './lib/desktop';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
 // The composer exposes exactly four modes. Values outside this set are never
@@ -712,7 +712,26 @@ export default function App() {
   }, [steerCards]);
 
   // Check daemon status and load sessions
-  const checkDaemonStatus = async () => {
+  const desktopTokenSeededRef = useRef(false);
+
+  /**
+   * Adopts the token the desktop shell read from ~/.odon/api-token. Without
+   * it every /api call except /api/health answers 401, so the window would
+   * report "daemon offline" while the daemon is running perfectly well.
+   * Returns true when a new token was adopted.
+   */
+  const seedDesktopToken = async (force = false): Promise<boolean> => {
+    if (!isDesktopShell()) return false;
+    if (desktopTokenSeededRef.current && !force) return false;
+    const token = await daemonToken();
+    desktopTokenSeededRef.current = true;
+    if (!token || api.getApiToken() === token) return false;
+    api.setApiToken(token);
+    return true;
+  };
+
+  const checkDaemonStatus = async (attempt = 0): Promise<boolean> => {
+    if (!api.getApiToken()) await seedDesktopToken();
     try {
       const status = await api.getStatus();
       setDaemonOnline(true);
@@ -726,6 +745,11 @@ export default function App() {
       }
       return true;
     } catch {
+      // A stored token can go stale when the daemon restarts and writes a new
+      // one. Re-read it once, then retry before declaring the daemon down.
+      if (attempt === 0 && (await seedDesktopToken(true))) {
+        return checkDaemonStatus(1);
+      }
       setDaemonOnline(false);
       return false;
     }

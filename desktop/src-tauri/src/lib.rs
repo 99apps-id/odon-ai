@@ -172,6 +172,46 @@ fn stop_owned_daemon(app: &tauri::AppHandle) {
     }
 }
 
+/// Where the daemon leaves the loopback token it generated for this
+/// session. The daemon writes it so local relays can authenticate; the
+/// desktop shell reads the same file instead of demanding that the
+/// operator paste a token into Settings.
+fn daemon_token_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let home = app.path().home_dir().ok()?;
+    Some(home.join(".odon").join("api-token"))
+}
+
+fn read_token_file(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let token = raw.trim().to_string();
+    (!token.is_empty()).then_some(token)
+}
+
+/// Returns the daemon's loopback token, waiting briefly for the file
+/// because the shell may be asked before the freshly spawned daemon has
+/// finished writing it.
+#[tauri::command]
+async fn daemon_token(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = daemon_token_path(&app) else {
+            return Ok(None);
+        };
+        if let Some(token) = read_token_file(&path) {
+            return Ok(Some(token));
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Some(token) = read_token_file(&path) {
+                return Ok(Some(token));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|error| format!("token task failed: {error}"))?
+}
+
 /// Native folder picker. Returns the chosen path, or None when the
 /// dialog was dismissed.
 #[tauri::command]
@@ -222,7 +262,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(DaemonChild(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pick_folder, restart_daemon])
+        .invoke_handler(tauri::generate_handler![
+            pick_folder,
+            restart_daemon,
+            daemon_token
+        ])
         .setup(|app| {
             spawn_daemon(app);
             Ok(())

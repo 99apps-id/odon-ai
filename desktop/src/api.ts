@@ -1068,25 +1068,54 @@ export const api = {
   },
 
   subscribeEvents(onEvent: (event: AgentEvent) => void): () => void {
-    const token = this.getApiToken();
-    const suffix = token ? `?token=${encodeURIComponent(token)}` : '';
-    const es = new EventSource(`${this.getBaseUrl()}/api/events${suffix}`);
+    let es: EventSource | null = null;
+    let closed = false;
+    let timer: number | undefined;
 
-    es.onmessage = (e) => {
-      try {
-        const parsed = JSON.parse(e.data);
-        onEvent(parsed);
-      } catch (err) {
-        console.error('Failed to parse SSE event:', err);
-      }
+    const open = () => {
+      if (closed) return;
+      const token = this.getApiToken();
+      const suffix = token ? `?token=${encodeURIComponent(token)}` : '';
+      es = new EventSource(`${this.getBaseUrl()}/api/events${suffix}`);
+      es.onmessage = (e) => {
+        try {
+          const parsed = JSON.parse(e.data);
+          onEvent(parsed);
+        } catch (err) {
+          console.error('Failed to parse SSE event:', err);
+        }
+      };
+      es.onerror = () => {
+        // EventSource reconnects automatically
+      };
     };
 
-    es.onerror = () => {
-      // EventSource reconnects automatically
-    };
+    // The desktop shell hands the daemon token over after boot. Opening the
+    // stream before that hands it a token-less URL, and EventSource never
+    // re-reads the URL, so the session would stay silent for its lifetime.
+    const shellPresent =
+      typeof (window as unknown as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__
+        ?.core?.invoke === 'function';
+    if (!shellPresent || this.getApiToken()) {
+      open();
+    } else {
+      let attempts = 0;
+      const waitForToken = () => {
+        if (closed) return;
+        if (this.getApiToken() || attempts >= 100) {
+          open();
+          return;
+        }
+        attempts += 1;
+        timer = window.setTimeout(waitForToken, 100);
+      };
+      waitForToken();
+    }
 
     return () => {
-      es.close();
+      closed = true;
+      if (timer) window.clearTimeout(timer);
+      es?.close();
     };
   },
 };
