@@ -118,10 +118,9 @@ impl Tool for DoctorTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let (daemon_status, daemon) = get("/api/status", self.name()).await.map_or(
-            (503, json!({ "error": "daemon unreachable" })),
-            |(status, value)| (status, value),
-        );
+        let (daemon_status, daemon) = get("/api/status", self.name())
+            .await
+            .unwrap_or((503, json!({ "error": "daemon unreachable" })));
         let diagnostics = crate::build_full_tool_registry().diagnostics();
         let ready = diagnostics.iter().filter(|item| item.ready).count();
         let unavailable: Vec<&str> = diagnostics

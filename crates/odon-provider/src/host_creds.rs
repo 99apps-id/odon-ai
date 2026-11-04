@@ -48,9 +48,11 @@ pub fn read_credential(target: &str) -> Option<String> {
 
             // Windows Credential Manager strings from keyring / Termigo are usually UTF-16
             let result = if size >= 2 && size.is_multiple_of(2) {
-                let u16_slice: Vec<u16> = bytes
-                    .chunks_exact(2)
-                    .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+                // `size` is even (checked above), so index pairs directly
+                // instead of chunking: `chunks_exact(2)` trips
+                // clippy::chunks_exact_to_as_chunks on newer toolchains.
+                let u16_slice: Vec<u16> = (0..size / 2)
+                    .map(|i| u16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]))
                     .collect();
                 String::from_utf16(&u16_slice)
                     .ok()

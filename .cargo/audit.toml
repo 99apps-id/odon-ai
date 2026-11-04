@@ -1,0 +1,22 @@
+# cargo-audit configuration for ODON.
+#
+# The Dependency audit job in CI fails on any vulnerability, so an entry here
+# is an explicit, reviewed decision rather than a silenced warning.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 - Marvin Attack timing side channel in `rsa`.
+    #
+    # No patched release exists: the advisory carries `patched = []` on
+    # purpose, and it still reports rsa 0.9.10 (latest stable) and
+    # 0.10.0-rc.18 (latest) as affected.
+    #
+    # The crate arrives transitively through russh -> ssh-key -> rsa. ODON
+    # enables russh's `rsa` feature because OpenSSH keys in the common
+    # `BEGIN RSA PRIVATE KEY` form must keep working for SSH profiles;
+    # dropping the feature would silently break those logins.
+    #
+    # Revisit when RustCrypto/RSA#680 (implicit rejection) or #702 (default
+    # path blinding) lands in a released version.
+    "RUSTSEC-2023-0071",
+]
