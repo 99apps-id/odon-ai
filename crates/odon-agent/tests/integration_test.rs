@@ -1186,3 +1186,111 @@ async fn test_step_cap_pauses_the_session_and_asks_to_continue() {
         final_state
     );
 }
+
+/// A provider whose first answer is cut by the output budget and whose second
+/// answer repeats the tail of the first, the way a resumed model usually does.
+struct TruncatedThenResumedProvider {
+    calls: Arc<std::sync::Mutex<usize>>,
+}
+
+#[async_trait]
+impl ModelProvider for TruncatedThenResumedProvider {
+    fn provider_name(&self) -> &str {
+        "truncated-then-resumed"
+    }
+
+    async fn stream_chat(
+        &self,
+        _request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        let call_index = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        if call_index == 1 {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta(
+                    "First half of the answer and the sentence that will be repeated."
+                        .to_string(),
+                ))
+                .await;
+            let _ = event_sender.send(StreamEvent::OutputTruncated).await;
+        } else {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta(
+                    "the sentence that will be repeated. Second half of the answer.".to_string(),
+                ))
+                .await;
+        }
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_output_truncation_continues_the_turn_and_dedupes_the_seam() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+
+    let calls = Arc::new(std::sync::Mutex::new(0usize));
+    runtime
+        .register_provider(
+            "default",
+            Arc::new(TruncatedThenResumedProvider {
+                calls: calls.clone(),
+            }),
+            true,
+        )
+        .await;
+
+    let session = Session::new("Truncated", SessionMode::General, "t-model");
+    storage.save_session(&session).unwrap();
+
+    runtime
+        .execute_turn(&session.id, "answer fully", None, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        *calls.lock().unwrap(),
+        2,
+        "a truncated answer must trigger exactly one automatic continuation"
+    );
+
+    let history = storage.list_messages(&session.id).unwrap();
+    let assistant_texts: Vec<String> = history
+        .iter()
+        .filter(|m| format!("{:?}", m.role).to_lowercase().contains("assistant"))
+        .map(|m| m.content.text.clone())
+        .collect();
+    let combined = assistant_texts.join("\n");
+    assert!(
+        combined.contains("First half"),
+        "the first half must be kept, got {combined:?}"
+    );
+    assert!(
+        combined.contains("Second half"),
+        "the continuation must be kept, got {combined:?}"
+    );
+    let seam = "the sentence that will be repeated";
+    assert_eq!(
+        combined.matches(seam).count(),
+        1,
+        "the repeated seam must appear once, got {combined:?}"
+    );
+}

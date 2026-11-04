@@ -15,6 +15,10 @@ pub enum StreamEvent {
         prompt_tokens: u32,
         completion_tokens: u32,
     },
+    /// The provider stopped because the output budget ran out, not because the
+    /// answer was finished. Emitted before `Done` so the runtime can continue
+    /// the turn instead of treating a cut answer as a complete one.
+    OutputTruncated,
     Done,
     Error(String),
 }

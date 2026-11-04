@@ -466,6 +466,11 @@ impl OpenAiCompatibleProvider {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
                                 if let Some(choices) = val.get("choices").and_then(|choices| choices.as_array()) {
                                     if let Some(first) = choices.first() {
+                                        if let Some(reason) = first.get("finish_reason").and_then(|reason| reason.as_str()) {
+                                            if matches!(reason, "length" | "max_tokens") {
+                                                let _ = event_sender.send(StreamEvent::OutputTruncated).await;
+                                            }
+                                        }
                                         let delta = first.get("delta");
                                         if let Some(content) = delta.and_then(|delta| delta.get("content")).and_then(|content| content.as_str()) {
                                             let _ = event_sender.send(StreamEvent::TextDelta(content.to_string())).await;
@@ -1028,6 +1033,11 @@ impl ModelProvider for OpenAiCompatibleProvider {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&event.data) {
                                 if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
                                     if let Some(first) = choices.first() {
+                                        if let Some(reason) = first.get("finish_reason").and_then(|r| r.as_str()) {
+                                            if matches!(reason, "length" | "max_tokens") {
+                                                let _ = event_sender.send(StreamEvent::OutputTruncated).await;
+                                            }
+                                        }
                                         let delta = first.get("delta");
                                         if let Some(content) = delta.and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
                                             let _ = event_sender.send(StreamEvent::TextDelta(content.to_string())).await;

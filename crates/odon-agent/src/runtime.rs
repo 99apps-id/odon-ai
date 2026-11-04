@@ -33,6 +33,10 @@ struct AccumulatedToolCall {
 /// `0` means no cap at all (see [`UNLIMITED_TURN_ITERATIONS`]).
 pub const DEFAULT_MAX_TURN_ITERATIONS: usize = 500;
 
+/// How many times one turn may automatically resume after the provider reports
+/// that the output budget cut the answer.
+pub const MAX_TRUNCATION_CONTINUATIONS: usize = 4;
+
 /// Per-turn step cap for a provider that bills neither per step nor per
 /// token (OAuth / keyless: ChatGPT codex, Claude OAuth, Antigravity, xAI
 /// OAuth, Copilot, Muse). Mirrors Termigo's `OAUTH_MAX_AGENT_STEPS` of
@@ -756,6 +760,12 @@ impl AgentRuntime {
         // this the turn ends on a truncated transcript with tool calls whose
         // results the model never got to read.
         let mut grace_used = false;
+        // Bounded auto-continuation when the provider reports that the output
+        // budget cut the answer. Hermes does the same and de-duplicates the
+        // repeated seam; without a bound, a model that always truncates would
+        // loop until the step cap.
+        let mut truncation_continuations = 0usize;
+        let mut truncation_seam: Option<String> = None;
 
         // A step cap bounds the count, never the clock: a model that keeps
         // retrying a tool it believes is failing looks perfectly healthy at
@@ -874,6 +884,7 @@ impl AgentRuntime {
             let mut step_thought = String::new();
             let mut tool_accumulator: HashMap<usize, AccumulatedToolCall> = HashMap::new();
             let mut stream_error = None;
+            let mut output_truncated = false;
 
             // Process stream deltas. Steer messages are deliberately observed
             // at iteration boundaries, never by cancelling this stream: the
@@ -934,6 +945,9 @@ impl AgentRuntime {
                             entry.arguments.push_str(&arg_chunk);
                         }
                     }
+                    StreamEvent::OutputTruncated => {
+                        output_truncated = true;
+                    }
                     StreamEvent::Done => break,
                     StreamEvent::Error(err) => {
                         let _ = self.event_tx.send(AgentEvent::Error {
@@ -971,6 +985,23 @@ impl AgentRuntime {
                 }
             }
 
+            // A step that resumed a truncated answer usually repeats the tail of
+            // the previous one. Drop that repeated seam here, before any branch
+            // reads the text, so both the persisted history and the accumulated
+            // transcript stay free of the duplicate.
+            if let Some(previous) = truncation_seam.take() {
+                let overlap =
+                    crate::continuation::continuation_overlap_length(&previous, &step_text);
+                if overlap > 0 && overlap <= step_text.len() {
+                    let keep = total_accumulated_text.len().saturating_sub(step_text.len());
+                    total_accumulated_text.truncate(keep);
+                    if let Some(remainder) = step_text.get(overlap..) {
+                        total_accumulated_text.push_str(remainder);
+                        step_text = remainder.to_string();
+                    }
+                }
+            }
+
             if let Some(message) = stream_error {
                 let _ = self.event_tx.send(AgentEvent::StateChanged {
                     session_id: session_id.to_string(),
@@ -996,6 +1027,26 @@ impl AgentRuntime {
                 // follow-up iteration; the turn budget is a safety cap for
                 // autonomous work, not permission to drop user guidance.
                 if pending_steer && !grace_call {
+                    continue;
+                }
+                // The output budget ran out mid-answer. Without this the cut
+                // answer is persisted as if it were complete. Ask the model to
+                // resume and let it run again, bounded so a model that always
+                // truncates cannot spin. The seam is de-duplicated when the next
+                // step's text is persisted.
+                if output_truncated
+                    && !step_text.trim().is_empty()
+                    && !grace_call
+                    && truncation_continuations < MAX_TRUNCATION_CONTINUATIONS
+                {
+                    truncation_continuations += 1;
+                    truncation_seam = Some(step_text.clone());
+                    let nudge = Message::new_user(session_id, crate::continuation::OUTPUT_LIMIT_NUDGE);
+                    let _ = self.storage.save_message(&nudge);
+                    let _ = self.event_tx.send(AgentEvent::StateChanged {
+                        session_id: session_id.to_string(),
+                        state: AgentState::Thinking,
+                    });
                     continue;
                 }
                 // The closing call is the last model turn: mark the cap so the

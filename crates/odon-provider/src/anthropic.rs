@@ -334,7 +334,18 @@ impl ModelProvider for AnthropicProvider {
                                             }
                                         }
                                     }
-                                    "message_delta" => {}
+                                    "message_delta" => {
+                                        if let Some(reason) = val
+                                            .get("delta")
+                                            .and_then(|d| d.get("stop_reason"))
+                                            .and_then(|r| r.as_str())
+                                        {
+                                            if reason == "max_tokens" {
+                                                let _ =
+                                                    event_sender.send(StreamEvent::OutputTruncated).await;
+                                            }
+                                        }
+                                    }
                                     "error" => {
                                         let msg = val.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).unwrap_or("Anthropic error");
                                         let _ = event_sender.send(StreamEvent::Error(msg.to_string())).await;
