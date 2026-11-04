@@ -55,6 +55,7 @@ import {
   History,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
+import { BootSplash } from './components/BootSplash';
 import { CodeEditorView } from './components/CodeEditorView';
 import { BrowserPreviewView, type BrowserSeed } from './components/BrowserPreviewView';
 import { TerminalView } from './components/TerminalView';
@@ -676,6 +677,13 @@ export default function App() {
   const [daemonOnline, setDaemonOnline] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const toolsLoadedRef = useRef(false);
+
+  // Boot overlay: covers the UI until the daemon answers, so the first click is
+  // never a dead hit against state that has not loaded yet. `waiting` -> `fading`
+  // -> `gone`; the fade is a transition, not a remount, so nothing behind it
+  // flashes while it leaves.
+  const [bootSplashPhase, setBootSplashPhase] = useState<'waiting' | 'fading' | 'gone'>('waiting');
+  const [bootSplashSlow, setBootSplashSlow] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
@@ -801,6 +809,34 @@ export default function App() {
       }
     } catch { }
   };
+
+  // Drive the boot overlay. A reachable daemon leaves after a short hold (so the
+  // transition does not snap on the same tick as the status response), and an
+  // unreachable one leaves after BOOT_SPLASH_MAX_MS so the offline banner and
+  // Settings stay reachable instead of the overlay owning the window forever.
+  useEffect(() => {
+    if (bootSplashPhase !== 'waiting') return;
+    const holdMs = daemonOnline ? 240 : 12000;
+    const timer = window.setTimeout(() => {
+      setBootSplashPhase((phase) => (phase === 'waiting' ? 'fading' : phase));
+    }, holdMs);
+    return () => window.clearTimeout(timer);
+  }, [daemonOnline, bootSplashPhase]);
+
+  useEffect(() => {
+    if (bootSplashPhase !== 'fading') return;
+    // 460ms: the 420ms opacity transition plus one frame of slack.
+    const timer = window.setTimeout(() => setBootSplashPhase('gone'), 460);
+    return () => window.clearTimeout(timer);
+  }, [bootSplashPhase]);
+
+  // Only claim the daemon is unreachable once it has actually had time to
+  // answer; saying so on the first frame would be a lie on every cold start.
+  useEffect(() => {
+    if (bootSplashPhase !== 'waiting' || daemonOnline) return;
+    const timer = window.setTimeout(() => setBootSplashSlow(true), 4000);
+    return () => window.clearTimeout(timer);
+  }, [bootSplashPhase, daemonOnline]);
 
   // Initial setup & SSE subscription
   useEffect(() => {
@@ -1709,6 +1745,19 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-sand-50 text-neutral-800 font-sans">
+      {bootSplashPhase !== 'gone' && (
+        <BootSplash
+          done={bootSplashPhase === 'fading'}
+          offline={bootSplashSlow && !daemonOnline}
+          detail={
+            bootSplashSlow && !daemonOnline
+              ? isDesktopShell()
+                ? 'The bundled daemon did not answer on 127.0.0.1:4096. Restart it from Settings → System.'
+                : 'Run `odond serve` in a terminal to answer on 127.0.0.1:4096.'
+              : undefined
+          }
+        />
+      )}
       {/* Daemon offline banner: the whole local surface (state, tools,
           chats) depends on it, so say so instead of failing per action. */}
       {!daemonOnline && (

@@ -175,6 +175,156 @@
   }
 }
 
+/* Boot splash
+ *
+ * Shown until the UI can reach the local daemon. Everything here animates only
+ * `transform` and `opacity` so the overlay stays on the compositor and does not
+ * repaint the tree underneath it. The mark is ink on paper: no glow, no
+ * gradient band, no colour that is not already in the palette above. */
+.odon-splash {
+  transition: opacity 420ms ease;
+}
+
+.odon-splash.is-done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.odon-splash-wash {
+  background:
+    radial-gradient(circle at 50% 34%, #ffffff 0%, rgba(255, 255, 255, 0) 58%),
+    radial-gradient(circle at 50% 100%, var(--color-sand-100) 0%, rgba(242, 237, 228, 0) 62%);
+}
+
+.odon-splash-mark {
+  width: 7.5rem;
+  height: 7.5rem;
+}
+
+/* A single arc, not a full border: the gap is what makes it read as motion. */
+.odon-splash-ring {
+  background: conic-gradient(
+    from 0turn,
+    rgba(63, 91, 112, 0) 0turn,
+    rgba(63, 91, 112, 0) 0.58turn,
+    var(--color-blue-600) 0.88turn,
+    rgba(63, 91, 112, 0) 1turn
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  animation: odon-boot-spin 1.7s linear infinite;
+}
+
+.odon-splash-halo {
+  background: radial-gradient(circle, rgba(168, 119, 95, 0.16) 0%, rgba(168, 119, 95, 0) 68%);
+  animation: odon-boot-breathe 3.4s ease-in-out infinite;
+}
+
+.odon-splash-wordmark {
+  font-size: clamp(2rem, 4.6vw, 2.9rem);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.34em;
+  /* Letter-spacing appends a trailing gap; pull it back so the lettering is
+   * optically centred under the mark instead of sitting 0.34em right. */
+  margin-right: -0.34em;
+  color: var(--color-neutral-900);
+}
+
+.odon-splash-caption {
+  color: var(--color-neutral-500);
+}
+
+.odon-splash-dots span {
+  animation: odon-boot-dot 1.4s ease-in-out infinite;
+}
+
+.odon-splash-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.odon-splash-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.odon-splash-track {
+  width: 12rem;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background-color: var(--color-sand-200);
+}
+
+.odon-splash-bar {
+  display: block;
+  width: 34%;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--color-blue-600);
+  animation: odon-boot-sweep 1.5s ease-in-out infinite;
+}
+
+.odon-splash-bar.is-offline {
+  background-color: var(--color-clay-500);
+  animation-duration: 3s;
+}
+
+.odon-splash-detail {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--color-neutral-400);
+}
+
+@keyframes odon-boot-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes odon-boot-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes odon-boot-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes odon-boot-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(240%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .odon-splash-ring,
+  .odon-splash-halo,
+  .odon-splash-bar,
+  .odon-splash-dots span {
+    animation: none;
+  }
+
+  .odon-splash-bar {
+    opacity: 0.55;
+  }
+}
+
 @layer base {
   body {
     margin: 0;
