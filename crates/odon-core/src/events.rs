@@ -85,6 +85,17 @@ pub enum AgentEvent {
         steer_id: String,
         text: String,
     },
+    /// Live progress of a delegated child session, published on the **parent**
+    /// session so the parent's UI is not silent while the child works.
+    ///
+    /// `session_id` is the parent; `subagent_session_id` names the child.
+    /// `phase` is `started`, `working`, `finished` or `failed`.
+    SubagentProgress {
+        session_id: String,
+        subagent_session_id: String,
+        phase: String,
+        detail: String,
+    },
     RelayLog {
         channel: String, // "telegram", "whatsapp", "desktop"
         message: String,

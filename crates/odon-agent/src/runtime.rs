@@ -63,6 +63,20 @@ const MAX_PARALLEL_TOOLS: usize = 4;
 const SUBAGENT_MAX_ITERATIONS: usize = 5_000;
 const MAX_CONCURRENT_SUBAGENTS: usize = 4;
 
+/// Minimum gap between two `SubagentProgress` updates mirrored to the parent.
+const PROGRESS_THROTTLE: Duration = Duration::from_millis(400);
+
+/// Aborts the progress-mirror task when the delegation ends, on every path.
+struct MirrorGuard(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for MirrorGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
 /// True when `provider_name` identifies a subscription / keyless provider
 /// whose steps cost no metered tokens. Matched by substring because ODON
 /// providers carry their name either as a fixed label or as the configured
@@ -1437,6 +1451,22 @@ impl AgentRuntime {
                     &task,
                     &parent_session_id,
                 );
+                AgentRuntime::publish_subagent_progress(
+                    &approval,
+                    &parent_session_id,
+                    &child_session_id,
+                    "started",
+                    truncate_chars(&task, 120),
+                )
+                .await;
+                // Mirror the child's activity onto the parent for as long as it
+                // runs. The guard aborts it on every exit path, including the
+                // early return below.
+                let _mirror = MirrorGuard(AgentRuntime::spawn_progress_mirror(
+                    &approval,
+                    &child_session_id,
+                    &parent_session_id,
+                ));
 
                 let worktree = AgentRuntime::prepare_child_workspace(
                     &parent_session_id,
@@ -1514,6 +1544,19 @@ impl AgentRuntime {
                     (Err(error), Some(note)) => Err(format!("{error}\n\n{note}")),
                     (result, None) => result,
                 };
+
+                let (phase, detail) = match &result {
+                    Ok(report) => ("finished", truncate_chars(report, 120)),
+                    Err(error) => ("failed", truncate_chars(error, 120)),
+                };
+                AgentRuntime::publish_subagent_progress(
+                    &approval,
+                    &parent_session_id,
+                    &child_session_id,
+                    phase,
+                    detail,
+                )
+                .await;
 
                 (index, child_session_id, result)
             });
@@ -1623,6 +1666,80 @@ impl AgentRuntime {
                     Some(session.active_model)
                 }
             })
+    }
+
+    /// Mirrors a child session's activity onto the parent session as throttled
+    /// [`AgentEvent::SubagentProgress`] events.
+    ///
+    /// The child publishes on its own session id, which the parent's UI filters
+    /// out, so without this the parent looks idle for the whole delegation.
+    /// Updates are capped at roughly one per `PROGRESS_THROTTLE` to keep a
+    /// per-token delta stream from flooding the parent's SSE connection.
+    fn spawn_progress_mirror(
+        approval: &Arc<ApprovalEngine>,
+        child_session_id: &str,
+        parent_session_id: &str,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let sender = approval.event_sender()?.clone();
+        let mut receiver = sender.subscribe();
+        let child = child_session_id.to_string();
+        let parent = parent_session_id.to_string();
+        Some(tokio::spawn(async move {
+            let mut last = Instant::now() - PROGRESS_THROTTLE;
+            loop {
+                let Ok(envelope) = receiver.recv().await else {
+                    return;
+                };
+                if envelope.session_id.as_deref() != Some(child.as_str()) {
+                    continue;
+                }
+                let detail = match &envelope.event {
+                    AgentEvent::ToolCallStarted { tool_name, .. } => {
+                        format!("running {tool_name}")
+                    }
+                    AgentEvent::TextDelta { delta, .. } => truncate_chars(delta, 120),
+                    AgentEvent::StateChanged { state, .. } => format!("{state:?}"),
+                    _ => continue,
+                };
+                if last.elapsed() < PROGRESS_THROTTLE {
+                    continue;
+                }
+                last = Instant::now();
+                let _ = ACTIVE_SESSION_ID
+                    .scope(parent.clone(), async {
+                        let _ = sender.send(AgentEvent::SubagentProgress {
+                            session_id: parent.clone(),
+                            subagent_session_id: child.clone(),
+                            phase: "working".to_string(),
+                            detail,
+                        });
+                    })
+                    .await;
+            }
+        }))
+    }
+
+    /// Publishes the terminal progress for a delegation and stops mirroring.
+    async fn publish_subagent_progress(
+        approval: &Arc<ApprovalEngine>,
+        parent_session_id: &str,
+        child_session_id: &str,
+        phase: &str,
+        detail: String,
+    ) {
+        let Some(sender) = approval.event_sender() else {
+            return;
+        };
+        ACTIVE_SESSION_ID
+            .scope(parent_session_id.to_string(), async {
+                let _ = sender.send(AgentEvent::SubagentProgress {
+                    session_id: parent_session_id.to_string(),
+                    subagent_session_id: child_session_id.to_string(),
+                    phase: phase.to_string(),
+                    detail,
+                });
+            })
+            .await;
     }
 
     fn publish_child_event(
@@ -2133,6 +2250,61 @@ fn initial_active_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use odon_core::events::create_event_bus;
+    use odon_security::SecurityPolicy;
+
+    /// The child publishes on its own session id, which the parent's UI
+    /// filters out. The mirror must re-publish it on the parent session,
+    /// otherwise a long delegation looks like an idle parent.
+    #[tokio::test]
+    async fn subagent_progress_reaches_the_parent_session() {
+        let (tx, mut rx) = create_event_bus(64);
+        let emitter = tx.clone();
+        let approval = Arc::new(ApprovalEngine::new(SecurityPolicy::default()).with_events(tx));
+
+        let mirror = AgentRuntime::spawn_progress_mirror(&approval, "child-1", "parent-1");
+        assert!(mirror.is_some(), "an event bus must yield a mirror task");
+        let _guard = MirrorGuard(mirror);
+        // Let the mirror subscribe before anything is emitted.
+        tokio::task::yield_now().await;
+
+        ACTIVE_SESSION_ID
+            .scope("child-1".to_string(), async {
+                let _ = emitter.send(AgentEvent::ToolCallStarted {
+                    session_id: "child-1".to_string(),
+                    call_id: "call-1".to_string(),
+                    tool_name: "fs_read".to_string(),
+                    arguments: serde_json::json!({}),
+                });
+            })
+            .await;
+
+        let envelope = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let envelope = rx.recv().await.expect("bus must stay open");
+                if matches!(envelope.event, AgentEvent::SubagentProgress { .. }) {
+                    return envelope;
+                }
+            }
+        })
+        .await
+        .expect("mirrored progress must arrive");
+
+        assert_eq!(envelope.session_id.as_deref(), Some("parent-1"));
+        match envelope.event {
+            AgentEvent::SubagentProgress {
+                subagent_session_id,
+                phase,
+                detail,
+                ..
+            } => {
+                assert_eq!(subagent_session_id, "child-1");
+                assert_eq!(phase, "working");
+                assert!(detail.contains("fs_read"), "detail was {detail:?}");
+            }
+            other => panic!("expected SubagentProgress, got {other:?}"),
+        }
+    }
 
     fn message(role: MessageRole, text: &str) -> Message {
         let session = "s1";

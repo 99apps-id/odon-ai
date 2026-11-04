@@ -146,6 +146,14 @@ export type AgentEvent =
   | AgentEventEnvelope<'artifact_created', { artifact: Artifact }>
   | AgentEventEnvelope<'steer_applied', { steer_id: string; text: string }>
   | AgentEventEnvelope<
+      'subagent_progress',
+      {
+        subagent_session_id: string;
+        phase: string;
+        detail: string;
+      }
+    >
+  | AgentEventEnvelope<
       'approval_requested',
       {
         approval_id: string;

@@ -707,6 +707,9 @@ export default function App() {
   const todoCallIdsRef = useRef<Set<string>>(new Set());
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [steerCards, setSteerCards] = useState<SteerCard[]>([]);
+  const [subagentActivity, setSubagentActivity] = useState<
+    { id: string; phase: string; detail: string }[]
+  >([]);
   const steerCardsRef = useRef<SteerCard[]>([]);
   const stoppedRef = useRef(false);
   const sendMessageRef = useRef<(text?: string) => void>(() => {});
@@ -973,10 +976,18 @@ export default function App() {
         setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
       } else if (event.type === 'steer_applied') {
         setSteerCards((prev) => prev.filter((card) => card.id !== event.payload.steer_id));
+      } else if (event.type === 'subagent_progress') {
+        const { phase, detail, subagent_session_id } = event.payload;
+        setSubagentActivity((prev) => {
+          const next = prev.filter((item) => item.id !== subagent_session_id);
+          if (phase === 'finished' || phase === 'failed') return next;
+          return [...next, { id: subagent_session_id, phase, detail }];
+        });
       } else if (event.type === 'state_changed') {
         if (event.payload.state === 'completed') {
           setIsGenerating(false);
           setStreamingTool(null);
+          setSubagentActivity([]);
           if (activeSessionId) {
             loadArtifacts(activeSessionId);
             api.getTodos(activeSessionId).then(setTodos).catch(() => {});
@@ -1073,6 +1084,7 @@ export default function App() {
     setStreamingThought('');
     setStreamingTool(null);
     setSteerCards([]);
+    setSubagentActivity([]);
     stoppedRef.current = false;
     setActiveWorkspace(workspaces.default);
   };
@@ -2484,6 +2496,21 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     </div>
 
                     {streamingTool && <ToolActivityBlock toolName={streamingTool} />}
+
+                    {subagentActivity.length > 0 && (
+                      <div className="ml-7 space-y-1">
+                        {subagentActivity.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex items-start gap-2 text-[11px] text-neutral-500"
+                          >
+                            <Loader2 className="w-3 h-3 mt-0.5 shrink-0 animate-spin text-blue-600" />
+                            <span className="font-medium text-neutral-700">Subagent</span>
+                            <span className="truncate">{item.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     {liveTerminal.length > 0 && (
                       <div className="ml-7">
