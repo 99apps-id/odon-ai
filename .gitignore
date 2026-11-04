@@ -1,7 +1,15 @@
 # Rust / Cargo
 /target
 **/*.rs.bk
-Cargo.lock
+# The workspace Cargo.lock is deliberately tracked: this is a binary
+# application, so a pinned lockfile keeps builds reproducible and lets
+# `cargo audit` in CI scan the exact dependency set that ships.
+#
+# The Tauri shell's lockfile is the exception and stays untracked: it is a
+# separate workspace pinned to the local toolchain that produces the desktop
+# bundle, and a committed copy only generates conflicts without making the
+# shipped daemon any more reproducible.
+/desktop/src-tauri/Cargo.lock
 
 # Node / Desktop
 node_modules
@@ -43,3 +51,8 @@ scripts/whatsapp-bridge/auth/
 !/desktop/src-tauri/binaries/.gitkeep
 /desktop/src-tauri/target/
 /desktop/src-tauri/gen/
+
+# Agent scratch output (tool transcripts, chunk dumps)
+rt_*.txt
+runtime_chunk_*.txt
+temp_runtime*.txt
