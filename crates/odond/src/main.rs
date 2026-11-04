@@ -3398,9 +3398,35 @@ fn verify_meta_signature(secret: &str, body: &[u8], header: &str) -> bool {
     mac.verify_slice(&expected).is_ok()
 }
 
-async fn list_sessions(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Deserialize)]
+struct ListSessionsQuery {
+    include_subagents: Option<bool>,
+}
+
+/// A session created by `run_subagent` carries `metadata.parent_session`.
+/// Those are implementation detail of a delegated task: showing them as
+/// top-level conversations buries the operator's own sessions under rows
+/// they never opened. Hidden by default, still fetchable by id.
+fn is_subagent_session(session: &odon_core::Session) -> bool {
+    session
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get("parent_session"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|parent| !parent.trim().is_empty())
+}
+
+async fn list_sessions(
+    State(state): State<AppState>,
+    Query(query): Query<ListSessionsQuery>,
+) -> impl IntoResponse {
     match state.storage.list_sessions() {
-        Ok(sessions) => (StatusCode::OK, Json(json!(sessions))),
+        Ok(mut sessions) => {
+            if !query.include_subagents.unwrap_or(false) {
+                sessions.retain(|session| !is_subagent_session(session));
+            }
+            (StatusCode::OK, Json(json!(sessions)))
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
@@ -8092,6 +8118,40 @@ async fn delete_skill_item(Path(name): Path<String>) -> impl IntoResponse {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn subagent_sessions_are_hidden_from_the_conversation_list() {
+        // `run_subagent` persists each child as a real session so its history
+        // survives the turn. Listing them beside the operator's own chats made
+        // a delegated task look like a conversation someone else started, so
+        // the handler drops them unless they are asked for explicitly.
+        let mut child = odon_core::Session::new(
+            "Subagent: audit".to_string(),
+            odon_core::SessionMode::Agents,
+            "odon-auto".to_string(),
+        );
+        child.metadata = Some(serde_json::json!({ "parent_session": "parent-1" }));
+        assert!(is_subagent_session(&child));
+
+        let mut root = odon_core::Session::new(
+            "Real chat".to_string(),
+            odon_core::SessionMode::General,
+            "odon-auto".to_string(),
+        );
+        assert!(!is_subagent_session(&root));
+
+        // A session with no metadata at all must still be listed.
+        root.metadata = None;
+        assert!(!is_subagent_session(&root));
+
+        // An empty parent id is not a delegation marker.
+        root.metadata = Some(serde_json::json!({ "parent_session": "  " }));
+        assert!(!is_subagent_session(&root));
+
+        // And an unrelated metadata object must not be mistaken for one.
+        root.metadata = Some(serde_json::json!({ "persona": "coder" }));
+        assert!(!is_subagent_session(&root));
+    }
 
     #[test]
     fn composer_modes_change_the_turn_not_just_the_placeholder() {

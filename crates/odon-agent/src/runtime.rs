@@ -40,6 +40,13 @@ pub const DEFAULT_MAX_TURN_ITERATIONS: usize = 500;
 /// window, not a step count this runtime invents.
 pub const OAUTH_MAX_TURN_ITERATIONS: usize = 10_000;
 
+/// Largest subagent report handed back to the parent as a tool result.
+/// The child's own session keeps the full transcript in storage, so
+/// nothing is lost: the parent gets a bounded summary it can act on
+/// instead of an unbounded blob that would crowd out its own context
+/// (and stall the chat renderer).
+pub const SUBAGENT_RESULT_MAX_CHARS: usize = 4_000;
+
 /// Sentinel stored when the step cap is disabled. The loop compares
 /// `current_iteration <= cap`, so this is "run until the model stops
 /// asking for tools or the turn is cancelled".
@@ -1591,7 +1598,8 @@ impl AgentRuntime {
             });
             if let Some((_, _, output, _)) = completed_reports.iter().find(|item| item.0 == index) {
                 report["status"] = serde_json::json!("completed");
-                report["output"] = serde_json::json!(output);
+                report["output"] = serde_json::json!(cap_subagent_report(output));
+                report["truncated"] = serde_json::json!(output.chars().count() > SUBAGENT_RESULT_MAX_CHARS);
             } else if let Some((_, _, error)) = completed_errors.iter().find(|item| item.0 == index)
             {
                 report["error"] = serde_json::json!(error);
@@ -1626,6 +1634,7 @@ impl AgentRuntime {
                     "output": report.get("output").cloned().unwrap_or_default(),
                     "status": report.get("status").cloned().unwrap_or_default(),
                     "error": report.get("error").cloned().unwrap_or_default(),
+                    "truncated": report.get("truncated").cloned().unwrap_or_default(),
                     "provider": provider_display,
                     "model": model_display,
                 }),
@@ -2023,6 +2032,21 @@ fn truncate_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// Bound a subagent report for the parent. Appends an explicit note so the
+/// parent knows it is reading a truncated report rather than a complete
+/// one, and can delegate a narrower follow-up instead of assuming the work
+/// was tiny.
+fn cap_subagent_report(report: &str) -> String {
+    let total = report.chars().count();
+    if total <= SUBAGENT_RESULT_MAX_CHARS {
+        return report.to_string();
+    }
+    let kept: String = report.chars().take(SUBAGENT_RESULT_MAX_CHARS).collect();
+    format!(
+        "{kept}\n\n[subagent report truncated: {total} characters total, first {SUBAGENT_RESULT_MAX_CHARS} shown; the full transcript is in the subagent session]"
+    )
+}
+
 /// Rough token estimate (one token per four characters), good enough for
 /// a budget check that only decides when to compact.
 fn estimate_tokens(text: &str) -> usize {
@@ -2252,6 +2276,35 @@ mod tests {
     use super::*;
     use odon_core::events::create_event_bus;
     use odon_security::SecurityPolicy;
+
+    #[test]
+    fn subagent_reports_are_capped_for_the_parent() {
+        assert_eq!(cap_subagent_report("done"), "done");
+        assert_eq!(cap_subagent_report(""), "");
+
+        let huge = "x".repeat(SUBAGENT_RESULT_MAX_CHARS + 250);
+        let capped = cap_subagent_report(&huge);
+        assert!(
+            capped.chars().count() < huge.chars().count(),
+            "capped report must be shorter than the original"
+        );
+        assert!(
+            capped.starts_with(&"x".repeat(SUBAGENT_RESULT_MAX_CHARS)),
+            "the head of the report must be preserved verbatim"
+        );
+        assert!(
+            capped.contains("subagent report truncated"),
+            "a truncated report must say so instead of looking complete"
+        );
+        assert!(
+            capped.contains(&huge.chars().count().to_string()),
+            "the note must report the original length"
+        );
+
+        // Exactly at the limit stays untouched: no marker on a complete report.
+        let exact = "y".repeat(SUBAGENT_RESULT_MAX_CHARS);
+        assert_eq!(cap_subagent_report(&exact), exact);
+    }
 
     /// The child publishes on its own session id, which the parent's UI
     /// filters out. The mirror must re-publish it on the parent session,
