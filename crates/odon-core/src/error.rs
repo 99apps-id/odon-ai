@@ -34,3 +34,11 @@ pub enum OdonError {
 }
 
 pub type Result<T> = std::result::Result<T, OdonError>;
+
+/// Child processes and file handles fail with `io::Error`; a `?` on that error
+/// should not force every call site to hand-write a conversion.
+impl From<std::io::Error> for OdonError {
+    fn from(error: std::io::Error) -> Self {
+        OdonError::Internal(error.to_string())
+    }
+}

@@ -1,9 +1,12 @@
+pub mod api_testing;
 pub mod artifact_gen;
 pub mod browser_bridge;
 pub mod browser_session;
+pub mod cicd;
 pub mod coding;
 pub mod daemon_ops;
 pub mod dev_server;
+pub mod docs;
 pub mod fs;
 pub mod fs_ext;
 pub mod git;
@@ -11,12 +14,15 @@ pub mod git_ext;
 pub mod github;
 pub mod gmaps;
 pub mod harness;
+pub mod image;
 pub mod local_app;
 pub mod mcp;
 pub mod media;
 pub mod memory;
+pub mod monitoring;
 pub mod net_guard;
 pub mod ops_ext;
+pub mod packages;
 pub mod project_ops;
 pub mod provider_ops;
 pub mod quality;
@@ -28,7 +34,9 @@ pub mod shell;
 pub mod shell_ext;
 pub mod skills;
 pub mod system;
+pub mod testing;
 pub mod unified;
+pub mod ux;
 pub mod web;
 pub mod web_ext;
 pub mod workspace_path;
@@ -141,6 +149,45 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(quality::FormatCodeTool));
     reg.register(Box::new(quality::RunChecksTool));
     reg.register(Box::new(quality::TestFileTool));
+
+    // Testing & QA
+    reg.register(Box::new(testing::TestRunTool));
+    reg.register(Box::new(testing::CoverageRunTool));
+    reg.register(Box::new(testing::CoverageThresholdCheckTool));
+
+    // CI/CD
+    reg.register(Box::new(cicd::PipelineTriggerTool));
+    reg.register(Box::new(cicd::DeployAutomationTool));
+    reg.register(Box::new(cicd::ArtifactManagementTool));
+
+    // Package Management
+    reg.register(Box::new(packages::SmartInstallTool));
+    reg.register(Box::new(packages::SecurityPatchPrTool));
+    reg.register(Box::new(packages::LicenseScanTool));
+
+    // API & Integration Testing
+    reg.register(Box::new(api_testing::RestClientTool));
+    reg.register(Box::new(api_testing::GraphqlClientTool));
+    reg.register(Box::new(api_testing::WebhookTestTool));
+
+    // Documentation Automation
+    reg.register(Box::new(docs::OpenApiGenerateTool));
+    reg.register(Box::new(docs::ArchitectureDiagramTool));
+    reg.register(Box::new(docs::ChangelogGenerateTool));
+
+    // UX & Accessibility
+    reg.register(Box::new(ux::LighthouseCiTool));
+    reg.register(Box::new(ux::AxeCoreScanTool));
+    reg.register(Box::new(ux::ResponsiveScreenshotTool));
+
+    // Metric Dashboards and Uptime Monitoring
+    reg.register(Box::new(monitoring::MetricDashboardTool));
+    reg.register(Box::new(monitoring::UptimeMonitorTool));
+
+    // Docker Image Build and Push automation
+    reg.register(Box::new(image::DockerImageBuildTool));
+    reg.register(Box::new(image::DockerImagePushTool));
+
     reg.register(Box::new(review::ReviewDiffTool));
     reg.register(Box::new(review::ReviewFileTool));
     reg.register(Box::new(review::ReviewSecurityTool));
@@ -332,7 +379,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            212,
+            234,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
@@ -418,7 +465,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 219);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 241);
     }
 
     #[test]

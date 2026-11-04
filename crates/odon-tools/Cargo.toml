@@ -36,4 +36,5 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 # chosen. Pin the pure-Rust one so no C toolchain or system zlib is required.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 dirs = "6"
+walkdir = "2"
 tokio-tungstenite = "0.26"
