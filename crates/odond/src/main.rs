@@ -1,5 +1,7 @@
 #![recursion_limit = "512"]
 
+mod ssh_session;
+
 use axum::{
     extract::Request,
     extract::{
@@ -20,6 +22,7 @@ use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use ring::rand::SecureRandom;
+use russh::{ChannelMsg, Disconnect};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -5703,6 +5706,14 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
     let cols = query.cols.unwrap_or(100).max(10);
     let rows = query.rows.unwrap_or(28).max(5);
 
+    // Remote shells do not go through a ConPTY at all: OpenSSH for Windows
+    // cannot run an interactive session under one, so the PTY path below only
+    // ever serves a local shell.
+    if let Some(profile_id) = query.ssh_profile_id.clone() {
+        handle_ssh_terminal_socket(socket, profile_id, cols, rows).await;
+        return;
+    }
+
     let pty_system = native_pty_system();
     let pair = match pty_system.openpty(PtySize {
         rows,
@@ -5722,59 +5733,7 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         }
     };
 
-    let mut cmd = if let Some(pid) = &query.ssh_profile_id {
-        let profiles = load_ssh_profiles();
-        let profile = profiles
-            .into_iter()
-            .find(|p| &p.id == pid || &p.alias == pid);
-        if let Some(p) = profile {
-            let mut c = CommandBuilder::new("ssh");
-            c.arg("-tt");
-            c.arg("-o");
-            c.arg("StrictHostKeyChecking=accept-new");
-            c.arg("-o");
-            c.arg("ConnectTimeout=15");
-            c.arg("-p");
-            c.arg(p.port.to_string());
-            if let Err(e) = validate_ssh_target(&p.host, &p.user) {
-                let (mut ws_tx, _) = socket.split();
-                let _ = ws_tx
-                    .send(WsMessage::Text(
-                        format!("Invalid SSH target: {e}\r\n").into(),
-                    ))
-                    .await;
-                return;
-            }
-            if let Some(k) = &p.key_path {
-                match validate_ssh_key_path(k) {
-                    Ok(path) => {
-                        // Keys imported before ACL hardening existed are still
-                        // too open for OpenSSH; fix them on use.
-                        let _ = harden_key_permissions(std::path::Path::new(&path));
-                        c.arg("-i");
-                        c.arg(path);
-                    }
-                    Err(e) => {
-                        let (mut ws_tx, _) = socket.split();
-                        let _ = ws_tx
-                            .send(WsMessage::Text(format!("SSH key error: {e}\r\n").into()))
-                            .await;
-                        return;
-                    }
-                }
-            }
-            c.arg(format!("{}@{}", p.user, p.host));
-            c
-        } else {
-            let (mut ws_tx, _) = socket.split();
-            let _ = ws_tx
-                .send(WsMessage::Text(
-                    format!("SSH Profile not found: {}\r\n", pid).into(),
-                ))
-                .await;
-            return;
-        }
-    } else {
+    let mut cmd = {
         let working_dir = query.cwd.as_deref().unwrap_or(&workspace);
         #[cfg(target_os = "windows")]
         let c = {
@@ -5927,6 +5886,144 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
     ws_send_task.abort();
     let _ = ws_send_task.await;
     drop(master_ref);
+}
+
+/// Interactive remote shell over a real SSH channel.
+///
+/// The browser's keystrokes go straight into the channel and remote output goes
+/// straight back out; resize becomes a genuine `window-change` request rather
+/// than resizing a local PTY that a shell process happens to own.
+async fn handle_ssh_terminal_socket(socket: WebSocket, profile_id: String, cols: u16, rows: u16) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    let profiles = load_ssh_profiles();
+    let profile = match profiles
+        .into_iter()
+        .find(|p| p.id == profile_id || p.alias == profile_id)
+    {
+        Some(p) => p,
+        None => {
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    format!("SSH profile not found: {profile_id}\r\n").into(),
+                ))
+                .await;
+            return;
+        }
+    };
+
+    let mut key_path: Option<String> = None;
+    if let Some(key) = &profile.key_path {
+        match validate_ssh_key_path(key) {
+            Ok(path) => {
+                // Keys imported before ACL hardening existed are still too open
+                // for OpenSSH; tighten them here as well so both paths agree.
+                let _ = harden_key_permissions(std::path::Path::new(&path));
+                key_path = Some(path);
+            }
+            Err(e) => {
+                let _ = ws_tx
+                    .send(WsMessage::Text(format!("SSH key error: {e}\r\n").into()))
+                    .await;
+                return;
+            }
+        }
+    }
+
+    let opts = match crate::ssh_session::ConnectOptions::for_profile(
+        &profile.host,
+        &profile.user,
+        profile.port,
+        key_path.as_deref(),
+        cols,
+        rows,
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            let _ = ws_tx
+                .send(WsMessage::Text(format!("SSH profile error: {e}\r\n").into()))
+                .await;
+            return;
+        }
+    };
+
+    let session = match crate::ssh_session::SshSession::connect(&opts).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    crate::ssh_session::describe_error(&e).into(),
+                ))
+                .await;
+            return;
+        }
+    };
+
+    let (handle, mut read, write, fingerprint) = session.into_parts();
+    let _ = ws_tx
+        .send(WsMessage::Text(
+            format!("Connected (host key {fingerprint})\r\n").into(),
+        ))
+        .await;
+
+    loop {
+        tokio::select! {
+            incoming = read.wait() => {
+                match incoming {
+                    Some(ChannelMsg::Data { data }) => {
+                        if ws_tx.send(WsMessage::Binary(data.to_vec().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if ws_tx.send(WsMessage::Binary(data.to_vec().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => {
+                        let _ = ws_tx
+                            .send(WsMessage::Text("\r\n[SSH session closed]\r\n".into()))
+                            .await;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            outbound = ws_rx.next() => {
+                match outbound {
+                    Some(Ok(WsMessage::Text(text))) => {
+                        // The client sends the resize frame as JSON and every
+                        // other keystroke as raw text.
+                        if text.starts_with('{') && text.contains("resize") {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if v.get("type").and_then(|t| t.as_str()) == Some("resize") {
+                                    let c = v.get("cols").and_then(|c| c.as_u64()).unwrap_or(80);
+                                    let r = v.get("rows").and_then(|r| r.as_u64()).unwrap_or(24);
+                                    let _ = write.window_change(c as u32, r as u32, 0, 0).await;
+                                    continue;
+                                }
+                            }
+                        }
+                        if write.data(text.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(WsMessage::Binary(bin))) => {
+                        if write.data(&bin[..]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(WsMessage::Close(_))) | None => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let _ = write.close().await;
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "", "en")
+        .await;
 }
 
 /// Model ids the saved gateway config makes selectable.

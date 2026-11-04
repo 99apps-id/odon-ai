@@ -24,6 +24,7 @@ repository = "https://github.com/99apps-id/odon-ai"
 description = "ODON - Open Digital Orchestration Network: Universal AI assistant & autonomous orchestration runtime"
 
 [workspace.dependencies]
+russh = { version = "0.60", default-features = false, features = ["ring", "flate2", "rsa"] }
 tokio = { version = "1.43", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
