@@ -214,17 +214,13 @@ impl ModelProvider for OpenAiCodexProvider {
             body["instructions"] = json!(sys);
         }
 
-        let resp = self
-            .client
-            .post(&endpoint)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| OdonError::Provider {
-                provider: "openai-codex".to_string(),
-                message: format!("Codex HTTP request failed: {}", e),
-            })?;
+        let resp = crate::send_with_retry("openai-codex", || {
+            self.client
+                .post(&endpoint)
+                .headers(headers.clone())
+                .json(&body)
+        })
+        .await?;
 
         if !resp.status().is_success() {
             let err_body = resp.text().await.unwrap_or_default();

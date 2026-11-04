@@ -219,17 +219,53 @@ impl ModelProvider for AnthropicProvider {
             body["system"] = json!(sys);
         }
 
-        let resp = self
-            .client
-            .post(&endpoint)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| OdonError::Provider {
-                provider: self.label.clone(),
-                message: format!("Anthropic request failed: {}", e),
-            })?;
+        // Anthropic answers 429 while rate limiting and 529/500/503 while the
+        // upstream is saturated. A single transient answer must not end a chat
+        // turn, so retry briefly before surfacing the error. This mirrors the
+        // openai-compatible path so both providers behave the same way.
+        let mut attempt = 0u32;
+        let resp = loop {
+            let sent = self
+                .client
+                .post(&endpoint)
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await;
+
+            match sent {
+                Ok(response) => {
+                    let status = response.status();
+                    let retryable = status.is_server_error()
+                        || status.as_u16() == 429
+                        || status.as_u16() == 408;
+                    if retryable && attempt < 2 {
+                        attempt += 1;
+                        tracing::warn!(
+                            "Anthropic returned HTTP {} - retry {}/2",
+                            status,
+                            attempt
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64))
+                            .await;
+                        continue;
+                    }
+                    break response;
+                }
+                Err(e) if attempt < 2 && (e.is_timeout() || e.is_connect()) => {
+                    attempt += 1;
+                    tracing::warn!("Anthropic request failed ({}): retry {}/2", e, attempt);
+                    tokio::time::sleep(std::time::Duration::from_millis(600 * attempt as u64))
+                        .await;
+                }
+                Err(e) => {
+                    return Err(OdonError::Provider {
+                        provider: self.label.clone(),
+                        message: format!("Anthropic request failed: {}", e),
+                    });
+                }
+            }
+        };
 
         if !resp.status().is_success() {
             let status = resp.status();
