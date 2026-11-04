@@ -885,6 +885,34 @@ export default function App() {
       // Use fallback
     });
 
+    // Reconnect recovery (Hermes pattern: resubscribe, then resnapshot).
+    // Deltas and state transitions that happened while the stream was down are
+    // gone for good, so after a drop the view is rebuilt from the daemon rather
+    // than left holding half-streamed text or a spinner that never clears.
+    const resyncSession = async () => {
+      const id = currentSessionIdRef.current;
+      loadSessions();
+      if (!id) return;
+      try {
+        const data = await api.getSession(id);
+        if (currentSessionIdRef.current !== id) return;
+        if (Array.isArray(data.messages)) setMessages(normalizeSessionHistory(data.messages));
+        if (Array.isArray(data.artifacts)) setArtifacts(data.artifacts);
+        const running = Boolean((data as { running?: boolean }).running);
+        setIsGenerating(running);
+        if (!running) {
+          setStreamingText('');
+          setStreamingThought('');
+          setStreamingTool(null);
+        }
+        const sessionTodos = await api.getTodos(id);
+        if (currentSessionIdRef.current !== id) return;
+        setTodos(sessionTodos);
+      } catch {
+        // The daemon is still unreachable; the status poll surfaces that.
+      }
+    };
+
     const unsubscribe = api.subscribeEvents(
       (event) => {
         // Filter first, before any state is touched: the daemon broadcasts every
@@ -956,7 +984,19 @@ export default function App() {
           }
         }
       }
-    }, undefined, undefined, currentSessionIdRef.current);
+    },
+      () => {
+        // Reconnected: recover whatever was missed while the stream was down.
+        void resyncSession();
+      },
+      () => {
+        // Disconnected: we no longer know whether the turn is still running.
+        // Clearing the flag here made a brief stream drop look like the agent
+        // had stopped, while the turn kept going on the daemon. Drop only the
+        // per-tool detail and let the reconnect resync restore the truth.
+        setStreamingTool(null);
+      },
+      currentSessionIdRef.current);
 
     return () => {
       statusPollingStopped = true;
@@ -1058,6 +1098,9 @@ export default function App() {
       if (data.artifacts && data.artifacts.length > 0) {
         setArtifacts(data.artifacts);
       }
+      // A turn may already be running (relay, subagent, or a restart while the
+      // agent was mid-flight). Reflect that instead of showing a still frame.
+      setIsGenerating(Boolean((data as { running?: boolean }).running));
       const sessionTodos = await api.getTodos(id);
       if (currentSessionIdRef.current !== id) return;
       setTodos(sessionTodos);

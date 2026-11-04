@@ -3661,12 +3661,18 @@ async fn get_session(Path(id): Path<String>, State(state): State<AppState>) -> i
         Ok(session) => {
             let messages = state.storage.list_messages(&id).unwrap_or_default();
             let artifacts = state.storage.list_artifacts(&id).unwrap_or_default();
+            // A client that reconnects after the event stream dropped has no way
+            // to tell an in-flight turn from a finished one: events it missed are
+            // simply gone. Reporting the live turn registry lets the UI restore
+            // the "generating" state instead of guessing or staying stuck.
+            let running = state.active_turns.read().await.contains_key(&id);
             (
                 StatusCode::OK,
                 Json(json!({
                     "session": session,
                     "messages": messages,
-                    "artifacts": artifacts
+                    "artifacts": artifacts,
+                    "running": running
                 })),
             )
         }

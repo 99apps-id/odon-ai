@@ -502,7 +502,9 @@ export const api = {
     return res.json();
   },
 
-  async getSession(id: string): Promise<{ session: Session; messages: Message[]; artifacts: Artifact[] }> {
+  async getSession(
+    id: string,
+  ): Promise<{ session: Session; messages: Message[]; artifacts: Artifact[]; running: boolean }> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions/${id}`);
     if (!res.ok) throw new Error(`Failed to get session: ${res.statusText}`);
     return res.json();
