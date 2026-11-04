@@ -1638,6 +1638,96 @@ fn relay_session_key(channel: &str, sender: &str) -> String {
     format!("{channel}:{sender}")
 }
 
+fn relay_session_title(channel: &str) -> String {
+    match channel {
+        "telegram" => "Telegram session".to_string(),
+        "whatsapp" => "WhatsApp session".to_string(),
+        other => format!("{other} session"),
+    }
+}
+
+/// Commands that are offered in a channel.
+///
+/// The set is genuinely different: WhatsApp pairs through a QR code and needs
+/// `/qr` and `/logout`, while Telegram pairs with a bot token and instead needs
+/// `/chatid` to fill the allowlist. Advertising a command that cannot work in
+/// that channel wastes a round trip, so `/help` only lists what applies.
+fn relay_commands_for_channel(channel: &str) -> Vec<(&'static str, &'static str)> {
+    let mut commands = vec![
+        ("/new", "new session"),
+        ("/models", "list configured models"),
+        ("/model provider::model", "switch model"),
+        ("/stop", "stop the active turn"),
+        ("/steer <text>", "steer the active turn"),
+        ("/approvals", "list pending approvals"),
+        ("/approve <id-prefix>", "approve"),
+        ("/deny <id-prefix>", "deny"),
+        ("/status", "relay status"),
+    ];
+    match channel {
+        "whatsapp" => {
+            commands.push(("/qr", "show WhatsApp pairing state"));
+            commands.push(("/logout", "unpair this WhatsApp bridge"));
+        }
+        "telegram" => {
+            commands.push(("/chatid", "show this chat id for the allowlist"));
+        }
+        _ => {}
+    }
+    commands
+}
+
+fn relay_help_text(channel: &str) -> String {
+    let label = relay_session_title(channel);
+    let body: Vec<String> = relay_commands_for_channel(channel)
+        .into_iter()
+        .map(|(command, description)| format!("{command} — {description}"))
+        .collect();
+    format!(
+        "🤖 *ODON relay commands* ({label})\n\n{}",
+        body.join("\n")
+    )
+}
+
+fn relay_supports_command(channel: &str, command: &str) -> bool {
+    relay_commands_for_channel(channel)
+        .iter()
+        .any(|(name, _)| name.split_whitespace().next() == Some(command))
+}
+
+/// Describe the WhatsApp pairing state as text.
+///
+/// The bridge advertises the pairing QR as a `data:` URL, which is useless in a
+/// chat bubble, so this reports the state and points at the surface that can
+/// actually scan it.
+fn relay_whatsapp_pairing_text(status: &serde_json::Value) -> String {
+    let running = status
+        .get("running")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let connected = status
+        .get("connected")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if connected {
+        return "✅ WhatsApp is paired and connected.".to_string();
+    }
+    if !running {
+        return "⚠️ WhatsApp bridge is not running. Start it from Settings → WhatsApp."
+            .to_string();
+    }
+    let has_code = status
+        .get("pairing_code")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.is_empty());
+    if has_code {
+        return "📱 Pairing code requested. Enter it in WhatsApp → Linked devices → Link with phone number."
+            .to_string();
+    }
+    "📷 Pairing QR is ready. Open Settings → WhatsApp to scan it, then send /qr again to confirm."
+        .to_string()
+}
+
 fn relay_channel_for_session(session_id: &str) -> Option<(String, String)> {
     if let Some(sender) = session_id.strip_prefix("tg_") {
         return Some(("telegram".to_string(), sender.to_string()));
@@ -1645,6 +1735,33 @@ fn relay_channel_for_session(session_id: &str) -> Option<(String, String)> {
     if let Some(sender) = session_id.strip_prefix("wa_") {
         return Some(("whatsapp".to_string(), sender.to_string()));
     }
+    None
+}
+
+/// Resolve the channel peer for a session, preferring the live relay map.
+///
+/// `/new` replaces the prefixed session id (`tg_<sender>`) with a fresh UUID, so
+/// the prefix alone cannot answer this. Without the map, approval requests for
+/// a post-`/new` session were silently dropped instead of being delivered to
+/// the peer that started the turn.
+fn relay_peer_for_session(
+    relay_sessions: &std::collections::HashMap<String, String>,
+    session_id: &str,
+) -> Option<(String, String)> {
+    if let Some(found) = relay_channel_for_session(session_id) {
+        return Some(found);
+    }
+    for (key, mapped) in relay_sessions {
+        if mapped != session_id {
+            continue;
+        }
+        if let Some((channel, sender)) = key.split_once(':') {
+            if channel == "telegram" || channel == "whatsapp" {
+                return Some((channel.to_string(), sender.to_string()));
+            }
+        }
+    }
+    #[allow(unreachable_code)]
     None
 }
 
@@ -1802,24 +1919,18 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             .unwrap_or_default();
 
         let reply = match command.as_str() {
-            "/start" | "/help" => "🤖 *ODON relay commands*\n\n\
-                 /new — new session\n\
-                 /models — list configured models\n\
-                 /model provider::model — switch model\n\
-                 /stop — stop the active turn\n\
-                 /steer <text> — steer the active turn\n\
-                 /approvals — list pending approvals\n\
-                 /approve <id-prefix> — approve\n\
-                 /deny <id-prefix> — deny\n\
-                 /status — relay status"
-                .to_string(),
+            "/start" | "/help" => relay_help_text(&message.channel),
             "/new" | "/reset" => {
                 let model = state.relay_model.read().await.clone();
-                let session = Session::new(
-                    "Relay session",
+                let mut session = Session::new(
+                    relay_session_title(&message.channel),
                     SessionMode::General,
                     model.as_deref().unwrap_or("odon-auto"),
                 );
+                session.metadata = Some(serde_json::json!({
+                    "channel": message.channel.clone(),
+                    "peer": message.sender_id.clone(),
+                }));
                 let _ = state.storage.save_session(&session);
                 state
                     .relay_sessions
@@ -1842,6 +1953,19 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                 }
             }
             "/status" => relay_status_text(&state, &session_id).await,
+            "/qr" if message.channel == "whatsapp" => {
+                let status = state.whatsapp_bridge.status().await;
+                relay_whatsapp_pairing_text(&status)
+            }
+            "/logout" if message.channel == "whatsapp" => {
+                if let Err(error) = state.whatsapp_bridge.logout().await {
+                    tracing::warn!("Relay /logout failed: {error}");
+                }
+                "🚪 WhatsApp bridge logged out. Send /qr to pair again.".to_string()
+            }
+            "/chatid" if message.channel == "telegram" => {
+                format!("Chat id: `{}`", message.sender_id)
+            }
             "/stop" => {
                 let active = state.active_turns.read().await;
                 match active.get(&session_id) {
@@ -1888,7 +2012,15 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                 }
             }
             _ => {
-                return;
+                if relay_supports_command(&message.channel, &command) {
+                    "Command not available here.".to_string()
+                } else if relay_supports_command("whatsapp", &command) {
+                    format!("`{command}` is WhatsApp-only. Send /help to see this channel's commands.")
+                } else if relay_supports_command("telegram", &command) {
+                    format!("`{command}` is Telegram-only. Send /help to see this channel's commands.")
+                } else {
+                    format!("Unknown command `{command}`. Send /help to see this channel's commands.")
+                }
             }
         };
 
@@ -2484,7 +2616,9 @@ async fn main() -> anyhow::Result<()> {
                             ..
                         } = event.event
                         {
-                            let Some((channel, sender)) = relay_channel_for_session(&session_id)
+                            let relay_map = approval_state.relay_sessions.read().await.clone();
+                            let Some((channel, sender)) =
+                                relay_peer_for_session(&relay_map, &session_id)
                             else {
                                 continue;
                             };
@@ -8135,6 +8269,84 @@ async fn delete_skill_item(Path(name): Path<String>) -> impl IntoResponse {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn relay_channels_offer_different_commands() {
+        // WhatsApp pairs with a QR code; Telegram pairs with a bot token. The
+        // command surface has to reflect that rather than advertising commands
+        // that cannot work in the channel the operator is typing in.
+        let telegram = relay_commands_for_channel("telegram");
+        let whatsapp = relay_commands_for_channel("whatsapp");
+
+        assert!(relay_supports_command("telegram", "/chatid"));
+        assert!(!relay_supports_command("whatsapp", "/chatid"));
+        assert!(relay_supports_command("whatsapp", "/qr"));
+        assert!(relay_supports_command("whatsapp", "/logout"));
+        assert!(!relay_supports_command("telegram", "/qr"));
+
+        // Shared commands stay available on both.
+        for shared in ["/new", "/model", "/status", "/stop", "/steer"] {
+            assert!(relay_supports_command("telegram", shared), "{shared}");
+            assert!(relay_supports_command("whatsapp", shared), "{shared}");
+        }
+
+        // The help text is labelled per channel and lists only that channel.
+        let telegram_help = relay_help_text("telegram");
+        let whatsapp_help = relay_help_text("whatsapp");
+        assert!(telegram_help.contains("Telegram session"));
+        assert!(!telegram_help.contains("/qr"));
+        assert!(whatsapp_help.contains("WhatsApp session"));
+        assert!(whatsapp_help.contains("/qr"));
+        assert!(!whatsapp_help.contains("/chatid"));
+        assert_ne!(telegram.len(), whatsapp.len());
+    }
+
+    #[test]
+    fn relay_peer_survives_a_new_session_uuid() {
+        // `/new` replaces the prefixed session id with a fresh UUID. Resolving
+        // the peer from the prefix alone silently dropped approval requests for
+        // that session, so the live relay map has to answer instead.
+        let mut map = std::collections::HashMap::new();
+        map.insert("telegram:4242".to_string(), "e5a1-uuid".to_string());
+
+        assert_eq!(
+            relay_peer_for_session(&map, "e5a1-uuid"),
+            Some(("telegram".to_string(), "4242".to_string()))
+        );
+        // Prefix ids keep working without the map.
+        assert_eq!(
+            relay_peer_for_session(&std::collections::HashMap::new(), "wa_6281"),
+            Some(("whatsapp".to_string(), "6281".to_string()))
+        );
+        // Unknown sessions must not be attributed to a channel.
+        assert_eq!(relay_peer_for_session(&map, "not-a-relay-session"), None);
+        // A malformed map key is ignored rather than panicking.
+        let mut odd = std::collections::HashMap::new();
+        odd.insert("nocolon".to_string(), "target".to_string());
+        assert_eq!(relay_peer_for_session(&odd, "target"), None);
+    }
+
+    #[test]
+    fn whatsapp_pairing_text_reflects_real_state() {
+        let connected = serde_json::json!({ "running": true, "connected": true });
+        assert!(relay_whatsapp_pairing_text(&connected).contains("paired"));
+
+        let stopped = serde_json::json!({ "running": false, "connected": false });
+        assert!(relay_whatsapp_pairing_text(&stopped).contains("not running"));
+
+        let pairing = serde_json::json!({
+            "running": true,
+            "connected": false,
+            "pairing_code": "ABCD-1234",
+        });
+        assert!(relay_whatsapp_pairing_text(&pairing).contains("Pairing code"));
+
+        let qr = serde_json::json!({ "running": true, "connected": false, "qr": "data:image/png;base64,AA" });
+        let text = relay_whatsapp_pairing_text(&qr);
+        assert!(text.contains("QR"));
+        // A data URL is useless in a chat bubble, so it must never be echoed.
+        assert!(!text.contains("data:image"));
+    }
 
     #[test]
     fn subagent_sessions_are_hidden_from_the_conversation_list() {
