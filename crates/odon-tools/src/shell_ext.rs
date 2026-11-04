@@ -1450,7 +1450,12 @@ mod background_tests {
             .expect("list");
         assert!(listed["count"].as_u64().unwrap_or(0) >= 1);
 
-        for _ in 0..40 {
+        // Poll until the child exits. The budget is generous on purpose: CI
+        // runners are shared and a spawned `sh -c` can take a moment to be
+        // scheduled, which made a fixed 4s window flaky.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut last = String::new();
+        while std::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             let poll = ExecStreamStdoutTool
                 .execute(&ctx, json!({ "task_id": task_id }))
@@ -1464,7 +1469,8 @@ mod background_tests {
                 );
                 return;
             }
+            last = poll["stdout"].as_str().unwrap_or("").to_string();
         }
-        panic!("background task did not finish");
+        panic!("background task did not finish; last stdout was {last:?}");
     }
 }
