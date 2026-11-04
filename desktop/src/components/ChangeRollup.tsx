@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronRight, FileDiff } from 'lucide-react';
-import { DiffView, parseUnifiedDiff } from './DiffView';
+import { DiffView, parseUnifiedDiff, type DiffComment } from './DiffView';
 
 export interface ChangedFile {
   id: string;
@@ -10,6 +10,8 @@ export interface ChangedFile {
 
 interface Props {
   files: ChangedFile[];
+  /** Forwarded to each expanded diff so a line can be commented on. */
+  onComment?: (comment: DiffComment) => void | Promise<void>;
 }
 
 /**
@@ -20,7 +22,7 @@ interface Props {
  * bound and repeats the same summary, so a session that touched six files ends
  * with six cards saying nothing about the run as a whole.
  */
-export function ChangeRollup({ files }: Props) {
+export function ChangeRollup({ files, onComment }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const parsed = useMemo(
@@ -74,7 +76,7 @@ export function ChangeRollup({ files }: Props) {
               </button>
               {open && (
                 <div className="px-2 pb-2">
-                  <DiffView diff={file.diff} maxRows={40} />
+                  <DiffView diff={file.diff} maxRows={40} onComment={onComment} />
                 </div>
               )}
             </div>

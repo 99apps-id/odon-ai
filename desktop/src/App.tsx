@@ -65,6 +65,7 @@ import { SshTerminalView } from './components/SshTerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { MarkdownView } from './components/MarkdownView';
 import { ChangeRollup } from './components/ChangeRollup';
+import type { DiffComment } from './components/DiffView';
 import { TerminalPeek, commandOf, isTerminalTool, outputToText, type TerminalEntry } from './components/TerminalPeek';
 import { ApprovalCard } from './components/ApprovalCard';
 import { ApprovalCenterModal } from './components/ApprovalCenterModal';
@@ -1338,6 +1339,29 @@ export default function App() {
     } finally {
       setWorkspaceBusy(false);
     }
+  };
+
+  /**
+   * A diff-comment becomes a steer message so it reaches the running turn
+   * instead of queueing behind it. When no turn is running the helper falls
+   * back to a normal message, so a finished run still reacts to the comment.
+   */
+  const handleDiffComment = async (comment: DiffComment) => {
+    if (!currentSessionIdRef.current) {
+      throw new Error('Open a session first, then comment on a diff.');
+    }
+    const anchor = comment.file
+      ? `${comment.file}${comment.line ? `:${comment.line}` : comment.oldLine ? `:${comment.oldLine}` : ''}`
+      : 'the diff';
+    const verb = comment.kind === 'del' ? 'removed line' : 'line';
+    const text = [
+      `On ${anchor} (${verb}):`,
+      '```',
+      `${comment.kind === 'del' ? '-' : '+'}${comment.text}`,
+      '```',
+      comment.comment,
+    ].join('\n');
+    await queueSteerMessage(text);
   };
 
   const removeSteerCard = (id: string) => {
@@ -2680,7 +2704,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">
                         Changes in this session
                       </div>
-                      <ChangeRollup files={chatDiffs} />
+                      <ChangeRollup files={chatDiffs} onComment={handleDiffComment} />
                     </div>
                   </div>
                 )}

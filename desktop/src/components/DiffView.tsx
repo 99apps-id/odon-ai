@@ -1,11 +1,27 @@
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FileDiff } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, FileDiff, MessageSquarePlus, Send, X } from 'lucide-react';
+
+/** A comment anchored to one line of a rendered diff. */
+export interface DiffComment {
+  /** File the line belongs to, when the diff names one. */
+  file?: string;
+  /** New-file line number, the anchor a reviewer usually wants. */
+  line: number | null;
+  /** Old-file line number, set for removed lines. */
+  oldLine: number | null;
+  kind: DiffRow['kind'];
+  /** The raw line text, so the agent sees exactly what was commented on. */
+  text: string;
+  comment: string;
+}
 
 export type DiffRow = {
   kind: 'meta' | 'hunk' | 'add' | 'del' | 'ctx';
   oldNo: number | null;
   newNo: number | null;
   text: string;
+  /** File this row belongs to, carried from the nearest file header. */
+  file?: string;
 };
 
 export interface ParsedDiff {
@@ -25,44 +41,51 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
   let deletions = 0;
   let oldNo = 0;
   let newNo = 0;
+  let currentFile: string | undefined;
 
   for (const line of diff.split('\n')) {
     if (line.startsWith('diff --git ') || line.startsWith('Index: ')) {
       const m = /b\/(.+)$/.exec(line) ?? /Index: (.+)$/.exec(line);
-      if (m) files.push(m[1].trim());
-      rows.push({ kind: 'meta', oldNo: null, newNo: null, text: line });
+      if (m) {
+        currentFile = m[1].trim();
+        if (!files.includes(currentFile)) files.push(currentFile);
+      }
+      rows.push({ kind: 'meta', oldNo: null, newNo: null, text: line, file: currentFile });
       continue;
     }
     if (line.startsWith('+++ ') || line.startsWith('--- ')) {
       const p = line.slice(4).trim().replace(/^b\//, '').replace(/^a\//, '');
-      if (p && p !== '/dev/null' && !files.includes(p)) files.push(p);
-      rows.push({ kind: 'meta', oldNo: null, newNo: null, text: line });
+      if (p && p !== '/dev/null') {
+        currentFile = p;
+        if (!files.includes(p)) files.push(p);
+      }
+      rows.push({ kind: 'meta', oldNo: null, newNo: null, text: line, file: currentFile });
       continue;
     }
     const hunk = HUNK_RE.exec(line);
     if (hunk) {
       oldNo = Number(hunk[1]);
       newNo = Number(hunk[2]);
-      rows.push({ kind: 'hunk', oldNo: null, newNo: null, text: line });
+      rows.push({ kind: 'hunk', oldNo: null, newNo: null, text: line, file: currentFile });
       continue;
     }
     if (line.startsWith('+')) {
       additions += 1;
-      rows.push({ kind: 'add', oldNo: null, newNo: newNo++, text: line.slice(1) });
+      rows.push({ kind: 'add', oldNo: null, newNo: newNo++, text: line.slice(1), file: currentFile });
       continue;
     }
     if (line.startsWith('-')) {
       deletions += 1;
-      rows.push({ kind: 'del', oldNo: oldNo++, newNo: null, text: line.slice(1) });
+      rows.push({ kind: 'del', oldNo: oldNo++, newNo: null, text: line.slice(1), file: currentFile });
       continue;
     }
     if (line.startsWith('\\')) {
-      rows.push({ kind: 'meta', oldNo: null, newNo: null, text: line });
+      rows.push({ kind: 'meta', oldNo: null, newNo: null, text: line, file: currentFile });
       continue;
     }
     if (line.startsWith(' ') || line === '') {
       if (line === '' ) continue;
-      rows.push({ kind: 'ctx', oldNo: oldNo++, newNo: newNo++, text: line.slice(1) });
+      rows.push({ kind: 'ctx', oldNo: oldNo++, newNo: newNo++, text: line.slice(1), file: currentFile });
     }
   }
   return { files, rows, additions, deletions };
@@ -99,11 +122,21 @@ export interface DiffViewProps {
   collapsible?: boolean;
   maxRows?: number;
   label?: string;
+  /**
+   * When provided, every line gets a comment affordance. The returned value is
+   * awaited; a rejection is surfaced next to the composer so a failed steer is
+   * never silently dropped.
+   */
+  onComment?: (comment: DiffComment) => void | Promise<void>;
 }
 
-export function DiffView({ diff, dense = false, collapsible = true, maxRows = 18, label }: DiffViewProps) {
+export function DiffView({ diff, dense = false, collapsible = true, maxRows = 18, label, onComment }: DiffViewProps) {
   const parsed = useMemo(() => parseUnifiedDiff(diff), [diff]);
   const [expanded, setExpanded] = useState(!collapsible);
+  const [commentRow, setCommentRow] = useState<number | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const truncated = !expanded && parsed.rows.length > maxRows;
   const rows = truncated ? parsed.rows.slice(0, maxRows) : parsed.rows;
   const hidden = parsed.rows.length - rows.length;
@@ -111,6 +144,29 @@ export function DiffView({ diff, dense = false, collapsible = true, maxRows = 18
   const extraFiles = parsed.files.length > 1 ? ` +${parsed.files.length - 1}` : '';
 
   if (parsed.rows.length === 0) return null;
+
+  async function submitComment(row: DiffRow) {
+    const body = commentText.trim();
+    if (!body || !onComment) return;
+    setSending(true);
+    setError(null);
+    try {
+      await onComment({
+        file: row.file,
+        line: row.newNo,
+        oldLine: row.oldNo,
+        kind: row.kind,
+        text: row.text,
+        comment: body,
+      });
+      setCommentRow(null);
+      setCommentText('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Comment could not be sent');
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
     <div className={`${dense ? 'my-1.5 rounded-xl' : 'my-3 rounded-2xl'} overflow-hidden border border-[#d8d3c8] bg-white shadow-2xs`}>
@@ -141,24 +197,87 @@ export function DiffView({ diff, dense = false, collapsible = true, maxRows = 18
       <div className="overflow-x-auto max-w-full">
         <table className="w-full border-collapse font-mono text-[11.5px] leading-[1.55]">
           <tbody>
-            {rows.map((row, i) => (
-              <tr key={i} className={ROW_STYLE[row.kind]}>
-                <td className="w-9 select-none text-right pr-1.5 text-[10.5px] text-[#b9b3a5] align-top pl-1">
-                  {row.oldNo ?? ''}
-                </td>
-                <td className="w-9 select-none text-right pr-2 text-[10.5px] text-[#b9b3a5] align-top">
-                  {row.newNo ?? ''}
-                </td>
-                <td className={`w-4 select-none text-center align-top ${MARK_STYLE[row.kind]}`}>{MARK[row.kind]}</td>
-                <td className="whitespace-pre-wrap break-words pr-3 align-top">
-                  {row.kind === 'hunk' || row.kind === 'meta' ? (
-                    <span className="text-[#6f6a5d]">{row.text}</span>
-                  ) : (
-                    row.text
+            {rows.map((row, i) => {
+              const commentable = Boolean(onComment) && (row.kind === 'add' || row.kind === 'del' || row.kind === 'ctx');
+              return (
+                <Fragment key={i}>
+                  <tr className={`group ${ROW_STYLE[row.kind]}`}>
+                    <td className="w-9 select-none text-right pr-1.5 text-[10.5px] text-[#b9b3a5] align-top pl-1">
+                      {row.oldNo ?? ''}
+                    </td>
+                    <td className="w-9 select-none text-right pr-2 text-[10.5px] text-[#b9b3a5] align-top">
+                      {row.newNo ?? ''}
+                    </td>
+                    <td className={`w-4 select-none text-center align-top ${MARK_STYLE[row.kind]}`}>{MARK[row.kind]}</td>
+                    <td className="whitespace-pre-wrap break-words pr-1 align-top">
+                      {row.kind === 'hunk' || row.kind === 'meta' ? (
+                        <span className="text-[#6f6a5d]">{row.text}</span>
+                      ) : (
+                        row.text
+                      )}
+                    </td>
+                    <td className="w-6 align-top pr-1">
+                      {commentable && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCommentRow(commentRow === i ? null : i);
+                            setCommentText('');
+                            setError(null);
+                          }}
+                          title="Comment on this line"
+                          aria-label="Comment on this line"
+                          className="mt-0.5 rounded p-0.5 text-[#8a8577] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[#e9e5dc] hover:text-[#3f5b70] cursor-pointer"
+                        >
+                          <MessageSquarePlus className="w-3 h-3" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {commentRow === i && (
+                    <tr className="bg-[#f7f5ef]">
+                      <td colSpan={5} className="px-2 py-1.5">
+                        <div className="flex items-start gap-1.5">
+                          <textarea
+                            autoFocus
+                            value={commentText}
+                            onChange={(e) => setCommentText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                e.preventDefault();
+                                void submitComment(row);
+                              }
+                              if (e.key === 'Escape') setCommentRow(null);
+                            }}
+                            rows={2}
+                            placeholder="Ask the agent to change this line…"
+                            className="min-w-0 flex-1 resize-y rounded-md border border-[#d8d3c8] bg-white px-2 py-1 font-sans text-[11.5px] text-[#2f332e] placeholder:text-[#a8a294] focus:border-[#3f5b70] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void submitComment(row)}
+                            disabled={sending || commentText.trim().length === 0}
+                            className="rounded-md bg-[#3f5b70] p-1.5 text-white transition-colors hover:bg-[#33495a] disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                            title="Send as steer (Ctrl+Enter)"
+                          >
+                            <Send className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCommentRow(null)}
+                            className="rounded-md p-1.5 text-[#8a8577] transition-colors hover:bg-[#e9e5dc] cursor-pointer"
+                            title="Cancel"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {error && <p className="mt-1 font-sans text-[11px] text-[#8f3b32]">{error}</p>}
+                      </td>
+                    </tr>
                   )}
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
