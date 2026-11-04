@@ -111,3 +111,39 @@ jobs:
             echo "::error::Agent scratch output is tracked; it belongs in .gitignore"
             exit 1
           fi
+      # README advertises a tool count that has drifted from the registry twice
+      # before (195 vs 226 vs the real 227). Derive it from the golden manifest,
+      # which the `cargo test` job already locks to the registry, so the number
+      # a reader sees cannot disagree with the number that ships.
+      - name: README tool count matches the registry
+        run: |
+          set -euo pipefail
+          actual=$(python3 -c 'import json;print(len(json.load(open("crates/odon-tools/src/golden_manifest.json"))))')
+          echo "registry tools: $actual"
+          readme=$(grep -oE 'exposes [0-9]+ registered tools' README.md | grep -oE '[0-9]+' || true)
+          badge=$(grep -oE 'Tools_Registry-[0-9]+_Registered' README.md | grep -oE '[0-9]+' || true)
+          for pair in "prose:$readme" "badge:$badge"; do
+            label=${pair%%:*}
+            value=${pair#*:}
+            if [ "$value" != "$actual" ]; then
+              echo "::error::README $label says '$value' tools, registry has $actual"
+              exit 1
+            fi
+          done
+          echo "README agrees with the registry ($actual tools)"
+
+      # A stale .env.example is worse than none: it advertises knobs that do
+      # nothing and hides knobs that matter. Every documented key must be read
+      # somewhere in the code.
+      - name: Documented env vars exist in code
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS='=' read -r name _; do
+            case "$name" in ''|\#*) continue ;; esac
+            if ! grep -rqF "\"$name\"" crates scripts --include='*.rs' --include='*.mjs' --exclude-dir=node_modules; then
+              echo "::error::$name is documented in .env.example but never read by the code"
+              missing=1
+            fi
+          done < .env.example
+          exit $missing

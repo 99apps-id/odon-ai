@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="desktop/public/vite.svg" width="64" height="64" alt="ODON Logo" />
+  <img src="assets/icons/cat.svg" width="64" height="64" alt="ODON Logo" />
 </p>
 
 <h1 align="center">ODON (Open Digital Orchestration Network)</h1>
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-19-blue?style=flat-square&logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-5.8-blue?style=flat-square&logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat-square&logo=tailwind-css" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Tools_Registry-195_Registered-emerald?style=flat-square" alt="195 registered tools" />
+  <img src="https://img.shields.io/badge/Tools_Registry-227_Registered-emerald?style=flat-square" alt="227 registered tools" />
   <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=flat-square" alt="License" />
 </p>
 
@@ -62,7 +62,7 @@ Unlike traditional rigid terminal loops, ODON delivers seamless multi-turn thoug
   - **Deny**: Rejects execution and passes feedback back to the agent.
 
 ### 4. 🧠 Explicit, Self-Diagnosing Tool Registry
-ODON exposes 226 registered tools with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`. A turn sends at most 128 tool schemas inline; past that a core set rides with `find_tools` and the rest of the catalogue loads on demand, and `run_subagent` delegates a bounded side task to a child session. Independent tool calls in one step run with bounded parallelism (4). Long sessions are compacted to a context budget before each request (trimming oversized tool outputs first, then eliding the oldest middle turns), and a turn that hits its step cap pauses with everything persisted instead of failing; send "continue" to resume. Tune with `ODON_MAX_TURN_ITERATIONS` (default 100) and `ODON_CONTEXT_BUDGET_TOKENS` (default 120000).
+ODON exposes 227 registered tools with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`. A turn sends at most 128 tool schemas inline; past that a core set rides with `find_tools` and the rest of the catalogue loads on demand, and `run_subagent` delegates a bounded side task to a child session. Independent tool calls in one step run with bounded parallelism (4). Long sessions are compacted to a context budget before each request (trimming oversized tool outputs first, then eliding the oldest middle turns), and a turn that hits its step cap pauses with everything persisted instead of failing; send "continue" to resume. Tune with `ODON_MAX_TURN_ITERATIONS` (default 100) and `ODON_CONTEXT_BUDGET_TOKENS` (default 120000).
 - **Filesystem (17 tools)**: `read_file`, `write_file`, `edit`, `multi_edit`, `list_directory`, `create_directory`, `delete_file`, `move_file`, `copy_file`, `grep`, `glob`, etc.
 - **Git (14 tools)**: `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_add`, `git_checkout`, `git_show`, `git_stash`, `git_pull`, `git_push`, `git_reset`, etc.
 - **Browser Control (4 tools)**: `browser_open`, `browser_navigate`, `browser_screenshot`, and `browser_click`. `browser_click` launches a temporary headless Chrome/Edge instance and clicks via CDP.
