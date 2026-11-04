@@ -476,6 +476,21 @@ export default function App() {
   const [showAllRecent, setShowAllRecent] = useState(false);
   const [relayModalOpen, setRelayModalOpen] = useState<'telegram' | 'whatsapp' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  // True while an IME (e.g. Japanese/Chinese) composition is open; Enter there
+  // confirms the candidate and must never send the message.
+  const composerComposingRef = useRef(false);
+
+  // Grow the composer with its content, capped at ~6 lines before it scrolls.
+  // Runs on every value change, so clearing after send snaps back to one line.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const maxHeight = 160;
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [inputMessage]);
 
   // Workspace / folder selection (explicit user action, allowlisted server-side)
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo>({ default: '', allowed: [] });
@@ -2484,18 +2499,35 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 </div>
               )}
 
-              {/* Input Area */}
-              <input
-                type="text"
+              {/* Input Area (multiline: Enter sends, Shift+Enter inserts a newline) */}
+              <textarea
+                ref={composerRef}
+                rows={1}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                onCompositionStart={() => {
+                  composerComposingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  // Deferred: Safari fires the confirming Enter's keydown after
+                  // compositionend, and it must still be treated as composition.
+                  setTimeout(() => {
+                    composerComposingRef.current = false;
+                  }, 0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || e.shiftKey) return;
+                  // Enter mid-composition picks an IME candidate — never send.
+                  if (composerComposingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  e.preventDefault();
+                  void handleSendMessage();
+                }}
                 placeholder={
                   isGenerating
                     ? 'Steer the agent (Enter to queue; press Send on the card to prioritize)...'
                     : getPlaceholder()
                 }
-                className="w-full text-xs text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent"
+                className="w-full text-xs text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent resize-none overflow-y-hidden"
               />
 
               {/* Bottom Row Tools inside Input Box */}
