@@ -1489,6 +1489,15 @@ impl AgentRuntime {
                     Err(error) => Err(error),
                 };
 
+                let patch_note = AgentRuntime::capture_child_patch(
+                    &approval,
+                    &parent_session_id,
+                    &child_session_id,
+                    storage.clone(),
+                    &task,
+                )
+                .await;
+
                 AgentRuntime::publish_child_event(
                     &approval,
                     &child_session_id,
@@ -1499,6 +1508,12 @@ impl AgentRuntime {
 
                 let _ = AgentRuntime::finalize_child_workspace(&child_session_id, storage.clone())
                     .await;
+
+                let result = match (result, patch_note) {
+                    (Ok(report), Some(note)) => Ok(format!("{report}\n\n{note}")),
+                    (Err(error), Some(note)) => Err(format!("{error}\n\n{note}")),
+                    (result, None) => result,
+                };
 
                 (index, child_session_id, result)
             });
@@ -1711,6 +1726,78 @@ impl AgentRuntime {
                 let _ = storage.save_session(&session);
             }
         }
+    }
+
+    /// Captures a delegated child's file changes as a patch artifact on the
+    /// PARENT session. `finalize_child_workspace` runs `git worktree remove
+    /// --force`, which deletes uncommitted edits, so without this the child's
+    /// whole body of work is silently discarded when it finishes.
+    async fn capture_child_patch(
+        approval: &Arc<ApprovalEngine>,
+        parent_session_id: &str,
+        child_session_id: &str,
+        storage: Arc<StorageEngine>,
+        task: &str,
+    ) -> Option<String> {
+        let session = storage.get_session(child_session_id).ok()?;
+        let worktree = session.workspace_root?;
+        // Only delegated worktrees, never a directory the user pointed at.
+        if std::path::Path::new(&worktree)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(child_session_id)
+        {
+            return None;
+        }
+        // -N marks untracked files intent-to-add so they appear in the diff.
+        let _ = tokio::process::Command::new("git")
+            .args(["add", "-A", "-N"])
+            .current_dir(&worktree)
+            .output()
+            .await;
+        let diff_output = tokio::process::Command::new("git")
+            .args(["diff", "--no-color", "HEAD"])
+            .current_dir(&worktree)
+            .output()
+            .await
+            .ok()?;
+        let diff = String::from_utf8_lossy(&diff_output.stdout).to_string();
+        if diff.trim().is_empty() {
+            return None;
+        }
+        let files_changed = diff
+            .lines()
+            .filter(|line| line.starts_with("+++ "))
+            .count()
+            .max(1);
+        let additions = diff
+            .lines()
+            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+            .count();
+        let deletions = diff
+            .lines()
+            .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+            .count();
+        let artifact = Artifact::new_patch(
+            parent_session_id,
+            format!("Subagent changes: {}", truncate_chars(task, 60)),
+            child_session_id,
+            diff,
+            files_changed,
+            additions,
+            deletions,
+        );
+        let _ = storage.save_artifact(&artifact);
+        if let Some(tx) = approval.event_sender().as_ref() {
+            let _ = tx.send(AgentEvent::ArtifactCreated {
+                session_id: parent_session_id.to_string(),
+                artifact: artifact.clone(),
+            });
+        }
+        Some(format!(
+            "Preserved the delegated edits as patch artifact \"{}\" ({}); the worktree is removed after this turn, so apply this patch to keep them.",
+            artifact.title, artifact.summary
+        ))
     }
 
     async fn finalize_child_workspace(child_session_id: &str, storage: Arc<StorageEngine>) {

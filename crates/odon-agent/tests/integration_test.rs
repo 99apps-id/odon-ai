@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
-use odon_core::{AgentEvent, ArtifactKind, Result};
+use odon_core::{AgentEvent, ArtifactKind, ArtifactPayload, Result};
 use odon_core::events::AgentState;
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent};
 use odon_security::{ApprovalDecision, ApprovalEngine, AuditLogger, RiskTier, SecurityPolicy};
@@ -735,6 +735,177 @@ async fn test_run_subagent_delegates_and_returns_the_child_report() {
             .any(|m| m.content.text.contains("child report")),
         "the child session must hold the child turn"
     );
+}
+
+/// Provider that delegates with run_subagent and the child writes a file.
+/// Pins the regression where `git worktree remove --force` discarded the
+/// child's uncommitted work: the changes must survive as a patch artifact
+/// on the parent session and be announced in the tool result.
+struct DelegatingWriterProvider;
+
+#[async_trait]
+impl ModelProvider for DelegatingWriterProvider {
+    fn provider_name(&self) -> &str {
+        "delegating-writer"
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        let last_user = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == odon_core::MessageRole::User)
+            .map(|m| m.content.text.clone())
+            .unwrap_or_default();
+        let tool_output = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == odon_core::MessageRole::Tool)
+            .map(|m| m.content.text.clone());
+        if let Some(output) = tool_output {
+            if last_user == "write a child file" {
+                let _ = event_sender
+                    .send(StreamEvent::TextDelta("child wrote the file".to_string()))
+                    .await;
+            } else {
+                let _ = event_sender
+                    .send(StreamEvent::TextDelta(format!("Parent received: {output}")))
+                    .await;
+            }
+        } else if last_user.contains("please delegate") {
+            let _ = event_sender
+                .send(StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some("call_delegate_write".to_string()),
+                    name: Some("run_subagent".to_string()),
+                    arguments_delta: Some("{\"task\":\"write a child file\"}".to_string()),
+                })
+                .await;
+        } else if last_user == "write a child file" {
+            let _ = event_sender
+                .send(StreamEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some("call_child_write".to_string()),
+                    name: Some("fs_write".to_string()),
+                    arguments_delta: Some(
+                        "{\"path\":\"child-note.txt\",\"content\":\"from child\\n\"}".to_string(),
+                    ),
+                })
+                .await;
+        } else {
+            let _ = event_sender
+                .send(StreamEvent::TextDelta("nothing to do".to_string()))
+                .await;
+        }
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap_or_else(|e| panic!("git {args:?} failed to spawn: {e}"));
+    assert!(
+        status.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+}
+
+#[tokio::test]
+async fn test_subagent_edits_survive_worktree_removal_as_a_patch_artifact() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let approval = auto_approve(SecurityPolicy::default());
+    let audit = Arc::new(AuditLogger::new());
+    let (event_tx, _event_rx) = create_event_bus(64);
+    let registry = odon_tools::build_full_tool_registry();
+
+    // A real git repo: delegation only materialises a worktree inside git.
+    let repo = tempfile::tempdir().unwrap();
+    let root = repo.path();
+    std::fs::write(root.join("seed.txt"), "seed\n").unwrap();
+    git_in(root, &["init"]);
+    git_in(root, &["config", "user.email", "test@example.com"]);
+    git_in(root, &["config", "user.name", "Test"]);
+    git_in(root, &["add", "-A"]);
+    git_in(root, &["commit", "-m", "seed"]);
+
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(registry),
+        approval,
+        audit,
+        event_tx,
+        root.to_string_lossy().to_string(),
+    );
+    runtime
+        .register_provider("default", Arc::new(DelegatingWriterProvider), true)
+        .await;
+
+    let session = Session::new("Delegation", SessionMode::General, "delegating-model");
+    storage.save_session(&session).unwrap();
+
+    let result = runtime
+        .execute_turn(
+            &session.id,
+            "please delegate this work",
+            Some("delegating-model"),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let artifacts = storage.list_artifacts(&session.id).unwrap();
+    let patch = artifacts
+        .iter()
+        .find(|a| a.kind == ArtifactKind::Patch)
+        .unwrap_or_else(|| {
+            panic!("the child's edits must be captured as a patch artifact; got {artifacts:?}")
+        });
+    match &patch.payload {
+        ArtifactPayload::Patch {
+            diff,
+            files_changed,
+            additions,
+            ..
+        } => {
+            assert!(
+                diff.contains("child-note.txt") && diff.contains("+from child"),
+                "the patch must carry the child's file content, got: {diff}"
+            );
+            assert_eq!(*files_changed, 1, "one file changed, got: {diff}");
+            assert_eq!(*additions, 1, "one added line, got: {diff}");
+        }
+        other => panic!("expected a Patch payload, got: {other:?}"),
+    }
+    // The parent turn is told where the work went, so it can act on it.
+    assert!(
+        result.content.text.contains("Subagent changes:"),
+        "the parent must be told the child's changes were captured, got: {}",
+        result.content.text
+    );
+
+    // The worktree really was removed; the artifact is the only trace.
+    let sessions = storage.list_sessions().unwrap();
+    let child = sessions
+        .iter()
+        .find(|s| s.id.starts_with("sub-"))
+        .expect("a child session must exist");
+    if let Some(path) = child.workspace_root.as_ref() {
+        assert!(
+            !std::path::Path::new(path).exists(),
+            "the delegated worktree must be cleaned up, {path} still exists"
+        );
+    }
 }
 
 /// Provider that calls two independent registry tools in one step. The
