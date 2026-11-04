@@ -7,6 +7,17 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::registry::{Tool, ToolContext};
 
+/// Charges `delta` bytes against an extraction budget.
+///
+/// Returns `true` while the running total is still within `limit`. Callers must
+/// feed this the number of bytes *actually* decompressed, never the size the
+/// archive header declares: a forged header can under-report its payload and
+/// would otherwise let a zip bomb pass the cheap pre-check.
+fn charge_extraction_budget(total: &mut u64, delta: u64, limit: u64) -> bool {
+    *total = total.saturating_add(delta);
+    *total <= limit
+}
+
 fn add_path_to_zip(
     zip: &mut zip::ZipWriter<std::fs::File>,
     base: &Path,
@@ -952,8 +963,10 @@ impl Tool for FsUnzipTool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
-            total_bytes = total_bytes.saturating_add(entry.size());
-            if total_bytes > MAX_TOTAL_BYTES {
+            // `entry.size()` is the size the central directory *declares*; it is a
+            // cheap early rejection, not the authoritative accounting. The real
+            // budget is enforced against bytes actually decompressed below.
+            if !charge_extraction_budget(&mut total_bytes, entry.size(), MAX_TOTAL_BYTES) {
                 return Err(OdonError::Tool {
                     tool: self.name().to_string(),
                     message: format!(
@@ -982,10 +995,26 @@ impl Tool for FsUnzipTool {
                     tool: self.name().to_string(),
                     message: e.to_string(),
                 })?;
-                std::io::copy(&mut entry, &mut out_file).map_err(|e| OdonError::Tool {
-                    tool: self.name().to_string(),
-                    message: e.to_string(),
-                })?;
+                let copied =
+                    std::io::copy(&mut entry, &mut out_file).map_err(|e| OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: e.to_string(),
+                    })?;
+                // Charge the bytes that were actually decompressed, not the size the
+                // archive header declares. A forged header can under-report and slip
+                // past the pre-check above, which only reads the declared size.
+                let within_budget =
+                    charge_extraction_budget(&mut total_bytes, copied, MAX_TOTAL_BYTES);
+                if !within_budget {
+                    drop(out_file);
+                    let _ = fs::remove_file(&out_path);
+                    return Err(OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: format!(
+                            "Archive exceeds the {MAX_TOTAL_BYTES}-byte extraction budget"
+                        ),
+                    });
+                }
                 extracted += 1;
             }
         }
@@ -1303,5 +1332,43 @@ impl Tool for EditorReloadTool {
             message: e.to_string(),
         })?;
         Ok(json!({ "path": rel, "content": content, "status": "reloaded" }))
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::charge_extraction_budget;
+
+    #[test]
+    fn accepts_a_payload_within_the_budget() {
+        let mut total = 0u64;
+        assert!(charge_extraction_budget(&mut total, 100, 1_000));
+        assert_eq!(total, 100);
+    }
+
+    #[test]
+    fn rejects_the_entry_that_crosses_the_budget() {
+        let mut total = 900u64;
+        assert!(!charge_extraction_budget(&mut total, 200, 1_000));
+        assert_eq!(total, 1_100);
+    }
+
+    #[test]
+    fn saturates_instead_of_overflowing_on_absurd_deltas() {
+        let mut total = u64::MAX - 1;
+        assert!(!charge_extraction_budget(&mut total, u64::MAX, 1_000));
+        assert_eq!(total, u64::MAX);
+    }
+
+    /// Regression for the zip-bomb guard: a forged central directory that
+    /// declares one byte must not smuggle a hugely expanded payload past the
+    /// budget. The declared size clears the cheap pre-check; the byte count
+    /// reported by the decompressor is what actually trips it.
+    #[test]
+    fn forged_small_declared_size_still_trips_the_budget() {
+        const LIMIT: u64 = 512 * 1024 * 1024;
+        let mut total = 0u64;
+        assert!(charge_extraction_budget(&mut total, 1, LIMIT));
+        assert!(!charge_extraction_budget(&mut total, LIMIT + 1, LIMIT));
     }
 }

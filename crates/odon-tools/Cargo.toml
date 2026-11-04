@@ -28,6 +28,12 @@ rusqlite = { workspace = true }
 url = { workspace = true }
 sha2 = { workspace = true }
 arboard = { version = "3.6", default-features = false }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# zip 2.x carried four RustSec advisories (RUSTSEC-2026-0367/0368/0369/0429),
+# one of them critical, all fixed in >=9.0.0. Only the flate2 backend is
+# needed, so the umbrella `deflate` feature (which also pulls zopfli) is avoided.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+# zip's `deflate-flate2` only wires up the glue; flate2 itself needs a backend
+# chosen. Pin the pure-Rust one so no C toolchain or system zlib is required.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 dirs = "6"
 tokio-tungstenite = "0.26"

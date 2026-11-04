@@ -1119,7 +1119,14 @@ impl Tool for GitHubWorkflowLogsTool {
             if entry.is_dir() {
                 continue;
             }
-            let name = entry.name().to_string();
+            // zip 9 returns `Result<Cow<str>, ZipError>` here: an entry name that
+            // is not valid UTF-8 is now a recoverable error rather than a panic
+            // or lossy decode. Skip such entries instead of failing the whole
+            // archive, matching how a malformed index is already tolerated above.
+            let name = match entry.name() {
+                Ok(name) => name.to_string(),
+                Err(_) => continue,
+            };
             let mut limited = entry.take(MAX_ENTRY_BYTES as u64);
             let mut buffer = Vec::new();
             let _ = limited.read_to_end(&mut buffer);
