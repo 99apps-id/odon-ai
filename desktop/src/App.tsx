@@ -746,7 +746,11 @@ export default function App() {
    * Returns true when a new token was adopted.
    */
   const seedDesktopToken = async (force = false): Promise<boolean> => {
-    if (!isDesktopShell()) return false;
+    // A plain browser (dev server) has no Tauri shell to hand out the token.
+    // The daemon still exposes it on /api/health for a trusted origin, so adopt
+    // it there instead of running with no token and falling back to the static
+    // tool list.
+    if (!isDesktopShell()) return api.adoptSessionTokenFromHealth();
     if (desktopTokenSeededRef.current && !force) return false;
     const token = await daemonToken();
     desktopTokenSeededRef.current = true;

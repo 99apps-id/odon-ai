@@ -2717,13 +2717,17 @@ async fn main() -> anyhow::Result<()> {
 
             let auth_state = state.clone();
             let app = app
-                .layer(cors)
                 .layer(DefaultBodyLimit::max(36 * 1024 * 1024))
                 .with_state(state)
                 .layer(middleware::from_fn_with_state(
                     auth_state,
                     require_api_token,
-                ));
+                ))
+                // CORS must stay outermost: applied after the auth layer so a
+                // 401 still carries access-control-allow-origin. Otherwise the
+                // browser reports "Failed to fetch", the UI declares the daemon
+                // offline, and it falls back to the static tool list.
+                .layer(cors);
 
             let listener = match tokio::net::TcpListener::bind(&bind).await {
                 Ok(listener) => listener,
@@ -3806,9 +3810,22 @@ fn resolve_turn_plan(
     // silently restricting a later chat turn.
     let plan_mode_enabled = plan_mode.unwrap_or(mode == "plan") || mode == "plan";
     // Auto means "let the provider pick": `odon-auto` resolves to each provider's
-    // default model further down.
+    // default model further down. The provider itself must survive, otherwise the
+    // turn falls back to the daemon default gateway, which has no default model
+    // and answers "No model selected" right after the operator picked one.
+    // Auto means "let the provider pick". That must not discard an explicit
+    // model the operator already chose: doing so sends the gateway's
+    // `odon-auto` sentinel, which a custom gateway has no default for, and the
+    // turn dies with "No model selected" right after the model menu showed a
+    // pick. Keep the provider, and keep the model when one was named.
     let model = if mode == "auto" {
-        Some("odon-auto".to_string())
+        match requested_model.and_then(|m| m.split_once("::")) {
+            Some((provider, chosen)) if !chosen.trim().is_empty() && chosen != "auto" => {
+                Some(format!("{provider}::{chosen}"))
+            }
+            Some((provider, _)) => Some(format!("{provider}::odon-auto")),
+            None => Some("odon-auto".to_string()),
+        }
     } else {
         requested_model.map(|m| m.to_string())
     };
@@ -8162,11 +8179,26 @@ mod tests {
         assert_eq!(chat.iteration_cap, None);
         assert_eq!(chat.instructions, None);
 
-        // Auto routes to the provider default instead of the pinned model.
-        let auto = resolve_turn_plan("auto", Some("gpt-5.6-luna"), None, None);
-        assert_eq!(auto.model.as_deref(), Some("odon-auto"));
+        // Auto defers the MODEL to the provider default but keeps the provider the
+        // operator picked. Dropping it sent the turn to the daemon default gateway,
+        // which has no default model and answered "No model selected" — and it also
+        // threw away an explicit pick, so a gateway with no default model failed.
+        let auto = resolve_turn_plan("auto", Some("deepseek::deepseek-chat"), None, None);
+        assert_eq!(auto.model.as_deref(), Some("deepseek::deepseek-chat"));
         assert!(!auto.plan_mode);
         assert!(auto.instructions.unwrap().contains("AUTO"));
+
+        // An explicit auto sentinel still means "provider default", provider intact.
+        let auto_sentinel =
+            resolve_turn_plan("auto", Some("openai-compatible::odon-auto"), None, None);
+        assert_eq!(
+            auto_sentinel.model.as_deref(),
+            Some("openai-compatible::odon-auto")
+        );
+
+        // A bare model (no provider prefix) keeps the old behaviour.
+        let auto_bare = resolve_turn_plan("auto", Some("gpt-5.6-luna"), None, None);
+        assert_eq!(auto_bare.model.as_deref(), Some("odon-auto"));
 
         // Agent authorises delegation and leaves the step budget to the
         // runtime default (500, or ODON_MAX_TURN_ITERATIONS) instead of

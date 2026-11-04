@@ -277,6 +277,108 @@ impl AgentRuntime {
             .unwrap_or_else(|| self.workspace_root.clone())
     }
 
+    /// Extract the upstream status from a provider error such as
+    /// `HTTP 400 from https://...`. Deterministic where free-text matching is not.
+    fn http_status_of(lower: &str) -> Option<u16> {
+        let idx = lower.find("http ")?;
+        let digits: String = lower[idx + 5..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse().ok()
+    }
+
+    /// Map a provider failure onto a stable lesson kind plus the action that
+    /// avoids it. Deterministic so the same failure overwrites one memory row
+    /// instead of filling the store with near-duplicates.
+    fn lesson_kind(message: &str) -> (&'static str, &'static str) {
+        let lower = message.to_ascii_lowercase();
+        let status = Self::http_status_of(&lower);
+        let mentions_model = lower.contains("model");
+
+        if lower.contains("no model selected") {
+            return (
+                "model_selection",
+                "pick provider and model together; a gateway has no default model, so the request must name a real id from its catalogue",
+            );
+        }
+        if lower.contains("context") && lower.contains("length") {
+            return (
+                "context_limit",
+                "trim the prompt or let older messages fall out of the window before resending",
+            );
+        }
+        // Status first: a 400 listing the supported models says nothing about
+        // credentials, so a generic keyword match must not claim "auth".
+        match status {
+            Some(401) | Some(403) => {
+                return (
+                    "auth",
+                    "the credential was rejected; ask the operator to re-check Settings instead of retrying the same call",
+                )
+            }
+            Some(429) => {
+                return (
+                    "rate_limit",
+                    "back off and prefer another configured provider or a cheaper model before retrying",
+                )
+            }
+            Some(400) | Some(404) if mentions_model => {
+                return (
+                    "model_not_found",
+                    "the model id is unknown to this endpoint; choose one from the provider catalogue",
+                )
+            }
+            _ => {}
+        }
+        if lower.contains("not configured") {
+            return (
+                "provider_config",
+                "the provider is missing a key or base URL; configure it in Settings before sending",
+            );
+        }
+        if lower.contains("timeout") || lower.contains("timed out") {
+            return (
+                "timeout",
+                "retry once, then reduce the request size; identical repeated retries only burn budget",
+            );
+        }
+        if lower.contains("rate limit") || lower.contains("quota") {
+            return (
+                "rate_limit",
+                "back off and prefer another configured provider or a cheaper model before retrying",
+            );
+        }
+        if lower.contains("unauthorized") || lower.contains("invalid api key") {
+            return (
+                "auth",
+                "the credential was rejected; ask the operator to re-check Settings instead of retrying the same call",
+            );
+        }
+        if lower.contains("not found") {
+            return (
+                "model_not_found",
+                "the model id is unknown to this endpoint; choose one from the provider catalogue",
+            );
+        }
+        (
+            "provider_error",
+            "re-read the error text before retrying; do not resend an identical request",
+        )
+    }
+
+    /// Persist one lesson per (provider, kind) so a later turn starts from it.
+    fn record_lesson(&self, provider: &str, model: &str, message: &str) {
+        let (kind, hint) = Self::lesson_kind(message);
+        let detail: String = message.chars().take(180).collect();
+        let value = format!(
+            "{} with provider `{}` on model `{}`: {}. Next time: {}.",
+            kind, provider, model, detail, hint
+        );
+        let key = format!("lesson:{}:{}", provider, kind);
+        let _ = self.storage.set_memory(&key, &value, "lessons");
+    }
+
     /// Build context harness with OS, time, workspace status, memories, and tools
     pub fn build_system_harness(&self, workspace_root: &str) -> String {
         let now = chrono::Utc::now().to_rfc3339();
@@ -295,6 +397,16 @@ impl AgentRuntime {
                 } else {
                     memories_text.push_str(&format!("- [{}] {}: {}\n", m.category, m.key, m.value));
                 }
+            }
+        }
+
+        // Lessons are separate from memory: they describe a request shape that
+        // already failed, so the model can avoid repeating it this turn.
+        let lessons = self.storage.list_memories(Some("lessons")).unwrap_or_default();
+        if !lessons.is_empty() {
+            memories_text.push_str("\n### Lessons From Earlier Turns (do not repeat these):\n");
+            for lesson in lessons.iter().take(5) {
+                memories_text.push_str(&format!("- {}\n", lesson.value));
             }
         }
 
@@ -564,6 +676,8 @@ impl AgentRuntime {
             .and_then(|value| value.split_once("::"))
             .map(|(provider, model)| (Some(provider), model))
             .unwrap_or((None, model_override.unwrap_or("odon-auto")));
+        // Kept for the failure lesson, which must name the model that was refused.
+        let model_for_lesson = requested_model.to_string();
         let provider = match self.get_provider(provider_override).await {
             Some(p) => {
                 if p.provider_name() == "odon-simulated" && requested_model != "odon-simulated" {
@@ -862,6 +976,9 @@ impl AgentRuntime {
                     session_id: session_id.to_string(),
                     state: AgentState::Failed,
                 });
+                // Learn from the failure so the next turn (in any session) starts
+                // from it instead of repeating the same request shape.
+                self.record_lesson(provider.provider_name(), &model_for_lesson, &message);
                 return Err(OdonError::Provider {
                     provider: provider.provider_name().to_string(),
                     message,
@@ -2434,6 +2551,90 @@ mod tests {
         if let Some(first_tail) = out.get(marker + 1) {
             assert_ne!(first_tail.role, MessageRole::Tool);
         }
+    }
+
+    #[test]
+    fn lesson_kind_classifies_failures_into_stable_actions() {
+        let cases = [
+            ("No model selected. Add a model ID", "model_selection"),
+            ("upstream returned 429 rate limit", "rate_limit"),
+            ("401 Unauthorized: invalid api key", "auth"),
+            ("Provider 'x' is not configured or missing an API key", "provider_config"),
+            ("maximum context length exceeded", "context_limit"),
+            ("request timed out after 60s", "timeout"),
+            ("model not found (404)", "model_not_found"),
+            ("something unexpected", "provider_error"),
+        ];
+        for (message, expected) in cases {
+            let (kind, hint) = AgentRuntime::lesson_kind(message);
+            assert_eq!(kind, expected, "misclassified: {message}");
+            assert!(!hint.trim().is_empty(), "a lesson must carry an action");
+        }
+    }
+
+    #[test]
+    fn lesson_kind_reads_status_before_keywords() {
+        // The real deepseek 400 body lists supported model names. Keyword
+        // matching called it "auth"; the status says else.
+        let real = "HTTP 400 from https://api.deepseek.com/v1/chat/completions (model: x). Response: {\"error\":{\"message\":\"The supported API model names are ...\"}}";
+        assert_eq!(AgentRuntime::lesson_kind(real).0, "model_not_found");
+        assert_eq!(
+            AgentRuntime::lesson_kind("HTTP 503 from https://x (model: m)").0,
+            "provider_error"
+        );
+        assert_eq!(
+            AgentRuntime::lesson_kind("HTTP 403 from https://x (model: m)").0,
+            "auth"
+        );
+    }
+
+    #[test]
+    fn a_failed_turn_leaves_one_reusable_lesson_in_the_harness() {
+        let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+        let (event_tx, _rx) = odon_core::events::create_event_bus(16);
+        let runtime = AgentRuntime::new(
+            storage.clone(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ApprovalEngine::new(odon_security::SecurityPolicy::default())),
+            Arc::new(AuditLogger::new()),
+            event_tx,
+            "/tmp".to_string(),
+        );
+
+        assert!(
+            !runtime.build_system_harness("/tmp").contains("Lessons From Earlier Turns"),
+            "a fresh store must not invent lessons"
+        );
+
+        // The same failure twice must collapse into one row, not pile up.
+        runtime.record_lesson(
+            "openai-compatible",
+            "odon-auto",
+            "No model selected. Add a model ID under Settings",
+        );
+        runtime.record_lesson(
+            "openai-compatible",
+            "odon-auto",
+            "No model selected. Add a model ID under Settings",
+        );
+
+        let stored = storage.list_memories(Some("lessons")).unwrap();
+        assert_eq!(stored.len(), 1, "identical failures must dedupe");
+        assert_eq!(stored[0].key, "lesson:openai-compatible:model_selection");
+
+        let harness = runtime.build_system_harness("/tmp");
+        assert!(
+            harness.contains("Lessons From Earlier Turns"),
+            "the next turn must see what already failed"
+        );
+        assert!(
+            harness.contains("model_selection"),
+            "the lesson must name the failure kind"
+        );
+        assert!(
+            !harness.contains("Lessons From Earlier Turns:") || !stored[0].value.is_empty(),
+            "the lesson must carry its detail"
+        );
     }
 
     #[test]

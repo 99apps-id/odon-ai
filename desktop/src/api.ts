@@ -206,6 +206,31 @@ export const api = {
     }
   },
 
+  /**
+   * Adopt the daemon's session token from /api/health.
+   *
+   * The daemon hands out a loopback session token only to a trusted browser
+   * origin, so this works for the dev server (localhost:3000) as well as the
+   * packaged webview. Without it a plain browser has no token at all, every
+   * authenticated call answers 401, and the UI falls back to its static tool
+   * list (71 entries) while the daemon is actually serving 212.
+   *
+   * Returns true when a new token was adopted.
+   */
+  async adoptSessionTokenFromHealth(): Promise<boolean> {
+    try {
+      const res = await window.fetch(`${this.getBaseUrl()}/api/health`);
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => null);
+      const token = typeof data?.session_token === 'string' ? data.session_token.trim() : '';
+      if (!token || token === this.getApiToken()) return false;
+      this.setApiToken(token);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   isTrustedApiUrl(input: string | URL): boolean {
     if (typeof window === 'undefined') return false;
     try {
