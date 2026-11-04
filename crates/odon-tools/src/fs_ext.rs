@@ -956,7 +956,9 @@ impl Tool for FsUnzipTool {
             if total_bytes > MAX_TOTAL_BYTES {
                 return Err(OdonError::Tool {
                     tool: self.name().to_string(),
-                    message: format!("Archive exceeds the {MAX_TOTAL_BYTES}-byte extraction budget"),
+                    message: format!(
+                        "Archive exceeds the {MAX_TOTAL_BYTES}-byte extraction budget"
+                    ),
                 });
             }
             // `enclosed_name` rejects absolute paths and `..` traversal.

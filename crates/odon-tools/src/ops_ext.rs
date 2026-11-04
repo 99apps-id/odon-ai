@@ -236,9 +236,9 @@ impl Tool for AuditSearchTool {
                 tool_filter.is_none_or(|filter| event.tool_name == filter)
                     && success.is_none_or(|filter| event.success == filter)
                     && approved.is_none_or(|filter| event.approved == filter)
-                    && query.as_ref().is_none_or(|filter| {
-                        event.description.to_lowercase().contains(filter)
-                    })
+                    && query
+                        .as_ref()
+                        .is_none_or(|filter| event.description.to_lowercase().contains(filter))
             })
             .take(limit)
             .filter_map(|event| serde_json::to_value(event).ok())

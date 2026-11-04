@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use odon_core::{OdonError, Result};
+use odon_core::{Artifact, OdonError, Result};
 use odon_security::RiskTier;
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
@@ -261,17 +261,30 @@ impl Tool for FsEditTool {
         let occurrences = content.matches(target).count();
         let new_content = content.replace(target, replacement);
 
-        tokio::fs::write(&full_path, new_content)
+        tokio::fs::write(&full_path, new_content.clone())
             .await
             .map_err(|e| OdonError::Tool {
                 tool: self.name().to_string(),
                 message: format!("Failed to write edited file {}: {}", path_str, e),
             })?;
 
+        let artifact = crate::unified::unified_diff(path_str, &content, &new_content).map(|d| {
+            Artifact::new_patch(
+                &ctx.session_id,
+                format!("Edit {}", path_str),
+                path_str,
+                &d.text,
+                1,
+                d.additions,
+                d.deletions,
+            )
+        });
+
         Ok(json!({
             "path": path_str,
             "replacements": occurrences,
-            "status": "success"
+            "status": "success",
+            "artifact": artifact
         }))
     }
 }
@@ -869,7 +882,19 @@ impl Tool for TermigoGrepTool {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_path;
+    use super::*;
+    use odon_security::{ApprovalEngine, AuditLogger, SecurityPolicy};
+    use std::sync::Arc;
+
+    fn test_context(root: &str) -> crate::registry::ToolContext {
+        crate::registry::ToolContext {
+            session_id: "diff-test".to_string(),
+            workspace_root: root.to_string(),
+            approval_engine: Arc::new(ApprovalEngine::new(SecurityPolicy::default())),
+            audit_logger: Arc::new(AuditLogger::new()),
+            storage: None,
+        }
+    }
 
     #[test]
     fn rejects_absolute_and_parent_paths() {
@@ -880,6 +905,44 @@ mod tests {
         assert!(resolve_path(&root_str, "../outside.txt").is_err());
         assert!(resolve_path(&root_str, &root.join("absolute.txt").to_string_lossy()).is_err());
         assert!(resolve_path(&root_str, "nested/file.txt").is_ok());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn edit_returns_patch_artifact_with_added_and_removed_lines() {
+        let root = std::env::temp_dir().join(format!("odon-fs-diff-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("note.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+        let ctx = test_context(&root.to_string_lossy());
+        let out = FsEditTool
+            .execute(
+                &ctx,
+                json!({
+                    "path": "note.txt",
+                    "target": "beta",
+                    "replacement": "BETA\ninserted"
+                }),
+            )
+            .await
+            .expect("edit should succeed");
+
+        let artifact = out.get("artifact").expect("artifact field");
+        assert_eq!(artifact["kind"], "patch");
+        let diff = artifact["payload"]["data"]["diff"]
+            .as_str()
+            .expect("diff text");
+        assert!(
+            diff.contains("-beta\n"),
+            "removed line must be marked: {diff}"
+        );
+        assert!(
+            diff.contains("+BETA\n"),
+            "added line must be marked: {diff}"
+        );
+        assert_eq!(artifact["payload"]["data"]["additions"], 2);
+        assert_eq!(artifact["payload"]["data"]["deletions"], 1);
 
         std::fs::remove_dir_all(root).unwrap();
     }

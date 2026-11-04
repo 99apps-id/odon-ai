@@ -63,7 +63,11 @@ impl SteerQueue {
     }
 
     pub fn has_pending(&self) -> bool {
-        !self.messages.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+        !self
+            .messages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
     }
 
     /// Wait until at least one steer is marked priority. The priority flag is

@@ -1339,7 +1339,6 @@ impl Tool for ProcessWaitTool {
     }
 }
 
-
 #[cfg(test)]
 mod background_tests {
     use super::*;

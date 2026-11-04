@@ -50,10 +50,7 @@ fn valid_remote_url(value: &str) -> bool {
     if value.is_empty() || value.len() > 2048 || value.starts_with('-') {
         return false;
     }
-    if value
-        .chars()
-        .any(|c| c == '\0' || c.is_control())
-    {
+    if value.chars().any(|c| c == '\0' || c.is_control()) {
         return false;
     }
     let lower = value.to_ascii_lowercase();

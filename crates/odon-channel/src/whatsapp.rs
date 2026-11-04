@@ -198,8 +198,7 @@ impl WhatsAppChannel {
         // The allowlist gates who may command the agent, so honour it outbound
         // too: otherwise any caller that reaches this point can message
         // arbitrary numbers even when WHATSAPP_ALLOWED_NUMBERS is configured.
-        if !self.allowed_numbers.is_empty()
-            && !self.allowed_numbers.iter().any(|n| n == &recipient)
+        if !self.allowed_numbers.is_empty() && !self.allowed_numbers.iter().any(|n| n == &recipient)
         {
             return Err(OdonError::Channel(format!(
                 "WhatsApp recipient {recipient} is not in WHATSAPP_ALLOWED_NUMBERS"
@@ -466,7 +465,10 @@ impl WhatsAppChannel {
             } else if looks_like_text_file(&file_name, &mime) {
                 let text = String::from_utf8_lossy(&bytes);
                 let text = if text.len() > 200_000 {
-                    format!("{}...(truncated)", text.chars().take(200_000).collect::<String>())
+                    format!(
+                        "{}...(truncated)",
+                        text.chars().take(200_000).collect::<String>()
+                    )
                 } else {
                     text.to_string()
                 };

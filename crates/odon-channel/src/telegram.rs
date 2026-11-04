@@ -161,12 +161,16 @@ impl TelegramRelay {
             .json(&body)
             .send()
             .await
-            .map_err(|e| OdonError::Channel(format!("Telegram {method} failed: {}", e.without_url())))?;
+            .map_err(|e| {
+                OdonError::Channel(format!("Telegram {method} failed: {}", e.without_url()))
+            })?;
         let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| OdonError::Channel(format!("Telegram {method} read failed: {}", e.without_url())))?;
+        let text = resp.text().await.map_err(|e| {
+            OdonError::Channel(format!(
+                "Telegram {method} read failed: {}",
+                e.without_url()
+            ))
+        })?;
         let val: Value = serde_json::from_str(&text).map_err(|e| {
             OdonError::Channel(format!(
                 "Telegram {method} returned invalid JSON: {e}: {text}"
@@ -431,7 +435,10 @@ impl TelegramRelay {
                     } else if looks_like_text_file(file_name, mime) {
                         let text = String::from_utf8_lossy(&bytes);
                         let text = if text.len() > 200_000 {
-                            format!("{}...(truncated)", text.chars().take(200_000).collect::<String>())
+                            format!(
+                                "{}...(truncated)",
+                                text.chars().take(200_000).collect::<String>()
+                            )
                         } else {
                             text.to_string()
                         };
@@ -701,6 +708,9 @@ mod tests {
         let clean = scrub_urls(raw);
         assert!(!clean.contains("SECRET"), "token leaked: {clean}");
         assert!(!clean.contains("https://"), "url leaked: {clean}");
-        assert!(clean.contains("error sending request for url"), "lost the cause: {clean}");
+        assert!(
+            clean.contains("error sending request for url"),
+            "lost the cause: {clean}"
+        );
     }
 }

@@ -190,12 +190,10 @@ impl Tool for WorkspaceAddTool {
         }
         // Refuse filesystem roots and the user's home directory: registering
         // them as workspaces effectively disables path sandboxing.
-        let canonicalized = canonical
-            .canonicalize()
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: format!("Could not canonicalize {path}: {e}"),
-            })?;
+        let canonicalized = canonical.canonicalize().map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Could not canonicalize {path}: {e}"),
+        })?;
         if canonicalized.parent().is_none() {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),

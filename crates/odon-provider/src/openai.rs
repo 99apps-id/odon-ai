@@ -435,10 +435,8 @@ impl OpenAiCompatibleProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let err_body = crate::truncate_str_boundary(
-                &response.text().await.unwrap_or_default(),
-                2000,
-            );
+            let err_body =
+                crate::truncate_str_boundary(&response.text().await.unwrap_or_default(), 2000);
             return Err(OdonError::Provider {
                 provider: "github-copilot".to_string(),
                 message: format!(
@@ -608,10 +606,8 @@ impl OpenAiCompatibleProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let err_body = crate::truncate_str_boundary(
-                &response.text().await.unwrap_or_default(),
-                2000,
-            );
+            let err_body =
+                crate::truncate_str_boundary(&response.text().await.unwrap_or_default(), 2000);
             return Err(OdonError::Provider {
                 provider: self.provider_label.clone(),
                 message: format!(
@@ -985,10 +981,8 @@ impl ModelProvider for OpenAiCompatibleProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let err_body = crate::truncate_str_boundary(
-                &resp.text().await.unwrap_or_default(),
-                2000,
-            );
+            let err_body =
+                crate::truncate_str_boundary(&resp.text().await.unwrap_or_default(), 2000);
             let hint = match status.as_u16() {
                 401 | 403 => " Check the API key for this provider.",
                 404 => " Check the Base URL and model ID.",

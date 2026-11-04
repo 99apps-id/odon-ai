@@ -694,7 +694,10 @@ mod tests {
             uuid::Uuid::new_v4().simple()
         ));
         let engine = engine
-            .with_paths(tmp.join("approval-policies.json"), tmp.join("approval-audit.jsonl"))
+            .with_paths(
+                tmp.join("approval-policies.json"),
+                tmp.join("approval-audit.jsonl"),
+            )
             .with_events(tx);
 
         let waiter = {
@@ -752,7 +755,10 @@ mod tests {
             uuid::Uuid::new_v4().simple()
         ));
         let engine = engine
-            .with_paths(tmp.join("approval-policies.json"), tmp.join("approval-audit.jsonl"))
+            .with_paths(
+                tmp.join("approval-policies.json"),
+                tmp.join("approval-audit.jsonl"),
+            )
             .with_events(tx);
         (engine, rx)
     }

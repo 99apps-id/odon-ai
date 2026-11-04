@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -148,9 +149,7 @@ impl AgentRuntime {
                 0,
                 10_000,
             ))),
-            step_cap_explicit: AtomicBool::new(
-                std::env::var("ODON_MAX_TURN_ITERATIONS").is_ok(),
-            ),
+            step_cap_explicit: AtomicBool::new(std::env::var("ODON_MAX_TURN_ITERATIONS").is_ok()),
             context_budget_tokens: AtomicUsize::new(env_usize(
                 "ODON_CONTEXT_BUDGET_TOKENS",
                 DEFAULT_CONTEXT_BUDGET_TOKENS,
@@ -273,10 +272,7 @@ impl AgentRuntime {
                 if m.category == "facts" {
                     memories_text.push_str(&format!("- {}\n", m.value));
                 } else {
-                    memories_text.push_str(&format!(
-                        "- [{}] {}: {}\n",
-                        m.category, m.key, m.value
-                    ));
+                    memories_text.push_str(&format!("- [{}] {}: {}\n", m.category, m.key, m.value));
                 }
             }
         }
@@ -581,8 +577,45 @@ impl AgentRuntime {
         let mut current_iteration = 0;
         let mut hit_step_cap = false;
 
+        // A step cap bounds the count, never the clock: a model that keeps
+        // retrying a tool it believes is failing looks perfectly healthy at
+        // every step, so with the OAuth cap at 10_000 one wedged turn spins
+        // for hours and the operator sees a hang. Bound the wall clock too.
+        let turn_budget = std::env::var("ODON_TURN_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(1800);
+        let turn_budget = (turn_budget > 0).then(|| Duration::from_secs(turn_budget));
+        let turn_started = Instant::now();
+
+        // Identical calls carry no new information: the model already saw that
+        // answer. Left unbounded it retries the same search or read forever,
+        // which is the usual shape of a "stuck" turn.
+        const MAX_IDENTICAL_CALLS: u32 = 3;
+        // A stubborn model can answer a blocked repeat with the same call
+        // again. Past this many blocked repeats the turn is not progressing,
+        // so end it with an explicit reason instead of burning the step cap.
+        const MAX_BLOCKED_REPEATS: u32 = 6;
+        let mut blocked_repeats: u32 = 0;
+        let mut repeat_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+
         // 5. Multi-Step Agentic Loop (ReAct / Tool-Use Loop)
         while current_iteration < max_turn_iterations {
+            if let Some(budget) = turn_budget {
+                if turn_started.elapsed() > budget {
+                    let message = format!(
+                        "turn exceeded its {}s budget after {} step(s); raise ODON_TURN_TIMEOUT_SECS for a longer run",
+                        budget.as_secs(),
+                        current_iteration
+                    );
+                    let _ = self.event_tx.send(AgentEvent::StateChanged {
+                        session_id: session_id.to_string(),
+                        state: AgentState::Failed,
+                    });
+                    return Err(OdonError::Internal(message));
+                }
+            }
             current_iteration += 1;
 
             if cancellation.is_cancelled() {
@@ -826,12 +859,37 @@ impl AgentRuntime {
                     // arguments: surface the parse failure to the model as a
                     // tool error instead of executing with empty defaults.
                     match serde_json::from_str::<serde_json::Value>(&tool_call.arguments) {
-                        Ok(args_val) => pending.push(PendingCall {
-                            index: idx,
-                            call_id,
-                            name: tool_call.name.clone(),
-                            args: args_val,
-                        }),
+                        Ok(args_val) => {
+                            let signature =
+                                format!("{}\u{0}{}", tool_call.name, tool_call.arguments);
+                            let seen = repeat_counts
+                                .entry(signature)
+                                .and_modify(|count| *count += 1)
+                                .or_insert(1);
+                            if *seen > MAX_IDENTICAL_CALLS {
+                                blocked_repeats += 1;
+                                executed.push(ExecutedCall {
+                                    index: idx,
+                                    call_id,
+                                    name: tool_call.name.clone(),
+                                    args: args_val,
+                                    output: serde_json::json!({
+                                        "error": format!(
+                                            "this exact call was already made {} times with an identical result; it will not be run again. Change the arguments, use a different tool, or answer with what is already known.",
+                                            MAX_IDENTICAL_CALLS
+                                        )
+                                    }),
+                                    is_error: true,
+                                });
+                            } else {
+                                pending.push(PendingCall {
+                                    index: idx,
+                                    call_id,
+                                    name: tool_call.name.clone(),
+                                    args: args_val,
+                                });
+                            }
+                        }
                         Err(e) => executed.push(ExecutedCall {
                             index: idx,
                             call_id,
@@ -1066,6 +1124,20 @@ impl AgentRuntime {
                 session_id: session_id.to_string(),
                 state: AgentState::Thinking,
             });
+
+            // A model that keeps repeating a blocked call is not progressing.
+            // End the turn with a reason instead of spinning to the step cap.
+            if blocked_repeats >= MAX_BLOCKED_REPEATS {
+                let message = format!(
+                    "turn ended after {} repeated identical tool calls made no progress; change the query or tool instead of retrying the same call",
+                    blocked_repeats
+                );
+                let _ = self.event_tx.send(AgentEvent::StateChanged {
+                    session_id: session_id.to_string(),
+                    state: AgentState::Failed,
+                });
+                return Err(OdonError::Internal(message));
+            }
         }
 
         // 6. Persist Assistant Final Message. A turn that hit the step
