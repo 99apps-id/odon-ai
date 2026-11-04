@@ -318,14 +318,9 @@ impl SseMcpClient {
             message: format!("Invalid MCP SSE URL '{url}': {error}"),
         })?;
         let base = net_guard::validate_url(base.as_str()).await?;
-        let http = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(
-                base.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let http = base.client(reqwest::Client::builder())?;
         let response = http
-            .get(base.clone())
+            .get(base.as_str())
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .send()
             .await
@@ -357,10 +352,13 @@ impl SseMcpClient {
                     });
                 };
                 if event == "endpoint" && !data.trim().is_empty() {
-                    let resolved = base.join(data.trim()).map_err(|error| OdonError::Tool {
-                        tool: "mcp".to_string(),
-                        message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
-                    })?;
+                    let resolved =
+                        base.url()
+                            .join(data.trim())
+                            .map_err(|error| OdonError::Tool {
+                                tool: "mcp".to_string(),
+                                message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
+                            })?;
                     return Ok(resolved.to_string());
                 }
             }

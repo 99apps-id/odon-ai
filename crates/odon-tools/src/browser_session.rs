@@ -227,9 +227,7 @@ pub(crate) async fn cdp(id: &str, method: &str, params: Value) -> Result<Value> 
             .map_err(|e| err(e.to_string()))?;
         let text = match m {
             tokio_tungstenite::tungstenite::Message::Text(x) => x,
-            tokio_tungstenite::tungstenite::Message::Close(_) => {
-                return Err(err("CDP closed"))
-            }
+            tokio_tungstenite::tungstenite::Message::Close(_) => return Err(err("CDP closed")),
             _ => continue,
         };
         let frame: Value = serde_json::from_str(&text).map_err(|e| err(e.to_string()))?;
@@ -379,8 +377,16 @@ pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(
             "--remote-debugging-address=127.0.0.1",
             &format!("--remote-debugging-port={p}"),
             &format!("--user-data-dir={}", root.display()),
-            url,
         ]);
+        // Pin the validated address for the landing page. Chromium has its own
+        // resolver, so an un-pinned launch would re-resolve the hostname after
+        // the guard already approved a different answer.
+        if let Ok(target) = crate::net_guard::validate_url_allow_loopback(url).await {
+            if let Some(rules) = crate::net_guard::host_resolver_rules(&target, false) {
+                c.arg(format!("--host-resolver-rules={rules}"));
+            }
+        }
+        c.arg(url);
         let mut child = match c.spawn() {
             Ok(child) => child,
             Err(e) => {

@@ -8,12 +8,28 @@ use tracing::info;
 use crate::net_guard;
 use crate::registry::{Tool, ToolContext};
 
+/// Browser-like user agent shared by the tools that fetch web pages. Some
+/// sites answer 403 to anything else.
+const WEB_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+/// Fetch a URL through a client pinned to the addresses `validate_url` just
+/// approved, so a second resolution cannot land somewhere else.
+async fn fetch_pinned(url: &str) -> Option<reqwest::Response> {
+    let target = net_guard::validate_url(url).await.ok()?;
+    let client = target.client(reqwest::Client::builder()).ok()?;
+    client.get(target.as_str()).send().await.ok()
+}
+
 /// DoH (DNS-over-HTTPS) resolver to bypass ISP blocking/DNS poisoning (e.g. DDG blocking in ID).
-pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-        .ok()?;
+///
+/// Returns the first answer, or `None` when no resolver could be reached. The
+/// answer is not trusted on its own: callers feed it through
+/// [`net_guard::ValidatedTarget::with_addrs`], which applies the same policy as
+/// a system-resolver answer and pins it before any request uses it.
+pub async fn doh_resolve_host(host: &str) -> Result<Option<IpAddr>> {
+    let client = net_guard::build_client(
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)),
+    )?;
 
     // 1. Try Cloudflare DoH (JSON API)
     let cf_url = format!(
@@ -32,7 +48,7 @@ pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
                     for ans in answers {
                         if let Some(ip_str) = ans.get("data").and_then(|d| d.as_str()) {
                             if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                                return Some(ip);
+                                return Ok(Some(ip));
                             }
                         }
                     }
@@ -58,7 +74,7 @@ pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
                     for ans in answers {
                         if let Some(ip_str) = ans.get("data").and_then(|d| d.as_str()) {
                             if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                                return Some(ip);
+                                return Ok(Some(ip));
                             }
                         }
                     }
@@ -67,7 +83,7 @@ pub async fn doh_resolve_host(host: &str) -> Option<IpAddr> {
         }
     }
 
-    None
+    Ok(None)
 }
 
 fn decode_ddg_url(raw: &str) -> String {
@@ -153,26 +169,32 @@ impl Tool for WebSearchTool {
 
         info!("Executing web search for: {}", query);
 
-        // 1. Attempt DuckDuckGo HTML using DoH resolved IP to bypass ISP blocking
-        let ddg_ip = doh_resolve_host("html.duckduckgo.com").await;
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36");
-
-        if let Some(ip) = ddg_ip {
-            client_builder =
-                client_builder.resolve("html.duckduckgo.com", SocketAddr::new(ip, 443));
-        }
-        let client = client_builder
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
-        let url = format!(
+        // 1. DuckDuckGo HTML. Several ISPs answer NXDOMAIN for it, so the host
+        // is resolved through DoH first; both answers face the same policy and
+        // the winner is pinned into the client, so "validate here, resolve
+        // again there" never happens.
+        let ddg_url = format!(
             "https://html.duckduckgo.com/html/?q={}",
             urlencoding::encode(query)
         );
-        let resp = client
-            .get(&url)
+        let ddg_target = net_guard::validate_url(&ddg_url).await?;
+        let ddg_target = match doh_resolve_host("html.duckduckgo.com").await? {
+            Some(ip) => match ddg_target.with_addrs(vec![SocketAddr::new(ip, 443)]) {
+                Ok(pinned) => pinned,
+                // A DoH answer the policy rejects is not an error: the system
+                // answer already passed validation and stays pinned.
+                Err(_) => ddg_target,
+            },
+            None => ddg_target,
+        };
+        let ddg_client = ddg_target.client(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .user_agent(WEB_USER_AGENT),
+        )?;
+
+        let resp = ddg_client
+            .get(ddg_target.as_str())
             .header(
                 "Accept",
                 "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -228,7 +250,7 @@ impl Tool for WebSearchTool {
                 urlencoding::encode(query),
                 limit
             );
-            if let Ok(wiki_res) = client.get(&wiki_url).send().await {
+            if let Some(wiki_res) = fetch_pinned(&wiki_url).await {
                 if let Ok(val) = wiki_res.json::<Value>().await {
                     if let Some(arr) = val.as_array() {
                         if arr.len() >= 4 {
@@ -258,14 +280,17 @@ impl Tool for WebSearchTool {
             }
         }
 
-        // 3. Fallback to HackerNews Algolia API
-        if results.is_empty() {
+        // 3. Fallback to HackerNews Algolia API, but only for technical
+        // queries. HN is a developer forum: for a weather, address or phone
+        // lookup it returns unrelated stories, which reads to the model as
+        // "search is broken" instead of "this source has nothing".
+        if results.is_empty() && looks_technical(query) {
             let hn_url = format!(
                 "https://hn.algolia.com/api/v1/search?query={}&tags=story&hitsPerPage={}",
                 urlencoding::encode(query),
                 limit
             );
-            if let Ok(hn_res) = client.get(&hn_url).send().await {
+            if let Some(hn_res) = fetch_pinned(&hn_url).await {
                 if let Ok(val) = hn_res.json::<Value>().await {
                     if let Some(hits) = val.get("hits").and_then(|h| h.as_array()) {
                         for hit in hits {
@@ -287,12 +312,55 @@ impl Tool for WebSearchTool {
             }
         }
 
-        Ok(json!({
+        let mut payload = json!({
             "query": query,
             "results_count": results.len(),
             "results": results
-        }))
+        });
+        if payload["results_count"] == json!(0) {
+            payload["note"] = json!(concat!(
+                "no result from DuckDuckGo, Wikipedia or HackerNews. ",
+                "This source set has no general web index; for a live value ",
+                "such as weather, a place or a phone number, fetch a site that ",
+                "publishes it with web_fetch instead of repeating the search."
+            ));
+        }
+        Ok(payload)
     }
+}
+
+/// A query is treated as technical only when it carries a programming or
+/// infrastructure token. Everything else gets the honest "no results" note
+/// rather than forum noise.
+fn looks_technical(query: &str) -> bool {
+    const MARKERS: [&str; 24] = [
+        "rust",
+        "python",
+        "javascript",
+        "typescript",
+        "golang",
+        "java",
+        "docker",
+        "kubernetes",
+        "linux",
+        "sql",
+        "regex",
+        "api",
+        "npm",
+        "cargo",
+        "git",
+        "http",
+        "json",
+        "async",
+        "compiler",
+        "kernel",
+        "database",
+        "server",
+        "framework",
+        "library",
+    ];
+    let lower = query.to_lowercase();
+    MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
 pub struct WebFetchTool;
@@ -328,13 +396,11 @@ impl Tool for WebFetchTool {
 
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
-        let host = validated.host_str().unwrap_or("").to_string();
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(12))
-            .redirect(net_guard::redirect_policy(host.clone()))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated.client(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(12))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"),
+        )?;
 
         let resp_res = client.get(url_str).send().await;
 
@@ -346,24 +412,21 @@ impl Tool for WebFetchTool {
                 if let Some(u) = parsed_url {
                     if let Some(host) = u.host_str() {
                         let port = u.port().unwrap_or(if u.scheme() == "https" { 443 } else { 80 });
-                        if let Some(ip) = doh_resolve_host(host).await {
+                        if let Some(ip) = doh_resolve_host(host).await? {
                             if !net_guard::allow_private_network() && net_guard::is_blocked_ip(ip) {
                                 return Err(OdonError::Tool {
                                     tool: self.name().to_string(),
                                     message: format!("DoH resolved {host} to a private address ({ip}); request blocked"),
                                 });
                             }
-                            if let Ok(doh_client) = reqwest::Client::builder()
-                                .timeout(std::time::Duration::from_secs(12))
-                                .redirect(net_guard::redirect_policy(host.to_string()))
-                                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
-                                .resolve(host, SocketAddr::new(ip, port))
-                                .build()
-                            {
-                                doh_client.get(url_str).send().await
-                            } else {
-                                Err(e)
-                            }
+                            let doh_target = validated
+                                .with_addrs(vec![SocketAddr::new(ip, port)])?;
+                            let doh_client = doh_target.client(
+                                reqwest::Client::builder()
+                                    .timeout(std::time::Duration::from_secs(12))
+                                    .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"),
+                            )?;
+                            doh_client.get(url_str).send().await
                         } else {
                             Err(e)
                         }
@@ -446,13 +509,8 @@ impl Tool for ProbeUrlTool {
 
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(6))
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated
+            .client(reqwest::Client::builder().timeout(std::time::Duration::from_secs(6)))?;
 
         let start = std::time::Instant::now();
         let resp = client
@@ -543,13 +601,8 @@ impl Tool for HttpPostTool {
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated
+            .client(reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)))?;
 
         let resp = client
             .post(url_str)
@@ -659,13 +712,7 @@ impl Tool for PortScanTool {
         // Reuse the SSRF/network policy so port_scan cannot probe localhost,
         // metadata endpoints, or private networks unless explicitly allowed.
         let validated = crate::net_guard::validate_url(&format!("https://{host}")).await?;
-        let host = validated
-            .host_str()
-            .ok_or_else(|| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Port scan target has no host".to_string(),
-            })?
-            .to_string();
+        let host = validated.host().to_string();
 
         let default_ports = vec![json!(22), json!(80), json!(443), json!(3000), json!(8080)];
         let ports_arr = args
@@ -696,16 +743,24 @@ impl Tool for PortScanTool {
             });
         }
 
+        let resolved_ips = validated.ip_addrs();
         let mut results = Vec::new();
         for port in ports {
-            let target = format!("{}:{}", host, port);
-            let is_open = tokio::time::timeout(
-                std::time::Duration::from_millis(1500),
-                tokio::net::TcpStream::connect(&target),
-            )
-            .await
-            .map(|r| r.is_ok())
-            .unwrap_or(false);
+            let mut is_open = false;
+            for ip in &resolved_ips {
+                let target = SocketAddr::new(*ip, port);
+                if tokio::time::timeout(
+                    std::time::Duration::from_millis(1500),
+                    tokio::net::TcpStream::connect(target),
+                )
+                .await
+                .map(|result| result.is_ok())
+                .unwrap_or(false)
+                {
+                    is_open = true;
+                    break;
+                }
+            }
 
             results.push(json!({
                 "port": port,
@@ -878,16 +933,17 @@ impl Tool for BrowserScreenshotTool {
             };
 
             if let Some(b) = bin {
-                let status = tokio::process::Command::new(b)
-                    .args([
-                        "--headless",
-                        "--disable-gpu",
-                        &format!("--screenshot={}", out_path),
-                        "--window-size=1280,800",
-                        url_str,
-                    ])
-                    .status()
-                    .await;
+                let mut launch = tokio::process::Command::new(b);
+                launch.args([
+                    "--headless",
+                    "--disable-gpu",
+                    &format!("--screenshot={}", out_path),
+                    "--window-size=1280,800",
+                ]);
+                if let Some(rules) = net_guard::host_resolver_rules(&validated, true) {
+                    launch.arg(format!("--host-resolver-rules={rules}"));
+                }
+                let status = launch.arg(url_str).status().await;
                 if let Ok(st) = status {
                     if st.success() {
                         return Ok(json!({
@@ -959,8 +1015,11 @@ impl Tool for BrowserClickTool {
             "--no-first-run",
             &format!("--remote-debugging-port={}", port),
             "--window-size=1280,800",
-            url_str,
         ]);
+        if let Some(rules) = net_guard::host_resolver_rules(&validated, true) {
+            cmd.arg(format!("--host-resolver-rules={rules}"));
+        }
+        cmd.arg(url_str);
         let mut child = cmd.spawn().map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("Failed to launch browser: {e}"),
@@ -1208,8 +1267,11 @@ impl Tool for BrowserDownloadTool {
             "--no-first-run",
             &format!("--remote-debugging-port={}", port),
             "--window-size=1280,800",
-            url_str,
         ]);
+        if let Some(rules) = net_guard::host_resolver_rules(&validated, true) {
+            cmd.arg(format!("--host-resolver-rules={rules}"));
+        }
+        cmd.arg(url_str);
         let mut child = cmd.spawn().map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("Failed to launch browser: {e}"),
@@ -1340,5 +1402,25 @@ impl Tool for BrowserDownloadTool {
 pub(crate) mod urlencoding {
     pub fn encode(s: &str) -> String {
         url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn technical_queries_reach_the_forum_fallback() {
+        assert!(looks_technical("rust async trait bound"));
+        assert!(looks_technical("docker compose port mapping"));
+        assert!(looks_technical("SQL join optimization"));
+    }
+
+    #[test]
+    fn everyday_lookups_do_not_reach_the_forum_fallback() {
+        assert!(!looks_technical("jakarta weather today"));
+        assert!(!looks_technical("alamat kantor pos bandung"));
+        assert!(!looks_technical("nomor telepon hotel surabaya"));
+        assert!(!looks_technical("harga emas hari ini"));
     }
 }

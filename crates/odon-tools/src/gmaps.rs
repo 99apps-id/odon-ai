@@ -153,6 +153,7 @@ fn collect_leads(body: &str) -> Collected {
     out
 }
 
+#[cfg(test)]
 fn host_of(url: &str) -> Option<String> {
     let rest = url.split("://").nth(1)?;
     let authority = rest.split('/').next()?;
@@ -227,23 +228,8 @@ impl Tool for GmapsSearchTool {
         let depth = args.get("depth").and_then(Value::as_u64);
         let job = build_job(keyword, &cities, depth)?;
 
-        let original_host = host_of(&config.endpoint)
-            .ok_or_else(|| tool_error("Engine URL has no host"))?;
-        if !net_guard::allow_private_network() {
-            if let Some(ip) = crate::web::doh_resolve_host(&original_host).await {
-                if net_guard::is_blocked_ip(ip) {
-                    return Err(tool_error(format!(
-                        "Engine host {original_host} resolves to a blocked address"
-                    )));
-                }
-            }
-        }
-
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .redirect(net_guard::redirect_policy(original_host.clone()))
-            .build()
-            .map_err(|error| tool_error(format!("Cannot build HTTP client: {error}")))?;
+        let target = net_guard::validate_url(&config.endpoint).await?;
+        let client = target.client(reqwest::Client::builder().timeout(Duration::from_secs(120)))?;
 
         let body = json!({ "serial": config.serial, "job": job });
         let response = client
@@ -278,7 +264,7 @@ impl Tool for GmapsSearchTool {
         }
 
         Ok(json!({
-            "engine_host": original_host,
+            "engine_host": target.host(),
             "keyword": job["keyword"],
             "cities": job["cities"],
             "depth": job["depth"],
@@ -316,15 +302,26 @@ mod tests {
     fn job_trims_dedupes_and_clamps() {
         let job = build_job(
             "  kopi  ",
-            &[" Batam ".into(), "batam".into(), "a".into(), "Jakarta".into()],
+            &[
+                " Batam ".into(),
+                "batam".into(),
+                "a".into(),
+                "Jakarta".into(),
+            ],
             Some(9),
         )
         .unwrap();
         assert_eq!(job["keyword"], "kopi");
         assert_eq!(job["cities"], json!(["Batam", "Jakarta"]));
         assert_eq!(job["depth"], 5);
-        assert_eq!(build_job("kopi", &["Batam".into()], Some(0)).unwrap()["depth"], 1);
-        assert_eq!(build_job("kopi", &["Batam".into()], None).unwrap()["depth"], 2);
+        assert_eq!(
+            build_job("kopi", &["Batam".into()], Some(0)).unwrap()["depth"],
+            1
+        );
+        assert_eq!(
+            build_job("kopi", &["Batam".into()], None).unwrap()["depth"],
+            2
+        );
     }
 
     #[test]
@@ -369,8 +366,14 @@ mod tests {
 
     #[test]
     fn extracts_host_from_endpoint() {
-        assert_eq!(host_of("https://engine.test/api/engine/run").as_deref(), Some("engine.test"));
-        assert_eq!(host_of("http://127.0.0.1:8080/x").as_deref(), Some("127.0.0.1"));
+        assert_eq!(
+            host_of("https://engine.test/api/engine/run").as_deref(),
+            Some("engine.test")
+        );
+        assert_eq!(
+            host_of("http://127.0.0.1:8080/x").as_deref(),
+            Some("127.0.0.1")
+        );
         assert_eq!(host_of("not-a-url"), None);
     }
 }

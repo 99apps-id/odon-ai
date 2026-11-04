@@ -119,7 +119,11 @@ pub async fn page_state(id: &str) -> Result<Value> {
     require_live(id).await?;
     let url = evaluate_js(id, "location.href").await?;
     let title = evaluate_js(id, "document.title").await?;
-    let text = evaluate_js(id, "document.body ? document.body.innerText.slice(0, 20000) : ''").await?;
+    let text = evaluate_js(
+        id,
+        "document.body ? document.body.innerText.slice(0, 20000) : ''",
+    )
+    .await?;
     let links = evaluate_js(
         id,
         "(Array.from(document.querySelectorAll('a[href]')).slice(0,200).map(a=>a.href))",
@@ -255,7 +259,11 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
-        assert!(png.starts_with("iVBORw0KGgo"), "expected PNG data, got {} bytes", png.len());
+        assert!(
+            png.starts_with("iVBORw0KGgo"),
+            "expected PNG data, got {} bytes",
+            png.len()
+        );
 
         close(&meta.session_id).await.unwrap();
         let after = list_sessions(&root_s).await.unwrap();
@@ -312,10 +320,21 @@ mod tests {
     async fn unknown_session_is_rejected() {
         let root = workspace();
         let err = screenshot("session_does_not_exist").await.unwrap_err();
-        assert!(err.to_string().contains("not live"), "unexpected error: {err}");
-        let bad = navigate(&root.display().to_string(), "../etc", "https://example.com", 5_000)
-            .await
-            .unwrap_err();
-        assert!(bad.to_string().contains("session_id"), "unexpected error: {bad}");
+        assert!(
+            err.to_string().contains("not live"),
+            "unexpected error: {err}"
+        );
+        let bad = navigate(
+            &root.display().to_string(),
+            "../etc",
+            "https://example.com",
+            5_000,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            bad.to_string().contains("session_id"),
+            "unexpected error: {bad}"
+        );
     }
 }

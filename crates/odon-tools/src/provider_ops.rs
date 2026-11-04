@@ -118,25 +118,17 @@ impl Tool for ProviderTestTool {
         };
         let validated = crate::net_guard::validate_url(&endpoint).await?;
         let started = std::time::Instant::now();
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .redirect(crate::net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: e.to_string(),
-            })?;
+        let client =
+            validated.client(reqwest::Client::builder().timeout(Duration::from_secs(30)))?;
         let mut request = if model.is_some() {
-            client.post(validated.clone()).json(&json!({
+            client.post(validated.as_str()).json(&json!({
                 "model": model,
                 "messages": [{ "role": "user", "content": "ping" }],
                 "max_tokens": 1,
                 "stream": false
             }))
         } else {
-            client.get(validated.clone())
+            client.get(validated.as_str())
         };
         if !config.api_key.trim().is_empty() {
             request = request.bearer_auth(config.api_key.trim());

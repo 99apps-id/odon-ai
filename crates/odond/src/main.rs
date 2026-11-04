@@ -17,7 +17,6 @@ use axum::{
 };
 use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
 use clap::{Parser, Subcommand};
-use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use ring::rand::SecureRandom;
@@ -2034,6 +2033,10 @@ struct AppState {
     relay_tx: tokio::sync::mpsc::Sender<IncomingChannelMessage>,
     workspaces: Arc<tokio::sync::RwLock<WorkspaceConfig>>,
     api_token: Option<String>,
+    /// Ephemeral per-session token minted for a loopback bind that had no
+    /// `ODON_API_TOKEN`. `Some` means it may be handed to a same-origin or
+    /// first-party caller; it is never set for an operator-supplied token.
+    session_token: Option<String>,
     active_turns: Arc<tokio::sync::RwLock<HashMap<String, TurnHandle>>>,
     relay_sessions: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
     relay_model: Arc<tokio::sync::RwLock<Option<String>>>,
@@ -2137,11 +2140,11 @@ async fn main() -> anyhow::Result<()> {
 
             // 2. Event Bus (created first so approvals can publish on it)
             // Headroom for a burst of token/tool events. A web search or fetch result
-    // can make the UI stall while it parses and renders, and a 512-slot ring
-    // overflowed during that window: the SSE subscriber lagged and the events
-    // it missed could include the turn's terminal event, leaving the UI stuck
-    // in "running" with a healthy backend.
-    let (event_tx, _event_rx) = create_event_bus(8192);
+            // can make the UI stall while it parses and renders, and a 512-slot ring
+            // overflowed during that window: the SSE subscriber lagged and the events
+            // it missed could include the turn's terminal event, leaving the UI stuck
+            // in "running" with a healthy backend.
+            let (event_tx, _event_rx) = create_event_bus(8192);
 
             // 3. Security & Policy
             let policy = SecurityPolicy::default();
@@ -2167,7 +2170,7 @@ async fn main() -> anyhow::Result<()> {
             // 7. Initialize Real Providers (Host Discovery, BYOK DB, Env Vars)
             init_providers(&runtime, &storage, &oauth_accounts).await;
 
-            let api_token = std::env::var("ODON_API_TOKEN")
+            let configured_token = std::env::var("ODON_API_TOKEN")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
@@ -2179,10 +2182,27 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or(bind.as_str())
             };
             let is_loopback = matches!(bind_host, "127.0.0.1" | "localhost" | "::1");
-            if !is_loopback && api_token.is_none() {
+            if !is_loopback && configured_token.is_none() {
                 return Err(anyhow::anyhow!(
                     "Refusing to bind {bind} without ODON_API_TOKEN. Set ODON_API_TOKEN to protect a network-exposed daemon, or bind 127.0.0.1."
                 ));
+            }
+            // Only a loopback bind may fall back to a minted token, and only
+            // after the refusal above, so a network-exposed daemon can never
+            // end up with an ephemeral secret.
+            let (api_token, ephemeral_session_token) =
+                mint_loopback_session_token(is_loopback, configured_token);
+            if ephemeral_session_token {
+                // Hand the value to the bundled desktop UI through an
+                // owner-only file; the token itself is never logged.
+                if let Some(token) = api_token.as_deref() {
+                    match write_loopback_token_file(token) {
+                        Ok(path) => eprintln!("Loopback API token file: {}", path.display()),
+                        Err(error) => {
+                            eprintln!("Could not write the loopback API token file: {error}")
+                        }
+                    }
+                }
             }
             if api_token.is_some() {
                 println!("✔ API token authentication enabled");
@@ -2353,6 +2373,11 @@ async fn main() -> anyhow::Result<()> {
                 relay_tx,
                 workspaces: Arc::new(tokio::sync::RwLock::new(workspace_config)),
                 api_token: api_token.clone(),
+                session_token: if ephemeral_session_token {
+                    api_token.clone()
+                } else {
+                    None
+                },
                 active_turns: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 relay_sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 relay_model: Arc::new(tokio::sync::RwLock::new(
@@ -2416,32 +2441,15 @@ async fn main() -> anyhow::Result<()> {
             // anything explicitly opted in via ODON_ALLOWED_ORIGINS — never
             // arbitrary localhost ports, which would let any local web page
             // drive the daemon API.
-            let allowed_origins: Vec<String> = std::env::var("ODON_ALLOWED_ORIGINS")
-                .ok()
-                .map(|value| {
-                    value
-                        .split(',')
-                        .map(|item| item.trim().to_ascii_lowercase())
-                        .filter(|item| !item.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
+            let allowed_origins = allowed_origins_from_env();
             let cors = CorsLayer::new()
                 .allow_origin(AllowOrigin::predicate(move |origin, _| {
                     let Ok(value) = origin.to_str() else {
                         return false;
                     };
                     let lower = value.to_ascii_lowercase();
-                    let local = matches!(
-                        lower.as_str(),
-                        "tauri://localhost"
-                            | "https://tauri.localhost"
-                            | "http://tauri.localhost"
-                            | "http://localhost:3000"
-                            | "http://127.0.0.1:3000"
-                            | "http://[::1]:3000"
-                    );
-                    local || allowed_origins.iter().any(|allowed| allowed == &lower)
+                    is_first_party_origin(&lower)
+                        || allowed_origins.iter().any(|allowed| allowed == &lower)
                 }))
                 .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
                 .allow_headers([
@@ -2469,6 +2477,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/sessions/{id}/steer", post(steer_turn))
                 .route("/api/sessions/{id}/workspace", post(set_session_workspace))
                 .route("/api/sessions/{id}/artifacts", get(list_session_artifacts))
+                .route("/api/sessions/{id}/todos", get(get_session_todos))
                 .route(
                     "/api/workspaces",
                     get(list_workspaces)
@@ -2538,7 +2547,10 @@ async fn main() -> anyhow::Result<()> {
                     "/api/browser/sessions/{id}/navigate",
                     post(browser_session_navigate),
                 )
-                .route("/api/browser/sessions/{id}/state", get(browser_session_state))
+                .route(
+                    "/api/browser/sessions/{id}/state",
+                    get(browser_session_state),
+                )
                 .route(
                     "/api/browser/sessions/{id}/screenshot",
                     get(browser_session_screenshot),
@@ -2662,41 +2674,396 @@ async fn main() -> anyhow::Result<()> {
 // REST & SSE HANDLERS
 // ─────────────────────────────────────────────────────────────
 
-/// Optional bearer-token protection for the HTTP API. Enabled by setting
-/// `ODON_API_TOKEN`; the WhatsApp webhook is exempt because it has its own
-/// verify-token/signature checks. SSE and the terminal WebSocket may pass the
-/// token as a `?token=` query parameter because browsers cannot set headers on
-/// those transports.
+// Origin gate ---------------------------------------------------------------
+//
+// Loopback binding is not access control: any web page the user visits can
+// reach http://127.0.0.1:4096 and the browser attaches that page's Origin to
+// the request. Origin is therefore the real boundary for local-api hijacking:
+// requests with no Origin (native clients, relays, curl) pass, first-party and
+// same-origin requests pass, everything else is rejected. This gate is also
+// what stops a hostile page from opening a PTY through the terminal WebSocket.
+
+/// First-party origins ODON itself ships: the Tauri shell and the Vite dev
+/// server. Compared after trimming, dropping a trailing slash and lowercasing.
+fn is_first_party_origin(origin: &str) -> bool {
+    let normalized = origin.trim().trim_end_matches('/').to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "tauri://localhost"
+            | "https://tauri.localhost"
+            | "http://tauri.localhost"
+            | "http://localhost:3000"
+            | "http://127.0.0.1:3000"
+            | "http://[::1]:3000"
+    )
+}
+
+/// Host portion of an `authority` (`host[:port]`), borrowed from the input.
+/// IPv6 literals keep their brackets (`[::1]:3000` -> `[::1]`).
+fn authority_host(authority: &str) -> &str {
+    if authority.starts_with('[') {
+        return match authority.find(']') {
+            Some(end) => &authority[..=end],
+            None => authority,
+        };
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') && port.chars().all(|c| c.is_ascii_digit()) => {
+            host
+        }
+        _ => authority,
+    }
+}
+
+/// Explicit port of an `authority`, or `None` when it carries none.
+fn authority_port(authority: &str) -> Option<u16> {
+    if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        return authority[end + 1..].strip_prefix(':')?.parse().ok();
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => port.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Default port for a URL scheme; 0 when the scheme has none or is unknown.
+fn default_port(scheme: &str) -> u16 {
+    match scheme {
+        "https" => 443,
+        "http" => 80,
+        _ => 0,
+    }
+}
+
+/// Any spelling of the loopback interface.
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// Reads `ODON_ALLOWED_ORIGINS` as a list of lowercased origin strings.
+fn allowed_origins_from_env() -> Vec<String> {
+    std::env::var("ODON_ALLOWED_ORIGINS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(|item| item.trim().to_ascii_lowercase())
+                .filter(|item| !item.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Decides whether a request may drive the API, based on its `Origin`.
+///
+/// `host` is the request's `Host` header, i.e. the authority the browser
+/// actually reached. Allowed: callers that send no Origin (native clients and
+/// relays), ODON's own desktop origins, origins opted in through
+/// `ODON_ALLOWED_ORIGINS`, and requests whose Origin host is the daemon's own
+/// host including every loopback spelling. An opaque `null` origin is always
+/// rejected, because that is what sandboxed and `data:` pages send.
+fn origin_is_trusted(origin: Option<&str>, host: Option<&str>, extra: &[String]) -> bool {
+    let Some(raw_origin) = origin else {
+        return true;
+    };
+    let trimmed = raw_origin.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let normalized = trimmed.trim_end_matches('/').to_ascii_lowercase();
+    if normalized == "null" {
+        return false;
+    }
+    if is_first_party_origin(&normalized) {
+        return true;
+    }
+    if extra.iter().any(|allowed| allowed == &normalized) {
+        return true;
+    }
+    let Some(bound) = host
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    let Some((scheme, rest)) = normalized.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return false;
+    }
+    if authority == bound {
+        return true;
+    }
+    let origin_host = authority_host(authority);
+    let bound_host = authority_host(&bound);
+    if origin_host.is_empty() || bound_host.is_empty() {
+        return false;
+    }
+    if is_loopback_host(origin_host) && is_loopback_host(bound_host) {
+        return true;
+    }
+    if origin_host == bound_host {
+        let default = default_port(scheme);
+        return match authority_port(authority) {
+            Some(port) => default != 0 && port == default,
+            None => default != 0,
+        };
+    }
+    false
+}
+
+/// Constant-time string comparison so token guesses cannot use timing oracles.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Chooses the token the HTTP API will require.
+///
+/// An operator-supplied `ODON_API_TOKEN` always wins and is persistent: it is
+/// never exposed through the API. A loopback bind without one mints a
+/// per-session token instead, so a local install works out of the box without
+/// a secret the user has to copy around. Any other bind gets no token, because
+/// the caller refuses to start in that case.
+///
+/// Returns the token to enforce and whether it was generated here (ephemeral).
+fn mint_loopback_session_token(
+    is_loopback: bool,
+    configured: Option<String>,
+) -> (Option<String>, bool) {
+    if let Some(token) = configured {
+        return (Some(token), false);
+    }
+    if !is_loopback {
+        return (None, false);
+    }
+    let token = format!("odon-{}", uuid::Uuid::new_v4().simple());
+    eprintln!("No ODON_API_TOKEN set: generated a per-session token for this loopback daemon.");
+    (Some(token), true)
+}
+
+/// Owner-only file that holds the per-session loopback token.
+fn loopback_token_path() -> PathBuf {
+    let base = std::env::var_os("ODON_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(".odon").join("api-token")
+}
+
+/// Writes the ephemeral session token to `loopback_token_path`, mode 0600 on
+/// Unix so no other local user can read it. Never logs the value.
+fn write_loopback_token_file(token: &str) -> std::io::Result<PathBuf> {
+    let path = loopback_token_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, token.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&path)?.permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(&path, permissions)?;
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    fn allow(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn requests_without_an_origin_are_allowed() {
+        // Native clients, relays and curl send no Origin at all.
+        assert!(origin_is_trusted(None, Some("127.0.0.1:4096"), &[]));
+        assert!(origin_is_trusted(Some("   "), Some("127.0.0.1:4096"), &[]));
+    }
+
+    #[test]
+    fn opaque_null_origin_is_rejected() {
+        assert!(!origin_is_trusted(
+            Some("null"),
+            Some("127.0.0.1:4096"),
+            &[]
+        ));
+    }
+
+    #[test]
+    fn first_party_origins_are_allowed() {
+        assert!(origin_is_trusted(Some("tauri://localhost"), None, &[]));
+        assert!(origin_is_trusted(
+            Some("https://tauri.localhost"),
+            None,
+            &[]
+        ));
+        assert!(origin_is_trusted(Some("http://localhost:3000"), None, &[]));
+    }
+
+    #[test]
+    fn same_host_origin_is_allowed() {
+        assert!(origin_is_trusted(
+            Some("http://127.0.0.1:4096"),
+            Some("127.0.0.1:4096"),
+            &[]
+        ));
+    }
+
+    #[test]
+    fn loopback_aliases_are_allowed() {
+        assert!(origin_is_trusted(
+            Some("http://localhost:4096"),
+            Some("127.0.0.1:4096"),
+            &[]
+        ));
+        assert!(origin_is_trusted(
+            Some("http://[::1]:4096"),
+            Some("localhost:4096"),
+            &[]
+        ));
+    }
+
+    #[test]
+    fn foreign_origin_is_rejected() {
+        assert!(!origin_is_trusted(
+            Some("https://evil.example"),
+            Some("127.0.0.1:4096"),
+            &[]
+        ));
+        assert!(!origin_is_trusted(Some("https://evil.example"), None, &[]));
+    }
+
+    #[test]
+    fn explicitly_allowed_origin_is_allowed() {
+        let extra = allow(&["https://app.example"]);
+        assert!(origin_is_trusted(
+            Some("https://app.example"),
+            Some("127.0.0.1:4096"),
+            &extra
+        ));
+    }
+
+    #[test]
+    fn authority_host_strips_ports_and_keeps_ipv6_brackets() {
+        assert_eq!(authority_host("127.0.0.1:4096"), "127.0.0.1");
+        assert_eq!(authority_host("localhost"), "localhost");
+        assert_eq!(authority_host("[::1]:3000"), "[::1]");
+        assert_eq!(authority_host("example.com:8443"), "example.com");
+    }
+}
+
+#[cfg(test)]
+mod terminal_env_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_children_never_inherit_daemon_secrets() {
+        for name in TERMINAL_ENVIRONMENT_ALLOWLIST {
+            let upper = name.to_ascii_uppercase();
+            assert!(!upper.starts_with("ODON_"), "{name} exposes daemon state");
+            for marker in ["TOKEN", "SECRET", "API_KEY", "PASSWORD", "CREDENTIAL"] {
+                assert!(!upper.contains(marker), "{name} looks like a secret");
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_children_still_get_a_usable_shell() {
+        // A cleared environment without PATH leaves the user in a shell where
+        // no command resolves, which is a silent functional break.
+        assert!(TERMINAL_ENVIRONMENT_ALLOWLIST.contains(&"PATH"));
+        assert!(TERMINAL_ENVIRONMENT_ALLOWLIST.contains(&"TERM"));
+    }
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+
+    #[test]
+    fn constant_time_eq_accepts_equal_tokens() {
+        assert!(constant_time_eq("odon-session", "odon-session"));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_different_lengths() {
+        assert!(!constant_time_eq("odon", "odon-session"));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_different_content() {
+        assert!(!constant_time_eq("odon-session", "odon-sessiox"));
+    }
+}
+
+/// Mandatory bearer-token protection for the HTTP API.
+///
+/// There is no fall-open mode: the daemon always starts with a token (the
+/// operator's `ODON_API_TOKEN`, or the per-session loopback token minted at
+/// startup), so an unauthenticated request is always rejected. The WhatsApp
+/// webhook routes are exempt because they run their own verify-token and
+/// signature checks, and `/api/health` is exempt so a client can discover that
+/// a token is required before it has one to send. SSE and the terminal
+/// WebSocket may pass the token as a `?token=` query parameter because
+/// browsers cannot set headers on those transports.
 async fn require_api_token(
     State(state): State<AppState>,
     req: Request,
     next: Next,
 ) -> axum::response::Response {
     let path = req.uri().path();
-    if !path.starts_with("/api/")
+    // Only these paths bypass the token check, and only because they either
+    // authenticate their caller by other means or must answer before a client
+    // can have a token. Everything else is token-gated, always.
+    let exempt = !path.starts_with("/api/")
         || path == "/api/relays/whatsapp"
         || path == "/api/relays/whatsapp/inbound"
-        || path == "/api/health"
-        || req.method() == Method::OPTIONS
-    {
+        || path == "/api/health";
+    // CORS preflight is unauthenticated by definition: the browser sends no
+    // credentials, so OPTIONS has to short-circuit before the token check.
+    let preflight = req.method() == Method::OPTIONS;
+    if exempt || preflight {
         return next.run(req).await;
     }
+
+    // Origin gate, applied to every request this middleware actually protects,
+    // i.e. right after the exempt early-return above. The WhatsApp relay routes
+    // never reach it (they are exempt), which is correct: Meta's servers call
+    // them with no Origin header at all.
+    let allowed_origins = allowed_origins_from_env();
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !origin_is_trusted(origin, host, &allowed_origins) {
+        return (StatusCode::FORBIDDEN, "Forbidden origin").into_response();
+    }
+
+    // No fall-open mode: startup always yields a token (operator-supplied or
+    // minted for loopback), so a missing token here is a bug and must deny.
     let Some(expected) = state.api_token.as_deref() else {
-        // Token authentication is optional; if ODON_API_TOKEN is not set, allow local requests.
-        return next.run(req).await;
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     };
 
-    // Constant-time comparison so token guesses cannot use timing oracles.
-    fn constant_time_eq(a: &str, b: &str) -> bool {
-        if a.len() != b.len() {
-            return false;
-        }
-        let mut diff = 0u8;
-        for (x, y) in a.bytes().zip(b.bytes()) {
-            diff |= x ^ y;
-        }
-        diff == 0
-    }
     let bearer_ok = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -2750,13 +3117,28 @@ async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Unauthenticated by design (see `require_api_token`): lets a client discover
-/// whether this daemon demands a token before it has one to send. Reports only
-/// a boolean, never the token itself.
-async fn get_health(State(state): State<AppState>) -> impl IntoResponse {
+/// whether this daemon demands a token before it has one to send. It reports
+/// whether a token is required and, for a same-origin or first-party caller
+/// only, the ephemeral loopback session token. That is what lets the bundled
+/// desktop UI adopt the token without a manual copy/paste: the value is never
+/// returned to an untrusted origin, and never for an operator-configured
+/// persistent token.
+async fn get_health(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    let session_token = state
+        .session_token
+        .as_deref()
+        .filter(|_| origin_is_trusted(origin, host, &allowed_origins_from_env()));
     Json(json!({
         "status": "online",
         "version": env!("CARGO_PKG_VERSION"),
         "auth_required": state.api_token.is_some(),
+        "session_token": session_token,
     }))
 }
 
@@ -3906,6 +4288,19 @@ async fn list_session_artifacts(
     }
 }
 
+async fn get_session_todos(
+    Path(session_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.storage.get_todos(&session_id) {
+        Ok(items) => (StatusCode::OK, Json(json!({ "items": items }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
 async fn get_artifact(Path(id): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
     match state.storage.get_artifact(&id) {
         Ok(artifact) => (StatusCode::OK, Json(json!(artifact))),
@@ -4302,6 +4697,7 @@ async fn execute_terminal(
     cmd.current_dir(&final_dir);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    sanitize_child_environment(&mut cmd);
 
     let execution =
         match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
@@ -4870,10 +5266,28 @@ struct TerminalWsQuery {
 }
 
 async fn ws_terminal_handler(
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
     axum::extract::Query(query): axum::extract::Query<TerminalWsQuery>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    // Origin is the real gate here: CORS does not apply to WebSocket
+    // handshakes, and the API token may ride in the query string, so a foreign
+    // page must be rejected before the upgrade - otherwise any web page could
+    // open a PTY on this machine.
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !origin_is_trusted(origin, host, &allowed_origins_from_env()) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Forbidden origin" })),
+        )
+            .into_response();
+    }
     // Interactive shells cannot be pre-approved per keystroke, so the upgrade
     // itself is the gate: confinement to the workspace and, on Unix, an
     // explicit shell allowlist. API-token middleware still applies first.
@@ -4904,6 +5318,58 @@ async fn ws_terminal_handler(
     ws.on_upgrade(move |socket| handle_terminal_socket(socket, workspace, query))
 }
 
+/// The only environment a terminal child inherits.
+///
+/// Everything else the daemon holds - `ODON_API_TOKEN`, provider API keys,
+/// relay and bridge tokens, database URLs - is withheld, because a shell can
+/// `printenv` whatever it was given and tool output can carry it back to the
+/// model. Interactive shells and one-shot commands share this list so the two
+/// spawn paths cannot drift apart.
+const TERMINAL_ENVIRONMENT_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SystemRoot",
+    "SystemDrive",
+    "ComSpec",
+    "PATHEXT",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "USERNAME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PSModulePath",
+];
+
+fn terminal_environment() -> impl Iterator<Item = (&'static str, std::ffi::OsString)> {
+    TERMINAL_ENVIRONMENT_ALLOWLIST
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (*name, value)))
+}
+
+fn sanitize_pty_environment(command: &mut CommandBuilder) {
+    command.env_clear();
+    for (name, value) in terminal_environment() {
+        command.env(name, value);
+    }
+}
+
+fn sanitize_child_environment(command: &mut tokio::process::Command) {
+    command.env_clear();
+    for (name, value) in terminal_environment() {
+        command.env(name, value);
+    }
+}
+
 async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: TerminalWsQuery) {
     let cols = query.cols.unwrap_or(100).max(10);
     let rows = query.rows.unwrap_or(28).max(5);
@@ -4927,7 +5393,7 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         }
     };
 
-    let cmd = if let Some(pid) = &query.ssh_profile_id {
+    let mut cmd = if let Some(pid) = &query.ssh_profile_id {
         let profiles = load_ssh_profiles();
         let profile = profiles
             .into_iter()
@@ -5004,6 +5470,7 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
         };
         c
     };
+    sanitize_pty_environment(&mut cmd);
 
     let mut child = match pair.slave.spawn_command(cmd) {
         Ok(ch) => ch,
@@ -5718,28 +6185,27 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
                 || host.starts_with("127.")
         })
         .unwrap_or(false);
-    let validated = if is_loopback {
-        parsed
+    let validation = if is_loopback {
+        odon_tools::net_guard::validate_url_allow_loopback(&query.url).await
     } else {
-        match odon_tools::net_guard::validate_url(&query.url).await {
-            Ok(url) => url,
-            Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": e.to_string() })),
-                )
-                    .into_response();
-            }
+        odon_tools::net_guard::validate_url(&query.url).await
+    };
+    let validated = match validation {
+        Ok(target) => target,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
         }
     };
 
-    let host = validated.host_str().unwrap_or_default().to_string();
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .redirect(odon_tools::net_guard::redirect_policy(host))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
-        .build()
-    {
+    let client = match validated.client(
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"),
+    ) {
         Ok(client) => client,
         Err(e) => {
             return (
@@ -5750,7 +6216,7 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
         }
     };
 
-    let resp = match client.get(validated.clone()).send().await {
+    let resp = match client.get(validated.as_str()).send().await {
         Ok(resp) => resp,
         Err(e) => {
             return (
@@ -5820,7 +6286,7 @@ async fn browser_read_page(Query(query): Query<BrowserReadQuery>) -> impl IntoRe
             let mut links = Vec::new();
             for caps in re.captures_iter(&body).take(100) {
                 if let Some(href) = caps.get(1) {
-                    if let Ok(url) = validated.join(href.as_str().trim()) {
+                    if let Ok(url) = validated.url().join(href.as_str().trim()) {
                         let link = url.to_string();
                         if !links.contains(&link) {
                             links.push(link);
@@ -5938,16 +6404,30 @@ async fn serve_file(
     }
 }
 
-async fn sse_events(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = std::result::Result<Event, Infallible>>> {
+async fn sse_events(headers: HeaderMap, State(state): State<AppState>) -> axum::response::Response {
+    // Origin is the real gate here: EventSource cannot set headers, so the
+    // token may arrive as a query parameter and a foreign page could otherwise
+    // subscribe to every event this daemon emits.
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !origin_is_trusted(origin, host, &allowed_origins_from_env()) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Forbidden origin" })),
+        )
+            .into_response();
+    }
     let mut rx = state.event_tx.subscribe();
     let stream = async_stream::stream! {
         loop {
             match rx.recv().await {
                 Ok(event) => {
                     if let Ok(data) = serde_json::to_string(&event) {
-                        yield Ok(Event::default().data(data));
+                        yield Ok::<Event, Infallible>(Event::default().data(data));
                     }
                 }
                 // A slow client missed events. Skipping silently used to hide the
@@ -5965,7 +6445,9 @@ async fn sse_events(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 async fn get_approval_history(State(state): State<AppState>) -> impl IntoResponse {
@@ -5987,7 +6469,9 @@ async fn delete_approval_policy(
 }
 
 /// Redact stdio-server env secrets before returning MCP configs to clients.
-fn redact_mcp_env(servers: Vec<odon_tools::mcp::McpServerConfig>) -> Vec<odon_tools::mcp::McpServerConfig> {
+fn redact_mcp_env(
+    servers: Vec<odon_tools::mcp::McpServerConfig>,
+) -> Vec<odon_tools::mcp::McpServerConfig> {
     servers
         .into_iter()
         .map(|mut s| {

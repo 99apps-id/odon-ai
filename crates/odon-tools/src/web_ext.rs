@@ -79,12 +79,7 @@ impl Tool for HttpPutTool {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let body = args.get("body").cloned().unwrap_or(json!({}));
         let validated = net_guard::validate_url(url).await?;
-        let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated.client(reqwest::Client::builder())?;
         let resp = client
             .put(validated.as_str())
             .json(&body)
@@ -126,12 +121,7 @@ impl Tool for HttpPatchTool {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let body = args.get("body").cloned().unwrap_or(json!({}));
         let validated = net_guard::validate_url(url).await?;
-        let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated.client(reqwest::Client::builder())?;
         let resp = client
             .patch(validated.as_str())
             .json(&body)
@@ -171,12 +161,7 @@ impl Tool for HttpDeleteTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
-        let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated.client(reqwest::Client::builder())?;
         let resp = client
             .delete(validated.as_str())
             .send()
@@ -222,12 +207,7 @@ impl Tool for HttpDownloadTool {
         let validated = net_guard::validate_url(url).await?;
         let full = safe_workspace_path(&ctx.workspace_root, dst)?;
 
-        let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated.client(reqwest::Client::builder())?;
         let resp = client
             .get(validated.as_str())
             .send()
@@ -287,12 +267,7 @@ impl Tool for HttpUploadTool {
         })?;
         let validated = net_guard::validate_url(url).await?;
 
-        let client = reqwest::Client::builder()
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = validated.client(reqwest::Client::builder())?;
         let resp = client
             .post(validated.as_str())
             .body(bytes)
@@ -333,11 +308,11 @@ impl Tool for WebSearchNewsTool {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
         let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = net_guard::build_client(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
+        )?;
 
         let mut articles = Vec::new();
 
@@ -460,11 +435,11 @@ impl Tool for WebSearchCodeTool {
         let q = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
         let lang = args.get("language").and_then(|l| l.as_str()).unwrap_or("");
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .user_agent("odon-ai-desktop/1.0")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = net_guard::build_client(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .user_agent("odon-ai-desktop/1.0"),
+        )?;
 
         let mut results = Vec::new();
 
@@ -546,16 +521,8 @@ impl Tool for SecurityAuditHeadersTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: e.to_string(),
-            })?;
+        let client = validated
+            .client(reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)))?;
 
         let resp = client
             .get(validated.as_str())
@@ -694,13 +661,7 @@ impl Tool for NetworkTracerouteTool {
         }
         // Reuse the SSRF guard by validating the target as an HTTPS URL.
         let validated = crate::net_guard::validate_url(&format!("https://{host}")).await?;
-        let target_host = validated
-            .host_str()
-            .ok_or_else(|| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: "Traceroute target has no host".to_string(),
-            })?
-            .to_string();
+        let target_host = validated.host().to_string();
 
         #[cfg(target_os = "windows")]
         let mut command = {
@@ -774,16 +735,8 @@ impl Tool for WebScrapeTool {
     async fn execute(&self, _ctx: &ToolContext, args: Value) -> Result<Value> {
         let url = args.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let validated = net_guard::validate_url(url).await?;
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .redirect(net_guard::redirect_policy(
-                validated.host_str().unwrap_or("").to_string(),
-            ))
-            .build()
-            .map_err(|e| OdonError::Tool {
-                tool: self.name().to_string(),
-                message: e.to_string(),
-            })?;
+        let client = validated
+            .client(reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)))?;
         let resp = client
             .get(validated.as_str())
             .send()
@@ -846,7 +799,6 @@ impl Tool for UrlPreviewTool {
         }))
     }
 }
-
 
 #[cfg(test)]
 mod path_tests {
