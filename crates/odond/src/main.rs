@@ -2784,7 +2784,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/providers/test", post(test_provider))
                 .route("/api/oauth/accounts", get(get_oauth_accounts))
                 .route("/api/oauth/login", post(login_oauth))
-            .route("/api/oauth/complete", post(complete_oauth))
+                .route("/api/oauth/complete", post(complete_oauth))
                 .route("/api/oauth/disconnect", post(disconnect_oauth))
                 .route("/api/terminal/info", get(get_terminal_info))
                 .route("/api/terminal/exec", post(execute_terminal))
@@ -5490,7 +5490,7 @@ async fn login_oauth(
     // release that listener first, otherwise the second attempt fails with
     // "could not listen on 127.0.0.1:54545".
     let catalog_id = oauth_catalog_id(provider);
-    cancel_previous_login(&catalog_id).await;
+    cancel_previous_login(catalog_id).await;
 
     let service = match OAuthService::new() {
         Ok(s) => s,
@@ -5531,7 +5531,9 @@ async fn login_oauth(
                 tracing::warn!("could not open the browser automatically: {e}");
             }
         }
-        LoginResponse::Device { verification_uri, .. } => {
+        LoginResponse::Device {
+            verification_uri, ..
+        } => {
             if let Err(e) = open_in_browser(verification_uri) {
                 tracing::warn!("could not open the browser automatically: {e}");
             }
@@ -5619,9 +5621,8 @@ async fn login_oauth(
 
 /// Pending manual-code logins keyed by catalog id. They hold the PKCE verifier
 /// and state until the operator pastes the code the provider displayed.
-fn oauth_manual_pending() -> &'static std::sync::Mutex<
-    std::collections::HashMap<String, odon_provider::PendingLogin>,
-> {
+fn oauth_manual_pending(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, odon_provider::PendingLogin>> {
     static REGISTRY: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, odon_provider::PendingLogin>>,
     > = std::sync::OnceLock::new();
@@ -5706,9 +5707,8 @@ pub fn open_in_browser(url: &str) -> std::io::Result<()> {
 /// Pending logins keyed by catalog id. A browser login keeps a fixed loopback
 /// listener until it completes, so a superseded login for the same provider has
 /// to be cancelled to release that port for the next attempt.
-fn oauth_pending_registry() -> &'static std::sync::Mutex<
-    std::collections::HashMap<String, tokio::task::JoinHandle<()>>,
-> {
+fn oauth_pending_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>> {
     static REGISTRY: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     > = std::sync::OnceLock::new();
@@ -6137,7 +6137,9 @@ async fn handle_ssh_terminal_socket(socket: WebSocket, profile_id: String, cols:
         Ok(o) => o,
         Err(e) => {
             let _ = ws_tx
-                .send(WsMessage::Text(format!("SSH profile error: {e}\r\n").into()))
+                .send(WsMessage::Text(
+                    format!("SSH profile error: {e}\r\n").into(),
+                ))
                 .await;
             return;
         }
@@ -6217,9 +6219,7 @@ async fn handle_ssh_terminal_socket(socket: WebSocket, profile_id: String, cols:
     }
 
     let _ = write.close().await;
-    let _ = handle
-        .disconnect(Disconnect::ByApplication, "", "en")
-        .await;
+    let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
 }
 
 /// Model ids the saved gateway config makes selectable.
@@ -7666,7 +7666,10 @@ async fn get_github_prs(
                 (StatusCode::OK, Json(data))
             } else {
                 let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-                (code, Json(github_error_body(&owner, &repo, status.as_u16(), &data)))
+                (
+                    code,
+                    Json(github_error_body(&owner, &repo, status.as_u16(), &data)),
+                )
             }
         }
         Err(e) => (
@@ -7730,7 +7733,10 @@ async fn get_github_issues(
                 (StatusCode::OK, Json(data))
             } else {
                 let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-                (code, Json(github_error_body(&owner, &repo, status.as_u16(), &data)))
+                (
+                    code,
+                    Json(github_error_body(&owner, &repo, status.as_u16(), &data)),
+                )
             }
         }
         Err(e) => (
@@ -8708,7 +8714,9 @@ async fn sftp_create(Json(payload): Json<SftpCreatePayload>) -> impl IntoRespons
     let result = if is_dir {
         crate::sftp::create_dir(&client, &path).await
     } else {
-        crate::sftp::write_text(&client, &path, "").await.map(|()| path.clone())
+        crate::sftp::write_text(&client, &path, "")
+            .await
+            .map(|()| path.clone())
     };
     match result {
         Ok(path) => (
@@ -9009,7 +9017,10 @@ mod tests {
         let unauthorized = github_error_body("acme", "app", 401, &body);
         let text = unauthorized["error"].as_str().unwrap();
         assert!(text.contains("acme/app"), "got {text}");
-        assert!(text.contains("gh auth login"), "401 must name the fix: {text}");
+        assert!(
+            text.contains("gh auth login"),
+            "401 must name the fix: {text}"
+        );
         assert_eq!(unauthorized["github_status"], json!(401));
 
         let missing = github_error_body("acme", "app", 404, &body);
@@ -9434,7 +9445,7 @@ mod tests {
         turns.insert("s1".to_string(), handle("B"));
 
         assert!(retire_turn_handle(&mut turns, "s1", "B"));
-        assert!(turns.get("s1").is_none());
+        assert!(!turns.contains_key("s1"));
 
         // Retiring twice is harmless.
         assert!(!retire_turn_handle(&mut turns, "s1", "B"));

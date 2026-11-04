@@ -954,8 +954,8 @@ async fn test_subagent_report_names_provider_and_model_separately() {
         .split_once("Parent received: ")
         .map(|(_, rest)| rest.to_string())
         .expect("the parent must receive the tool output");
-    let value: serde_json::Value = serde_json::from_str(payload.trim())
-        .expect("the subagent report must be JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(payload.trim()).expect("the subagent report must be JSON");
     assert_eq!(
         value["provider"], "delegating",
         "provider must be the provider, not the inherited model: {value}"

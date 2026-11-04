@@ -195,7 +195,12 @@ async fn kill_process_tree(child: &mut tokio::process::Child) {
     {
         if let Some(pid) = child.id() {
             let _ = tokio::process::Command::new("taskkill")
-                .args(["/PID".to_string(), pid.to_string(), "/T".to_string(), "/F".to_string()])
+                .args([
+                    "/PID".to_string(),
+                    pid.to_string(),
+                    "/T".to_string(),
+                    "/F".to_string(),
+                ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
@@ -309,7 +314,11 @@ mod tests {
             .expect("timeout must be reported as data, not as a hard error");
         let elapsed = started.elapsed();
 
-        assert_eq!(result["timed_out"], json!(true), "timed_out flag missing: {result}");
+        assert_eq!(
+            result["timed_out"],
+            json!(true),
+            "timed_out flag missing: {result}"
+        );
         assert_eq!(result["success"], json!(false));
         let stdout = result["stdout"].as_str().unwrap_or_default();
         assert!(
@@ -332,8 +341,15 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         let args = json!({ "command": "echo OK", "timeout_secs": 30 });
 
-        let result = ShellExecTool.execute(&ctx, args).await.expect("echo must succeed");
-        assert_eq!(result["timed_out"], serde_json::Value::Null, "unexpected timeout flag: {result}");
+        let result = ShellExecTool
+            .execute(&ctx, args)
+            .await
+            .expect("echo must succeed");
+        assert_eq!(
+            result["timed_out"],
+            serde_json::Value::Null,
+            "unexpected timeout flag: {result}"
+        );
         assert_eq!(result["success"], json!(true));
         assert!(result["stdout"].as_str().unwrap_or_default().contains("OK"));
     }

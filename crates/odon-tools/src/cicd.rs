@@ -272,10 +272,9 @@ impl Tool for ArtifactManagementTool {
                 let source_path = Path::new(&ctx.workspace_root).join(source);
                 let destination_path = match destination {
                     Some(d) => crate::workspace_path::resolve_write(&ctx.workspace_root, d)?,
-                    None => crate::workspace_path::resolve_write(
-                        &ctx.workspace_root,
-                        "artifacts.zip",
-                    )?,
+                    None => {
+                        crate::workspace_path::resolve_write(&ctx.workspace_root, "artifacts.zip")?
+                    }
                 };
                 std::fs::create_dir_all(destination_path.parent().unwrap_or(Path::new(".")))
                     .map_err(|e| OdonError::Tool {
@@ -305,7 +304,8 @@ fn zip_artifact(source: &Path, destination: &Path) -> Result<()> {
         message: format!("Failed to create zip file: {e}"),
     })?;
     let mut zip = zip::ZipWriter::new(file);
-    let options: zip::write::SimpleFileOptions = FileOptions::default().compression_method(Deflated);
+    let options: zip::write::SimpleFileOptions =
+        FileOptions::default().compression_method(Deflated);
 
     if source.is_file() {
         zip.start_file(

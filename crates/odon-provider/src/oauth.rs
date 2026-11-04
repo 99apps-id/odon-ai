@@ -887,10 +887,7 @@ fn provider_extra_params(provider: OAuthProvider) -> Vec<(&'static str, &'static
         // Termigo's proven Claude flow: the consent page must also display the
         // code, because the registered redirect is the loopback listener.
         OAuthProvider::ClaudeOauth => vec![("code", "true")],
-        OAuthProvider::Antigravity => vec![
-            ("access_type", "offline"),
-            ("prompt", "consent"),
-        ],
+        OAuthProvider::Antigravity => vec![("access_type", "offline"), ("prompt", "consent")],
         OAuthProvider::XaiOauth | OAuthProvider::GithubCopilot => Vec::new(),
     }
 }

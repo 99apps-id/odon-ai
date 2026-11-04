@@ -422,7 +422,10 @@ mod tests {
 
         let ctx = context(&dir);
         let result = CoverageThresholdCheckTool
-            .execute(&ctx, json!({ "report_path": "coverage.json", "threshold": 80.0 }))
+            .execute(
+                &ctx,
+                json!({ "report_path": "coverage.json", "threshold": 80.0 }),
+            )
             .await
             .expect("report inside the workspace must be readable");
 
@@ -438,15 +441,13 @@ mod tests {
         // asserts the sandbox holds.
         let workspace = std::env::temp_dir().join(format!("odon-cov-ws-{}", std::process::id()));
         std::fs::create_dir_all(&workspace).unwrap();
-        let outside = std::env::temp_dir().join(format!("odon-cov-outside-{}.json", std::process::id()));
+        let outside =
+            std::env::temp_dir().join(format!("odon-cov-outside-{}.json", std::process::id()));
         std::fs::write(&outside, r#"{"totals":{"lines":{"pct":99.0}}}"#).unwrap();
 
         let ctx = context(&workspace);
         let result = CoverageThresholdCheckTool
-            .execute(
-                &ctx,
-                json!({ "report_path": outside.to_string_lossy() }),
-            )
+            .execute(&ctx, json!({ "report_path": outside.to_string_lossy() }))
             .await;
 
         assert!(

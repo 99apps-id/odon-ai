@@ -772,7 +772,10 @@ impl AgentRuntime {
         let requested_model: String = if requested_model == "odon-auto" {
             let owner = match routed_provider.clone() {
                 Some(name) => Some(name),
-                None => self.get_provider(None).await.map(|p| p.provider_name().to_string()),
+                None => self
+                    .get_provider(None)
+                    .await
+                    .map(|p| p.provider_name().to_string()),
             };
             match owner {
                 Some(name) => self
@@ -2970,7 +2973,10 @@ mod tests {
         // The executor has always honoured `model` and `provider`; without
         // advertising them the model could never use the override, so a
         // usage-capped provider could not be routed around.
-        assert!(props.contains_key("model"), "model override must be advertised");
+        assert!(
+            props.contains_key("model"),
+            "model override must be advertised"
+        );
         assert!(
             props.contains_key("provider"),
             "provider override must be advertised"

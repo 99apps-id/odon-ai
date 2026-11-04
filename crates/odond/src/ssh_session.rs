@@ -131,7 +131,10 @@ pub struct SshSession {
 
 impl SshSession {
     pub async fn connect(opts: &ConnectOptions) -> Result<Self> {
-        let Authenticated { handle, fingerprint } = authenticate(opts).await?;
+        let Authenticated {
+            handle,
+            fingerprint,
+        } = authenticate(opts).await?;
         let channel = handle.channel_open_session().await?;
         channel
             .request_pty(true, TERM, opts.cols, opts.rows, 0, 0, &[])
@@ -175,81 +178,79 @@ pub struct Authenticated {
 }
 
 pub async fn authenticate(opts: &ConnectOptions) -> Result<Authenticated> {
-        let expected = load_known_host(&opts.store_path, &opts.store_key);
-        let check = Arc::new(KeyCheck::default());
-        let config = Arc::new(client::Config {
-            // An interactive shell can sit idle for hours; the default
-            // activity timeout would drop the connection.
-            inactivity_timeout: None,
-            ..<_>::default()
-        });
-        let handler = Verifier {
-            expected: expected.clone(),
-            check: check.clone(),
-        };
+    let expected = load_known_host(&opts.store_path, &opts.store_key);
+    let check = Arc::new(KeyCheck::default());
+    let config = Arc::new(client::Config {
+        // An interactive shell can sit idle for hours; the default
+        // activity timeout would drop the connection.
+        inactivity_timeout: None,
+        ..<_>::default()
+    });
+    let handler = Verifier {
+        expected: expected.clone(),
+        check: check.clone(),
+    };
 
-        let addr = (opts.host.as_str(), opts.port);
-        let connect = tokio::time::timeout(CONNECT_TIMEOUT, client::connect(config, addr, handler));
-        let mut handle = match connect.await {
-            Err(_) => bail!(
-                "timed out after {}s connecting to {}:{}",
-                CONNECT_TIMEOUT.as_secs(),
-                opts.host,
-                opts.port
-            ),
-            Ok(Err(e)) => {
-                // A refused host key surfaces here as a generic handshake
-                // error; report the real reason when we have one.
-                if let Some(reason) = check.rejection.lock().ok().and_then(|s| s.clone()) {
-                    bail!("{reason}");
-                }
-                return Err(anyhow!(e))
-                    .with_context(|| format!("connecting to {}:{}", opts.host, opts.port));
+    let addr = (opts.host.as_str(), opts.port);
+    let connect = tokio::time::timeout(CONNECT_TIMEOUT, client::connect(config, addr, handler));
+    let mut handle = match connect.await {
+        Err(_) => bail!(
+            "timed out after {}s connecting to {}:{}",
+            CONNECT_TIMEOUT.as_secs(),
+            opts.host,
+            opts.port
+        ),
+        Ok(Err(e)) => {
+            // A refused host key surfaces here as a generic handshake
+            // error; report the real reason when we have one.
+            if let Some(reason) = check.rejection.lock().ok().and_then(|s| s.clone()) {
+                bail!("{reason}");
             }
-            Ok(Ok(h)) => h,
-        };
-
-        let fingerprint = check
-            .seen
-            .lock()
-            .ok()
-            .and_then(|s| s.clone())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let key_pair = load_secret_key(&opts.key_path, None).with_context(|| {
-            format!(
-                "reading private key {} (is it a valid OpenSSH/ PEM key?)",
-                opts.key_path.display()
-            )
-        })?;
-        let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
-        let auth = handle
-            .authenticate_publickey(
-                opts.user.clone(),
-                PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
-            )
-            .await?;
-        if !auth.success() {
-            let _ = handle
-                .disconnect(Disconnect::ByApplication, "", "en")
-                .await;
-            bail!(
-                "authentication failed for {}@{} — the server did not accept this key",
-                opts.user,
-                opts.host
-            );
+            return Err(anyhow!(e))
+                .with_context(|| format!("connecting to {}:{}", opts.host, opts.port));
         }
+        Ok(Ok(h)) => h,
+    };
 
-        // Pin the fingerprint on first use, and remember a rotation only after
-        // the caller has seen the mismatch path above.
-        if expected.is_none() {
-            let _ = save_known_host(&opts.store_path, &opts.store_key, &fingerprint);
-        }
+    let fingerprint = check
+        .seen
+        .lock()
+        .ok()
+        .and_then(|s| s.clone())
+        .unwrap_or_else(|| "unknown".to_string());
 
-        Ok(Authenticated {
-            handle,
-            fingerprint,
-        })
+    let key_pair = load_secret_key(&opts.key_path, None).with_context(|| {
+        format!(
+            "reading private key {} (is it a valid OpenSSH/ PEM key?)",
+            opts.key_path.display()
+        )
+    })?;
+    let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
+    let auth = handle
+        .authenticate_publickey(
+            opts.user.clone(),
+            PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
+        )
+        .await?;
+    if !auth.success() {
+        let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
+        bail!(
+            "authentication failed for {}@{} — the server did not accept this key",
+            opts.user,
+            opts.host
+        );
+    }
+
+    // Pin the fingerprint on first use, and remember a rotation only after
+    // the caller has seen the mismatch path above.
+    if expected.is_none() {
+        let _ = save_known_host(&opts.store_path, &opts.store_key, &fingerprint);
+    }
+
+    Ok(Authenticated {
+        handle,
+        fingerprint,
+    })
 }
 
 /// Text to show in the terminal for a failed session, so the user gets the
@@ -297,10 +298,7 @@ mod tests {
     use super::*;
 
     fn temp_store(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "odon-ssh-test-{}-{name}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("odon-ssh-test-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir.join("known-hosts.json")
     }
@@ -350,8 +348,7 @@ mod tests {
 
     #[test]
     fn describe_error_includes_context_chain() {
-        let err = anyhow!("handshake failed")
-            .context("connecting to 10.0.0.1:22");
+        let err = anyhow!("handshake failed").context("connecting to 10.0.0.1:22");
         let text = describe_error(&err);
         assert!(text.contains("connecting to 10.0.0.1:22"), "{text}");
         assert!(text.contains("handshake failed"), "{text}");

@@ -34,9 +34,11 @@ pub struct Client {
     _handle: Handle<Verifier>,
 }
 
-fn cache() -> &'static tokio::sync::Mutex<HashMap<String, (Arc<Client>, Instant)>> {
-    static CACHE: OnceLock<tokio::sync::Mutex<HashMap<String, (Arc<Client>, Instant)>>> =
-        OnceLock::new();
+/// A cached SFTP client together with the moment it was last used.
+type CacheEntry = (Arc<Client>, Instant);
+
+fn cache() -> &'static tokio::sync::Mutex<HashMap<String, CacheEntry>> {
+    static CACHE: OnceLock<tokio::sync::Mutex<HashMap<String, CacheEntry>>> = OnceLock::new();
     CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
 }
 
@@ -211,9 +213,7 @@ pub async fn read_text(client: &Client, path: &str) -> Result<(String, bool)> {
     }
     let size = meta.size.unwrap_or(0);
     if size > MAX_EDIT_BYTES {
-        bail!(
-            "{file} is {size} bytes; the editor opens files up to {MAX_EDIT_BYTES} bytes"
-        );
+        bail!("{file} is {size} bytes; the editor opens files up to {MAX_EDIT_BYTES} bytes");
     }
     let bytes = client
         .session
@@ -324,13 +324,19 @@ mod tests {
 
     #[test]
     fn normalizes_redundant_separators_and_dots() {
-        assert_eq!(normalize_remote("/var//log/./nginx").unwrap(), "/var/log/nginx");
+        assert_eq!(
+            normalize_remote("/var//log/./nginx").unwrap(),
+            "/var/log/nginx"
+        );
         assert_eq!(normalize_remote("/").unwrap(), "/");
     }
 
     #[test]
     fn resolves_dot_dot_lexically() {
-        assert_eq!(normalize_remote("/home/admin/../ubuntu").unwrap(), "/home/ubuntu");
+        assert_eq!(
+            normalize_remote("/home/admin/../ubuntu").unwrap(),
+            "/home/ubuntu"
+        );
         assert_eq!(normalize_remote("/../../etc").unwrap(), "/etc");
     }
 
@@ -351,7 +357,10 @@ mod tests {
     #[test]
     fn joins_names_without_double_slashes() {
         assert_eq!(join_remote("/", "etc").unwrap(), "/etc");
-        assert_eq!(join_remote("/home/admin", "a.txt").unwrap(), "/home/admin/a.txt");
+        assert_eq!(
+            join_remote("/home/admin", "a.txt").unwrap(),
+            "/home/admin/a.txt"
+        );
         assert!(join_remote("/home", "a/b").is_err());
         assert!(join_remote("/home", "  ").is_err());
     }
