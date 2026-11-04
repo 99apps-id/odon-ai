@@ -86,8 +86,10 @@ jobs:
       # tauri.conf.json's externalBin points at the staged copy.
       - name: Stage the odond sidecar
         env:
-          TERMIGO_ANTIGRAVITY_CLIENT_ID: ${{ secrets.TERMIGO_ANTIGRAVITY_CLIENT_ID }}
-          TERMIGO_ANTIGRAVITY_CLIENT_SECRET: ${{ secrets.TERMIGO_ANTIGRAVITY_CLIENT_SECRET }}
+          # Repository secrets keep their historical names; the build variable
+          # the sidecar reads was renamed to the ODON_ prefix.
+          ODON_ANTIGRAVITY_CLIENT_ID: ${{ secrets.TERMIGO_ANTIGRAVITY_CLIENT_ID }}
+          ODON_ANTIGRAVITY_CLIENT_SECRET: ${{ secrets.TERMIGO_ANTIGRAVITY_CLIENT_SECRET }}
         run: bash scripts/stage-sidecar.sh "${{ matrix.rust-target }}"
 
       - name: Build the desktop bundles

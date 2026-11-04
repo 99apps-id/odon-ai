@@ -4,6 +4,8 @@
 // a change to either variable force a rebuild.
 fn main() {
     for name in [
+        "ODON_ANTIGRAVITY_CLIENT_ID",
+        "ODON_ANTIGRAVITY_CLIENT_SECRET",
         "TERMIGO_ANTIGRAVITY_CLIENT_ID",
         "TERMIGO_ANTIGRAVITY_CLIENT_SECRET",
     ] {

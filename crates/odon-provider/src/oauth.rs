@@ -52,41 +52,61 @@ fn env_value(name: &str) -> String {
 // environment variables deliberately win so operators can rotate them without
 // rebuilding. Like every installed OAuth public client, these values are
 // extractable from the binary and must not be treated as server-side secrets.
-const STAMPED_ANTIGRAVITY_CLIENT_ID: &str = match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_ID") {
+//
+// `ODON_` is the canonical prefix; the `TERMIGO_` name is still honoured at
+// compile time so a build pipeline that has not been migrated yet keeps
+// shipping a working login.
+const STAMPED_ANTIGRAVITY_CLIENT_ID: &str = match option_env!("ODON_ANTIGRAVITY_CLIENT_ID") {
     Some(value) => value,
-    None => "",
-};
-const STAMPED_ANTIGRAVITY_CLIENT_SECRET: &str =
-    match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_SECRET") {
+    None => match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_ID") {
         Some(value) => value,
         None => "",
-    };
+    },
+};
+const STAMPED_ANTIGRAVITY_CLIENT_SECRET: &str = match option_env!("ODON_ANTIGRAVITY_CLIENT_SECRET")
+{
+    Some(value) => value,
+    None => match option_env!("TERMIGO_ANTIGRAVITY_CLIENT_SECRET") {
+        Some(value) => value,
+        None => "",
+    },
+};
+
+/// Resolves the first non-empty candidate name, falling back to the value
+/// stamped in at build time. Split out from the environment read so the
+/// precedence order is testable without mutating process-global state.
+fn pick_first_non_empty(names: &[&str], lookup: impl Fn(&str) -> String, stamped: &str) -> String {
+    for name in names {
+        let value = lookup(name);
+        if !value.is_empty() {
+            return value;
+        }
+    }
+    stamped.trim().to_string()
+}
 
 /// Antigravity's registered client (same one Termigo uses). Read from the
 /// environment / .env.local at runtime, never compiled into the repository.
 fn antigravity_credentials() -> (String, String) {
-    let pick = |primary: &str, legacy: &str, stamped: &str| {
-        let v = env_value(primary);
-        if v.is_empty() {
-            let legacy_value = env_value(legacy);
-            if legacy_value.is_empty() {
-                stamped.trim().to_string()
-            } else {
-                legacy_value
-            }
-        } else {
-            v
-        }
-    };
+    // First non-empty variable wins, then the value stamped in at build time.
+    // The legacy prefixes stay in the chain so existing deployments and
+    // `.env.local` files keep working after the rename to `ODON_`.
+    let pick = |names: &[&str], stamped: &str| pick_first_non_empty(names, env_value, stamped);
     (
         pick(
-            "TERMIGO_ANTIGRAVITY_CLIENT_ID",
-            "TERMIXGO_ANTIGRAVITY_CLIENT_ID",
+            &[
+                "ODON_ANTIGRAVITY_CLIENT_ID",
+                "TERMIGO_ANTIGRAVITY_CLIENT_ID",
+                "TERMIXGO_ANTIGRAVITY_CLIENT_ID",
+            ],
             STAMPED_ANTIGRAVITY_CLIENT_ID,
         ),
         pick(
-            "TERMIGO_ANTIGRAVITY_CLIENT_SECRET",
-            "TERMIXGO_ANTIGRAVITY_CLIENT_SECRET",
+            &[
+                "ODON_ANTIGRAVITY_CLIENT_SECRET",
+                "TERMIGO_ANTIGRAVITY_CLIENT_SECRET",
+                "TERMIXGO_ANTIGRAVITY_CLIENT_SECRET",
+            ],
             STAMPED_ANTIGRAVITY_CLIENT_SECRET,
         ),
     )
@@ -298,7 +318,7 @@ impl OAuthService {
             let (id, secret) = antigravity_credentials();
             if id.is_empty() {
                 return Err(auth_error(
-                    "Antigravity needs its client id: set TERMIGO_ANTIGRAVITY_CLIENT_ID (and TERMIGO_ANTIGRAVITY_CLIENT_SECRET) in the environment or .env.local",
+                    "Antigravity needs its client id: set ODON_ANTIGRAVITY_CLIENT_ID (and ODON_ANTIGRAVITY_CLIENT_SECRET) in the environment or .env.local. The legacy TERMIGO_ANTIGRAVITY_* names are still accepted.",
                 ));
             }
             (id, secret)
@@ -1325,5 +1345,53 @@ mod tests {
     async fn ephemeral_loopback_bind_reports_the_real_port() {
         let (_listener, port) = bind_loopback_port(0).await.unwrap();
         assert_ne!(port, 0);
+    }
+
+    fn lookup_from(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> String {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+                .unwrap_or_default()
+        }
+    }
+
+    const CHAIN: &[&str] = &[
+        "ODON_ANTIGRAVITY_CLIENT_ID",
+        "TERMIGO_ANTIGRAVITY_CLIENT_ID",
+        "TERMIXGO_ANTIGRAVITY_CLIENT_ID",
+    ];
+
+    #[test]
+    fn the_canonical_odon_name_wins() {
+        let lookup = lookup_from(&[
+            ("ODON_ANTIGRAVITY_CLIENT_ID", "canonical"),
+            ("TERMIGO_ANTIGRAVITY_CLIENT_ID", "legacy"),
+        ]);
+        assert_eq!(pick_first_non_empty(CHAIN, lookup, "stamped"), "canonical");
+    }
+
+    /// Migration guard: an operator who has not renamed their variables yet must
+    /// keep a working login, so the legacy name still beats the stamped value.
+    #[test]
+    fn the_legacy_termigo_name_still_resolves() {
+        let lookup = lookup_from(&[("TERMIGO_ANTIGRAVITY_CLIENT_ID", "legacy")]);
+        assert_eq!(pick_first_non_empty(CHAIN, lookup, "stamped"), "legacy");
+    }
+
+    #[test]
+    fn an_empty_canonical_name_falls_through_to_the_legacy_one() {
+        let lookup = lookup_from(&[
+            ("ODON_ANTIGRAVITY_CLIENT_ID", ""),
+            ("TERMIGO_ANTIGRAVITY_CLIENT_ID", "legacy"),
+        ]);
+        assert_eq!(pick_first_non_empty(CHAIN, lookup, "stamped"), "legacy");
+    }
+
+    #[test]
+    fn the_stamped_value_is_the_last_resort() {
+        let lookup = lookup_from(&[]);
+        assert_eq!(pick_first_non_empty(CHAIN, lookup, " stamped "), "stamped");
     }
 }
