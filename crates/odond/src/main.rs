@@ -5748,6 +5748,9 @@ async fn handle_terminal_socket(socket: WebSocket, workspace: String, query: Ter
             if let Some(k) = &p.key_path {
                 match validate_ssh_key_path(k) {
                     Ok(path) => {
+                        // Keys imported before ACL hardening existed are still
+                        // too open for OpenSSH; fix them on use.
+                        let _ = harden_key_permissions(std::path::Path::new(&path));
                         c.arg("-i");
                         c.arg(path);
                     }
@@ -7333,14 +7336,48 @@ async fn get_github_prs(
     }
     match req.send().await {
         Ok(resp) => {
+            // Pass GitHub's own status through: a 404 or 401 body coerced into
+            // HTTP 200 made the UI render "0 pull requests" for a repo that
+            // could not be read at all.
+            let status = resp.status();
             let data: Value = resp.json().await.unwrap_or(json!([]));
-            (StatusCode::OK, Json(data))
+            if status.is_success() {
+                (StatusCode::OK, Json(data))
+            } else {
+                let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                (code, Json(github_error_body(&owner, &repo, status.as_u16(), &data)))
+            }
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+/// Normalises a GitHub error payload so the UI always gets `{ error: "..." }`.
+fn github_error_body(owner: &str, repo: &str, http_status: u16, data: &Value) -> Value {
+    let message = data
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("GitHub request failed");
+    let hint = match http_status {
+        401 => " Token GitHub tidak valid atau kedaluwarsa; jalankan `gh auth login`.",
+        403 => " Kemungkinan rate limit atau token tanpa izin repository.",
+        404 => " Repository tidak ditemukan, bukan milik akun ini, atau privat.",
+        _ => "",
+    };
+    // A caller may pass the repository as `owner/repo` in either field, so
+    // normalise once instead of rendering `owner/owner/repo`.
+    let full = if repo.contains('/') {
+        repo.to_string()
+    } else {
+        format!("{owner}/{repo}")
+    };
+    json!({
+        "error": format!("{message} ({full}).{hint}"),
+        "github_status": http_status,
+    })
 }
 
 async fn get_github_issues(
@@ -7366,8 +7403,14 @@ async fn get_github_issues(
     }
     match req.send().await {
         Ok(resp) => {
+            let status = resp.status();
             let data: Value = resp.json().await.unwrap_or(json!([]));
-            (StatusCode::OK, Json(data))
+            if status.is_success() {
+                (StatusCode::OK, Json(data))
+            } else {
+                let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                (code, Json(github_error_body(&owner, &repo, status.as_u16(), &data)))
+            }
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -7964,6 +8007,19 @@ async fn import_ssh_certificate(Json(payload): Json<SshCertImportPayload>) -> im
         let _ = std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o600));
     }
 
+    // Windows OpenSSH refuses private keys that other accounts can read, and
+    // reports "bad permissions" then "Permission denied (publickey)". Tighten
+    // the ACL right after the import so the key is usable immediately.
+    if let Err(e) = harden_key_permissions(&target_path) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "error": format!("Key saved but permission hardening failed: {e}")
+            })),
+        );
+    }
+
     let saved_path = target_path.to_string_lossy().to_string();
     (
         StatusCode::OK,
@@ -7973,6 +8029,47 @@ async fn import_ssh_certificate(Json(payload): Json<SshCertImportPayload>) -> im
             "filename": clean_name
         })),
     )
+}
+
+/// Restrict a private key so that only the current account can read it.
+///
+/// On Unix this is `chmod 600`; on Windows, OpenSSH checks the file ACL and
+/// refuses a key any other account can access, so the inherited ACEs must be
+/// removed and a single read grant left for the current user.
+fn harden_key_permissions(path: &std::path::Path) -> std::result::Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let user = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .map_err(|_| "cannot determine the current Windows account".to_string())?;
+        // /inheritance:r drops inherited ACEs; /grant:r replaces the user's
+        // entries so nothing broader survives.
+        let status = std::process::Command::new("icacls")
+            .arg(path)
+            .arg("/inheritance:r")
+            .arg("/grant:r")
+            .arg(format!("{user}:R"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .status()
+            .map_err(|e| format!("icacls could not run: {e}"))?;
+        if !status.success() {
+            return Err(format!("icacls exited with {status}"));
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 fn get_ssh_profiles_path() -> PathBuf {
@@ -8365,6 +8462,29 @@ mod tests {
     use chrono::TimeZone;
 
     #[test]
+    fn github_error_body_reports_http_status_and_hint() {
+        // GitHub error payloads carry only `message`; the status code lives on
+        // the HTTP response. Reading `status` from the body meant the hint never
+        // appeared, so an expired token surfaced as a bare "Not Found".
+        let body = json!({ "message": "Not Found" });
+
+        let unauthorized = github_error_body("acme", "app", 401, &body);
+        let text = unauthorized["error"].as_str().unwrap();
+        assert!(text.contains("acme/app"), "got {text}");
+        assert!(text.contains("gh auth login"), "401 must name the fix: {text}");
+        assert_eq!(unauthorized["github_status"], json!(401));
+
+        let missing = github_error_body("acme", "app", 404, &body);
+        let text = missing["error"].as_str().unwrap();
+        assert!(text.contains("tidak ditemukan"), "404 hint missing: {text}");
+
+        // A generic failure still carries the upstream status for the UI.
+        let other = github_error_body("acme", "app", 500, &json!({}));
+        assert_eq!(other["github_status"], json!(500));
+        assert!(other["error"].as_str().unwrap().contains("acme/app"));
+    }
+
+    #[test]
     fn relay_channels_offer_different_commands() {
         // WhatsApp pairs with a QR code; Telegram pairs with a bot token. The
         // command surface has to reflect that rather than advertising commands
@@ -8598,6 +8718,43 @@ mod tests {
         assert!(!workspace_allowed(&config, "C:\\Windows"));
         #[cfg(not(windows))]
         assert!(!workspace_allowed(&config, "/etc"));
+    }
+
+    #[test]
+    fn ssh_key_hardening_removes_inherited_acls() {
+        let dir = std::env::temp_dir().join(format!(
+            "odon-key-acl-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let key = dir.join("test_key.pem");
+        std::fs::write(&key, "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n").expect("write key");
+
+        harden_key_permissions(&key).expect("hardening should succeed");
+
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("icacls")
+                .arg(&key)
+                .output()
+                .expect("icacls");
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(
+                !text.contains("(I)"),
+                "inherited ACEs must be gone after hardening: {text}"
+            );
+            let user = std::env::var("USERNAME").unwrap_or_default();
+            assert!(
+                text.to_lowercase().contains(&user.to_lowercase()),
+                "current user must still be able to read the key: {text}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

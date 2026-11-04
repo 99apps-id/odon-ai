@@ -11,6 +11,21 @@ import {
   TerminalExecResult,
 } from './types';
 
+/**
+ * Read a GitHub error payload as a human message. The daemon now forwards the
+ * upstream status instead of masking failures as an empty list.
+ */
+async function readGitHubError(res: Response): Promise<string> {
+  try {
+    const body: any = await res.json();
+    if (typeof body?.error === 'string' && body.error.trim()) return body.error;
+    if (typeof body?.message === 'string' && body.message.trim()) return body.message;
+    return `GitHub request failed (HTTP ${res.status})`;
+  } catch {
+    return `GitHub request failed (HTTP ${res.status})`;
+  }
+}
+
 export interface OAuthAccountInfo {
   provider: string;
   email: string | null;
@@ -912,7 +927,7 @@ export const api = {
     if (owner) params.append('owner', owner);
     if (repo) params.append('repo', repo);
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/prs?${params.toString()}`);
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(await readGitHubError(res));
     return res.json();
   },
 
@@ -922,7 +937,7 @@ export const api = {
     if (repo) params.append('repo', repo);
     params.append('state', state);
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/issues?${params.toString()}`);
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(await readGitHubError(res));
     return res.json();
   },
 

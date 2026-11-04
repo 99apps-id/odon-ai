@@ -42,6 +42,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
   const [prs, setPrs] = useState<any[]>([]);
   const [issues, setIssues] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
   const [newTitle, setNewTitle] = useState<string>('');
   const [newBody, setNewBody] = useState<string>('');
@@ -87,15 +88,26 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
       return;
     }
     setIsLoading(true);
+    setLoadError(null);
     try {
-      const [prsData, issuesData] = await Promise.all([
-        api.getGitHubPrs(targetOwner, targetRepo).catch(() => []),
-        api.getGitHubIssues(targetOwner, targetRepo).catch(() => []),
+      const [prsResult, issuesResult] = await Promise.allSettled([
+        api.getGitHubPrs(targetOwner, targetRepo),
+        api.getGitHubIssues(targetOwner, targetRepo),
       ]);
-      setPrs(Array.isArray(prsData) ? prsData : []);
-      setIssues(Array.isArray(issuesData) ? issuesData : []);
+      // A failed request used to be coerced into an empty list, so an expired
+      // token rendered as "Pull requests (0)" instead of an actionable error.
+      const failures: string[] = [];
+      const pick = (r: PromiseSettledResult<any[]>, label: string) => {
+        if (r.status === 'fulfilled') return Array.isArray(r.value) ? r.value : [];
+        failures.push(`${label}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+        return [];
+      };
+      setPrs(pick(prsResult, 'Pull requests'));
+      setIssues(pick(issuesResult, 'Issues'));
+      setLoadError(failures.length > 0 ? failures.join(' · ') : null);
     } catch (err) {
       console.error('Failed to load GitHub data:', err);
+      setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -346,6 +358,15 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           <span>Issues ({issues.length})</span>
         </button>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="mx-4 mt-2 rounded-xl border border-clay-200 bg-clay-50 px-3 py-2 text-xs text-clay-800"
+        >
+          <span className="font-semibold">GitHub request failed.</span> {loadError}
+        </div>
+      )}
 
       {/* Content List */}
       <div className="flex-1 overflow-y-auto p-6 space-y-3">
