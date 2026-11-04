@@ -61,7 +61,7 @@ export function ChangeRollup({ files, onComment }: Props) {
               <button
                 type="button"
                 onClick={() => setOpenId(open ? null : file.id)}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-neutral-50"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-neutral-200"
               >
                 <ChevronRight
                   className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? 'rotate-90' : ''}`}

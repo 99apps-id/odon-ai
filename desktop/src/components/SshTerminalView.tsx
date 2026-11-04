@@ -225,7 +225,7 @@ export const SshTerminalView: React.FC = () => {
               resetModalForm();
               setIsModalOpen(true);
             }}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold transition-colors shadow-2xs cursor-pointer"
           >
             <Plus className="w-3 h-3" />
             <span>Add Host</span>
@@ -358,7 +358,7 @@ export const SshTerminalView: React.FC = () => {
                 <button
                   onClick={handleConnect}
                   disabled={isConnecting}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer transition-colors"
                 >
                   {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
                   <span>Launch Interactive SSH Terminal</span>
@@ -562,7 +562,7 @@ export const SshTerminalView: React.FC = () => {
                         type="button"
                         onClick={handleApplyPastedKey}
                         disabled={!pastedKey.trim() || isPastingKey}
-                        className="flex items-center gap-1 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-[11px] font-semibold cursor-pointer shadow-2xs transition-colors"
+                        className="flex items-center gap-1 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-[11px] font-semibold cursor-pointer shadow-2xs transition-colors"
                       >
                         {isPastingKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                         <span>Use This Key</span>
@@ -619,14 +619,14 @@ export const SshTerminalView: React.FC = () => {
             <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-neutral-600 hover:bg-neutral-100 cursor-pointer"
+                className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-neutral-600 hover:bg-neutral-200 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveNewProfile}
                 disabled={!newAlias.trim() || !newHost.trim()}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
               >
                 Save Profile
               </button>

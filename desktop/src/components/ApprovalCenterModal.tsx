@@ -140,7 +140,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 activeTab === 'pending'
                   ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-800'
               }`}
             >
               <span>Pending Review</span>
@@ -153,7 +153,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 activeTab === 'audit'
                   ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-800'
               }`}
             >
               <History className="w-3.5 h-3.5" />
@@ -164,7 +164,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                 activeTab === 'policies'
                   ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-800'
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" />
@@ -175,7 +175,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
           <button
             onClick={loadData}
             title="Refresh logs"
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-800 transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
@@ -222,7 +222,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                         <button
                           type="button"
                           onClick={() => setShowDenyReason(false)}
-                          className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg"
+                          className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-lg"
                         >
                           Back
                         </button>
@@ -249,7 +249,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                     <button
                       type="button"
                       onClick={() => onDecideApproval('approve_always')}
-                      className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-all shadow-xs"
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-all shadow-xs"
                     >
                       <CheckCheck className="w-3.5 h-3.5 inline mr-1 text-blue-500" />
                       Always Allow {pendingApproval.toolName}
@@ -257,7 +257,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                     <button
                       type="button"
                       onClick={() => onDecideApproval('approve_all')}
-                      className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-all shadow-xs"
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-all shadow-xs"
                     >
                       <ShieldCheck className="w-3.5 h-3.5 inline mr-1 text-emerald-500" />
                       Allow All Tools
@@ -265,7 +265,7 @@ export const ApprovalCenterModal: React.FC<ApprovalCenterModalProps> = ({
                     <button
                       type="button"
                       onClick={() => onDecideApproval('approve_once')}
-                      className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 transition-all shadow-xs"
+                      className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-xs"
                     >
                       <Check className="w-3.5 h-3.5 inline mr-1" />
                       Approve Once

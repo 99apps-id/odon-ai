@@ -36,7 +36,7 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             }}
-            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-neutral-100 text-neutral-600 text-xs font-sans transition-colors cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-neutral-200 text-neutral-600 text-xs font-sans transition-colors cursor-pointer"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copied ? 'Copied' : 'Copy diff'}</span>

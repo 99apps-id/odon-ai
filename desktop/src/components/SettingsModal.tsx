@@ -834,7 +834,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <button
               onClick={onClose}
-              className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 ml-2"
+              className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-neutral-800 ml-2"
             >
               <X className="w-4 h-4" />
             </button>
@@ -977,14 +977,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="flex justify-end gap-2">
                 <button
                   onClick={resetEndpointForm}
-                  className="px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  className="px-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800"
                 >
                   Reset
                 </button>
                 <button
                   onClick={handleSaveEndpoint}
                   disabled={endpointBusy}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold shadow-xs"
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs"
                 >
                   {endpointBusy
                     ? 'Saving...'
@@ -1046,13 +1046,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         onClick={() => handleUseEndpoint(c)}
-                        className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold"
+                        className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold"
                       >
                         Use
                       </button>
                       <button
                         onClick={() => handleEditEndpoint(c)}
-                        className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                        className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-800"
                       >
                         Edit
                       </button>
@@ -1296,7 +1296,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </div>
                                 <button
                                   onClick={() => handleCopyCode(oauthPrompt.userCode!)}
-                                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-2xs"
+                                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-2xs"
                                 >
                                   {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                                   <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
@@ -1324,7 +1324,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <button
                               onClick={() => handleOAuthSignIn(currentProvider.id)}
                               disabled={oauthBusy === currentProvider.id}
-                              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-xs"
+                              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-xs"
                             >
                               <ProviderLogo providerId={currentProvider.id} size={15} colored={false} />
                               <span>{oauthBusy === currentProvider.id ? 'Connecting...' : `Sign in with ${currentProvider.name.split(' (')[0]}`}</span>
@@ -1383,7 +1383,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <button
                           onClick={() => handleTestConnection(currentProvider.id)}
                           disabled={testing === currentProvider.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 text-xs font-semibold transition-colors shrink-0 disabled:opacity-50"
+                          className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 text-xs font-semibold transition-colors shrink-0 disabled:opacity-50"
                           title="Send a tiny request to verify the key, Base URL, and model"
                         >
                           {testing === currentProvider.id ? (
@@ -1396,7 +1396,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                         <button
                           onClick={() => handleSaveKey(currentProvider.id)}
-                          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shrink-0"
+                          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shrink-0"
                         >
                           Save Key
                         </button>
@@ -1404,7 +1404,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         {apiKeys[currentProvider.id] && (
                           <button
                             onClick={() => handleClearKey(currentProvider.id)}
-                            className="px-3 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 text-xs font-medium transition-colors shrink-0"
+                            className="px-3 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-500 text-xs font-medium transition-colors shrink-0"
                             title="Clear saved key"
                           >
                             Clear
@@ -2349,7 +2349,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
               }}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-xs"
+              className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-xs"
             >
               {saved ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : null}
               <span>{saved ? 'Saved!' : 'Save Configuration'}</span>

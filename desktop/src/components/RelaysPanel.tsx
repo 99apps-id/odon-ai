@@ -239,7 +239,7 @@ export const RelaysPanel: React.FC = () => {
             <button
               onClick={saveTelegram}
               disabled={telegramBusy}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold disabled:opacity-50 cursor-pointer"
             >
               {telegramBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               Save &amp; Connect
@@ -248,7 +248,7 @@ export const RelaysPanel: React.FC = () => {
               <button
                 onClick={disconnectTelegram}
                 disabled={telegramBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 Disconnect
@@ -404,7 +404,7 @@ export const RelaysPanel: React.FC = () => {
             <button
               onClick={loadWhatsApp}
               disabled={waBusy}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Refresh

@@ -184,7 +184,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium shrink-0 border transition-all ${
                         isSelected
                           ? 'border-blue-600 bg-blue-600 text-white shadow-2xs'
-                          : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800'
+                          : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800'
                       }`}
                     >
                       <Icon className="w-3.5 h-3.5" />
@@ -271,7 +271,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                                     }),
                                   )
                                 }
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors cursor-pointer"
                               >
                                 <FolderOpen className="w-3 h-3" />
                                 Open Page in Browser
@@ -313,7 +313,7 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                             }),
                           )
                         }
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                       >
                         <FileText className="w-3 h-3" />
                         {isHtml ? 'Open Page in Browser' : 'Preview in Browser'}
@@ -371,14 +371,14 @@ export const ArtifactDrawer: React.FC<ArtifactDrawerProps> = ({
                               window.open(fullSrc, '_blank');
                             }
                           }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />
                           Save Image
                         </button>
                         <button
                           onClick={() => fullSrc && window.open(fullSrc, '_blank')}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 text-xs font-medium transition-colors cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 text-xs font-medium transition-colors cursor-pointer"
                         >
                           <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
                           Open Full

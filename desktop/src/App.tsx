@@ -1906,7 +1906,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
           <div
             onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/90 border border-neutral-200/80 text-[10px] text-neutral-600 shadow-2xs cursor-pointer hover:bg-neutral-50 transition-colors"
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/90 border border-neutral-200/80 text-[10px] text-neutral-600 shadow-2xs cursor-pointer hover:bg-neutral-200 transition-colors"
             title="Click to configure Daemon connection"
           >
             <span
@@ -1950,7 +1950,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             {/* + New Chat Button */}
             <button
               onClick={handleNewChat}
-              className="mt-3.5 w-full flex items-center justify-between px-3 py-2 rounded-xl border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50 transition-all text-xs font-medium text-neutral-800 shadow-2xs group"
+              className="mt-3.5 w-full flex items-center justify-between px-3 py-2 rounded-xl border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-200 transition-all text-xs font-medium text-neutral-800 shadow-2xs group"
             >
               <div className="flex items-center gap-1.5 font-semibold">
                 <Plus className="w-3.5 h-3.5 text-neutral-700 group-hover:scale-110 transition-transform" />
@@ -2107,7 +2107,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             </div>
             <button
               onClick={() => setSettingsOpen(true)}
-              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer"
               title="Settings & Preferences"
             >
               <Settings className="w-4 h-4" />
@@ -2148,7 +2148,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 <div className="flex items-center gap-2">
                   <div
                     onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-50 transition-colors shadow-2xs cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-neutral-200/90 text-xs font-medium text-neutral-800 hover:bg-neutral-200 transition-colors shadow-2xs cursor-pointer"
                     title={`Active Provider: ${activeProvider?.name} (Click to change)`}
                   >
                     <Cpu className="w-3.5 h-3.5 text-blue-600" />
@@ -2175,7 +2175,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 className={`p-2 rounded-lg transition-colors cursor-pointer relative ${
                   pendingApproval
                     ? 'text-amber-600 bg-amber-50 hover:bg-amber-100 ring-1 ring-amber-300'
-                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200'
                 }`}
                 title={pendingApproval ? "Approval Required: Action paused" : "Security Approval & Audit Center"}
               >
@@ -2186,14 +2186,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               </button>
               <button
                 onClick={() => setIsSearchOpen(true)}
-                className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer"
                 title="Search Sessions & Artifacts"
               >
                 <Search className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setIsBellOpen(true)}
-                className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer"
                 title="System Notifications & Activity"
               >
                 <Bell className="w-4 h-4" />
@@ -2201,8 +2201,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <button
                 onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
                 className={`p-2 rounded-lg transition-colors cursor-pointer ${isRightPanelOpen
-                    ? 'text-neutral-700 hover:bg-neutral-100'
-                    : 'text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100'
+                    ? 'text-neutral-700 hover:bg-neutral-200'
+                    : 'text-neutral-400 hover:text-neutral-800 hover:bg-neutral-200'
                   }`}
                 title={isRightPanelOpen ? 'Collapse panel' : 'Open panel'}
               >
@@ -2335,7 +2335,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       {/* Message Action Bar (Copy Button like ChatGPT / Muse AI) */}
                       <button
                         onClick={() => handleCopyMessage(msg.id, msg.content)}
-                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100 transition-all cursor-pointer"
+                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-neutral-400 hover:text-neutral-800 hover:bg-neutral-200 transition-all cursor-pointer"
                         title="Copy message"
                       >
                         {copiedMsgId === msg.id ? (
@@ -2355,7 +2355,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     {msg.thought && (
                       <div className="ml-7 my-1.5">
                         <details className="group rounded-xl bg-neutral-50/80 border border-neutral-200/80 overflow-hidden shadow-2xs">
-                          <summary className="px-3 py-1.5 cursor-pointer text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/50 hover:bg-neutral-100 transition-colors">
+                          <summary className="px-3 py-1.5 cursor-pointer text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/50 hover:bg-neutral-200 transition-colors">
                             <div className="flex items-center gap-1.5">
                               <ListTree className="w-3 h-3 text-clay-600" />
                               <span className="text-[11.5px] font-semibold text-neutral-700">Reasoning & Thought Process</span>
@@ -2543,7 +2543,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                           window.open(fullSrc, '_blank');
                                         }
                                       }}
-                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                                     >
                                       <Download className="w-3 h-3" />
                                       Save Image
@@ -2553,7 +2553,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                         setRightPanelView('artifacts');
                                         setIsRightPanelOpen(true);
                                       }}
-                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-200 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
                                     >
                                       <Layers className="w-3 h-3 text-neutral-500" />
                                       Artifacts Panel
@@ -2588,7 +2588,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                         setRightPanelView('browser');
                                         setIsRightPanelOpen(true);
                                       }}
-                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                                     >
                                       <ExternalLink className="w-3 h-3" />
                                       Preview in Browser
@@ -2598,7 +2598,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                         setRightPanelView('editor');
                                         setIsRightPanelOpen(true);
                                       }}
-                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-200 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
                                     >
                                       <Code2 className="w-3 h-3 text-neutral-500" />
                                       Inspect Source
@@ -2608,7 +2608,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                         setRightPanelView('terminal');
                                         setIsRightPanelOpen(true);
                                       }}
-                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-200 text-neutral-700 text-xs font-medium transition-colors cursor-pointer"
                                     >
                                       <Terminal className="w-3 h-3 text-neutral-500" />
                                       Terminal
@@ -2728,7 +2728,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 <button
                   type="button"
                   onClick={() => setShowTodos(true)}
-                  className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-neutral-50 hover:text-neutral-900 cursor-pointer"
+                  className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-neutral-200 hover:text-neutral-900 cursor-pointer"
                   aria-label="Show tasks"
                 >
                   <ListTree className="w-3.5 h-3.5 text-blue-600" />
@@ -2846,7 +2846,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer"
+                    className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200 rounded-full transition-colors cursor-pointer"
                     title="Attach document or image"
                   >
                     <Paperclip className="w-4 h-4" />
@@ -2854,7 +2854,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
                   <button
                     onClick={openWorkspacePicker}
-                    className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-full transition-colors cursor-pointer min-w-0"
+                    className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200 rounded-full transition-colors cursor-pointer min-w-0"
                     title={
                       activeWorkspace || workspaces.default
                         ? `Folder: ${activeWorkspace || workspaces.default}`
@@ -2873,7 +2873,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <div className="relative">
                     <button
                       onClick={() => setIsToolsMenuOpen(!isToolsMenuOpen)}
-                      className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors ml-1 border border-neutral-200/60 cursor-pointer"
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200 rounded-full transition-colors ml-1 border border-neutral-200/60 cursor-pointer"
                     >
                       <Globe className="w-3.5 h-3.5 text-neutral-500" />
                       <span>Tools ({toolCatalog.length})</span>
@@ -2919,7 +2919,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <div className="relative">
                     <button
                       onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-full transition-colors border border-neutral-200/60 cursor-pointer"
+                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200 rounded-full transition-colors border border-neutral-200/60 cursor-pointer"
                       title={`Active Provider: ${activeProvider?.name}`}
                     >
                       <Cpu className="w-3 h-3 text-blue-500" />
@@ -2943,7 +2943,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <button
                     onClick={() => handleSendMessage()}
                     disabled={!inputMessage.trim()}
-                    className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
+                    className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white flex items-center justify-center transition-transform active:scale-95 shadow-2xs cursor-pointer"
                     title={isGenerating ? 'Send steer message' : 'Send message'}
                   >
                     <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -3030,7 +3030,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => setRightPanelView('artifacts')}
-                        className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+                        className="p-1 hover:bg-neutral-200 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
                         title="Back to Artifacts"
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
@@ -3071,7 +3071,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => setRightPanelView('artifacts')}
-                        className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+                        className="p-1 hover:bg-neutral-200 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
                         title="Back to Artifacts"
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
@@ -3107,7 +3107,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => setRightPanelView('artifacts')}
-                        className="p-1 hover:bg-neutral-100 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+                        className="p-1 hover:bg-neutral-200 rounded-md text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
                         title="Back to Artifacts"
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
@@ -3168,7 +3168,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                   setRightPanelView('browser');
                                 }
                               }}
-                              className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors group cursor-pointer"
+                              className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-200 transition-colors group cursor-pointer"
                             >
                               <div className="flex items-center gap-2.5">
                                 <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
@@ -3262,7 +3262,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         {/* Telegram */}
                         <div
                           onClick={() => setRelayModalOpen('telegram')}
-                          className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer group"
+                          className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer group"
                           title="Configure Telegram Bot Relay"
                         >
                           <div className="flex items-center gap-2.5">
@@ -3288,7 +3288,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         {/* WhatsApp */}
                         <div
                           onClick={() => setRelayModalOpen('whatsapp')}
-                          className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer group"
+                          className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer group"
                           title="Configure WhatsApp Bridge Relay"
                         >
                           <div className="flex items-center gap-2.5">
@@ -3461,7 +3461,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-between border group ${
                       isSelected
                         ? 'bg-blue-50/80 border-blue-200 text-blue-900 shadow-2xs'
-                        : 'border-transparent hover:border-neutral-200 hover:bg-neutral-50 text-neutral-800'
+                        : 'border-transparent hover:border-neutral-200 hover:bg-neutral-200 text-neutral-800'
                     }`}
                   >
                     <div className="flex-1">
@@ -3517,7 +3517,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     />
                     <button
                       onClick={handleAddQuickCustomModel}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-medium transition-colors cursor-pointer shrink-0 shadow-2xs"
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-medium transition-colors cursor-pointer shrink-0 shadow-2xs"
                     >
                       + Add
                     </button>
@@ -3646,7 +3646,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       setCommandQuery('');
                       setIsCommandPaletteOpen(false);
                     }}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-neutral-50 transition-colors text-left cursor-pointer"
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-neutral-200 transition-colors text-left cursor-pointer"
                   >
                     <span className="text-xs font-medium text-neutral-800">{action.label}</span>
                     <span className="text-[10px] font-mono text-neutral-400">{action.hint}</span>
@@ -3710,7 +3710,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                         loadSessionChat(s.id, s.title);
                         setIsSearchOpen(false);
                       }}
-                      className="w-full text-left p-2 rounded-xl hover:bg-neutral-50 transition-colors flex items-center justify-between text-xs cursor-pointer"
+                      className="w-full text-left p-2 rounded-xl hover:bg-neutral-200 transition-colors flex items-center justify-between text-xs cursor-pointer"
                     >
                       <span className="font-medium text-neutral-800 truncate">{s.title}</span>
                       <span className="text-[10px] text-neutral-400">
@@ -3868,13 +3868,13 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   setRelayModalOpen(null);
                   setSettingsOpen(true);
                 }}
-                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-xs font-medium cursor-pointer transition-colors"
+                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-200 text-neutral-700 text-xs font-medium cursor-pointer transition-colors"
               >
                 Open Settings → Relays
               </button>
               <button
                 onClick={() => setRelayModalOpen(null)}
-                className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium cursor-pointer transition-colors shadow-2xs"
+                className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium cursor-pointer transition-colors shadow-2xs"
               >
                 Close
               </button>
@@ -3932,7 +3932,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       className={`flex items-center gap-2 p-2 rounded-lg border ${
                         isActive
                           ? 'border-blue-400 bg-blue-50/40'
-                          : 'border-neutral-200 bg-white hover:bg-neutral-50'
+                          : 'border-neutral-200 bg-white hover:bg-neutral-200'
                       }`}
                     >
                       <button
@@ -3984,7 +3984,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <button
                     onClick={() => workspaceBrowse?.parent && loadWorkspaceBrowse(workspaceBrowse.parent)}
                     disabled={!workspaceBrowse?.parent || workspaceBusy}
-                    className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 disabled:opacity-40 text-neutral-600 cursor-pointer"
+                    className="p-2 rounded-lg border border-neutral-200 hover:bg-neutral-200 disabled:opacity-40 text-neutral-600 cursor-pointer"
                     title="Up one level"
                   >
                     <ChevronUp className="w-3.5 h-3.5" />
@@ -4000,7 +4000,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <button
                     onClick={() => loadWorkspaceBrowse(workspaceInput)}
                     disabled={workspaceBusy}
-                    className="px-2.5 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-[11px] text-neutral-700 disabled:opacity-40 cursor-pointer"
+                    className="px-2.5 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-200 text-[11px] text-neutral-700 disabled:opacity-40 cursor-pointer"
                   >
                     Go
                   </button>
@@ -4031,7 +4031,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <button
                       key={entry.path}
                       onClick={() => loadWorkspaceBrowse(entry.path)}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50 cursor-pointer"
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-200 cursor-pointer"
                       title={entry.path}
                     >
                       <Folder className="w-3.5 h-3.5 text-blue-500 shrink-0" />
@@ -4060,7 +4060,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <button
                       onClick={() => addAndUseWorkspace(workspaceInput || workspaceBrowse?.current || '')}
                       disabled={workspaceBusy || !(workspaceInput || workspaceBrowse?.current)}
-                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold disabled:opacity-40 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold disabled:opacity-40 cursor-pointer"
                     >
                       Add &amp; Use
                     </button>
@@ -4084,7 +4084,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-end">
               <button
                 onClick={() => setWorkspaceModalOpen(false)}
-                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700 text-xs font-medium cursor-pointer"
+                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-200 text-neutral-700 text-xs font-medium cursor-pointer"
               >
                 Close
               </button>

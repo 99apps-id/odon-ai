@@ -401,14 +401,14 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setCreateModal(null)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-600 hover:bg-neutral-100 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-600 hover:bg-neutral-200 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateItem}
                 disabled={!newItemName.trim()}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
               >
                 Create
               </button>

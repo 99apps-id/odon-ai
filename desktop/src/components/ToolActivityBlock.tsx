@@ -15,7 +15,7 @@ export function ToolActivityBlock({ toolName, finished = false }: ToolActivityBl
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-neutral-50"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-neutral-200"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-400" />

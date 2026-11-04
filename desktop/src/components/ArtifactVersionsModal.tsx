@@ -76,7 +76,7 @@ export const ArtifactVersionsModal: React.FC<ArtifactVersionsModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-neutral-400 hover:text-neutral-700 rounded-lg hover:bg-neutral-100"
+            className="p-1.5 text-neutral-400 hover:text-neutral-700 rounded-lg hover:bg-neutral-200"
           >
             <X className="w-4 h-4" />
           </button>
@@ -90,7 +90,7 @@ export const ArtifactVersionsModal: React.FC<ArtifactVersionsModalProps> = ({
             <button
               key={format}
               onClick={() => handleExport(format)}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-neutral-200 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-neutral-200 text-[11px] font-medium text-neutral-700 hover:bg-neutral-200"
             >
               <Download className="w-3 h-3" />
               {format.toUpperCase()}
@@ -130,7 +130,7 @@ export const ArtifactVersionsModal: React.FC<ArtifactVersionsModalProps> = ({
                 <button
                   onClick={() => handleRestore(version.version)}
                   disabled={restoringVersion !== null}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[11px] font-semibold"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-semibold"
                 >
                   {restoringVersion === version.version ? (
                     <Loader2 className="w-3 h-3 animate-spin" />

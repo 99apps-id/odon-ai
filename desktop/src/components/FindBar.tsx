@@ -192,7 +192,7 @@ export function FindBar({ containerRef, scopeKey }: FindBarProps) {
         }}
         disabled={count === 0}
         aria-label="Previous match"
-        className="rounded-full p-1 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:opacity-40 disabled:hover:bg-transparent"
+        className="rounded-full p-1 text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-900 disabled:opacity-40 disabled:hover:bg-transparent"
       >
         <ChevronUp className="h-3.5 w-3.5" strokeWidth={2.2} />
       </button>
@@ -210,7 +210,7 @@ export function FindBar({ containerRef, scopeKey }: FindBarProps) {
         }}
         disabled={count === 0}
         aria-label="Next match"
-        className="rounded-full p-1 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:opacity-40 disabled:hover:bg-transparent"
+        className="rounded-full p-1 text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-900 disabled:opacity-40 disabled:hover:bg-transparent"
       >
         <ChevronDown className="h-3.5 w-3.5" strokeWidth={2.2} />
       </button>
@@ -218,7 +218,7 @@ export function FindBar({ containerRef, scopeKey }: FindBarProps) {
         type="button"
         onClick={close}
         aria-label="Close find"
-        className="rounded-full p-1 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+        className="rounded-full p-1 text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-900"
       >
         <X className="h-3.5 w-3.5" strokeWidth={2.2} />
       </button>

@@ -37,7 +37,7 @@ const optionBase =
 
 const optionRowClass = `${optionBase} border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/60 text-neutral-800 dark:text-neutral-200 shadow-[0_1px_2px_rgba(34,31,28,0.05),0_3px_10px_-4px_rgba(34,31,28,0.10)] hover:border-blue-300 dark:hover:border-blue-500 hover:bg-blue-50/60 dark:hover:bg-blue-950/30 hover:shadow-[0_2px_4px_rgba(34,31,28,0.06),0_6px_16px_-6px_rgba(63,91,112,0.30)]`;
 
-const primaryRowClass = `${optionBase} border border-blue-600 bg-blue-600 font-medium text-white shadow-[0_1px_2px_rgba(34,31,28,0.12),0_4px_12px_-4px_rgba(63,91,112,0.45)] hover:bg-blue-500 hover:shadow-[0_2px_6px_rgba(34,31,28,0.14),0_8px_20px_-6px_rgba(63,91,112,0.55)]`;
+const primaryRowClass = `${optionBase} border border-blue-600 bg-blue-600 font-medium text-white shadow-[0_1px_2px_rgba(34,31,28,0.12),0_4px_12px_-4px_rgba(63,91,112,0.45)] hover:bg-blue-700 hover:shadow-[0_2px_6px_rgba(34,31,28,0.14),0_8px_20px_-6px_rgba(63,91,112,0.55)]`;
 
 const denyRowClass = `${optionBase} border border-clay-200 dark:border-clay-800/60 bg-clay-50 dark:bg-clay-950/30 font-medium text-clay-700 dark:text-clay-300 shadow-[0_1px_2px_rgba(34,31,28,0.05),0_3px_10px_-4px_rgba(93,61,48,0.16)] hover:border-clay-300 dark:hover:border-clay-700 hover:bg-clay-100 dark:hover:bg-clay-900/40 hover:shadow-[0_2px_4px_rgba(34,31,28,0.06),0_6px_16px_-6px_rgba(93,61,48,0.30)]`;
 
@@ -303,7 +303,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({
               <button
                 type="button"
                 onClick={() => setShowDenyFeedback(false)}
-                className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg cursor-pointer"
+                className="px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-lg cursor-pointer"
               >
                 Back
               </button>

@@ -156,14 +156,14 @@ export const McpView: React.FC = () => {
             type="button"
             onClick={loadServers}
             title="Refresh MCP servers"
-            className="p-2 rounded-xl text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+            className="p-2 rounded-xl text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-800 transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
           <button
             type="button"
             onClick={() => setIsAddOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-all shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-2xs"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Server</span>
@@ -204,7 +204,7 @@ export const McpView: React.FC = () => {
                     className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all ${
                       isConfigured
                         ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400 cursor-default'
-                        : 'bg-blue-600 text-white hover:bg-blue-500 shadow-2xs'
+                        : 'bg-blue-600 text-white hover:bg-blue-700 shadow-2xs'
                     }`}
                   >
                     {isConfigured ? 'Installed' : '+ Add'}
@@ -419,13 +419,13 @@ export const McpView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsAddOpen(false)}
-                className="px-4 py-2 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 rounded-xl"
+                className="px-4 py-2 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors shadow-2xs"
+                className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-2xs"
               >
                 Register Server
               </button>

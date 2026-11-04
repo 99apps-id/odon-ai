@@ -247,7 +247,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                           className={`w-full text-left p-2 rounded-lg text-xs transition-colors flex items-center justify-between ${
                             isSelected
                               ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold'
-                              : 'hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200'
+                              : 'hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200'
                           }`}
                         >
                           <div className="truncate mr-2">
@@ -283,7 +283,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
             type="button"
             onClick={() => loadData(owner, repo)}
             title="Refresh repository data"
-            className="p-2 rounded-xl text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
@@ -313,7 +313,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           <button
             type="button"
             onClick={() => onOpenTerminal?.('gh auth login')}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 text-xs font-semibold hover:bg-neutral-50 transition-colors shrink-0 cursor-pointer text-neutral-900 dark:text-white"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white dark:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 text-xs font-semibold hover:bg-neutral-200 transition-colors shrink-0 cursor-pointer text-neutral-900 dark:text-white"
           >
             <Terminal className="w-3.5 h-3.5" />
             <span>gh auth login</span>
@@ -328,7 +328,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
             activeTab === 'prs'
               ? 'bg-blue-600 text-white shadow-2xs'
-              : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+              : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-800'
           }`}
         >
           <GitPullRequest className="w-3.5 h-3.5" />
@@ -339,7 +339,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
           className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
             activeTab === 'issues'
               ? 'bg-blue-600 text-white shadow-2xs'
-              : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+              : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-800'
           }`}
         >
           <AlertCircle className="w-3.5 h-3.5" />
@@ -412,7 +412,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                       <button
                         type="button"
                         onClick={() => handleReviewPr(pr)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-neutral-900 dark:text-white bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-neutral-900 dark:text-white bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
                       >
                         <ShieldCheck className="w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300" />
                         <span>Review with Agent</span>
@@ -422,7 +422,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                           type="button"
                           onClick={() => handleCheckoutBranch(pr.head.ref)}
                           title="Checkout branch in terminal"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-neutral-700 dark:text-neutral-300 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
                         >
                           <Terminal className="w-3.5 h-3.5" />
                           <span>Checkout</span>
@@ -530,7 +530,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
                 <button
                   type="button"
                   onClick={() => setIsCreateOpen(false)}
-                  className="px-4 py-2 text-xs font-medium rounded-lg text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  className="px-4 py-2 text-xs font-medium rounded-lg text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-800"
                 >
                   Cancel
                 </button>
