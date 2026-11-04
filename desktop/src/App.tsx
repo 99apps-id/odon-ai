@@ -62,13 +62,14 @@ import { FileExplorerView } from './components/FileExplorerView';
 import { SshTerminalView } from './components/SshTerminalView';
 import { SettingsModal } from './components/SettingsModal';
 import { MarkdownView } from './components/MarkdownView';
-import { DiffView } from './components/DiffView';
+import { ChangeRollup } from './components/ChangeRollup';
 import { TerminalPeek, commandOf, isTerminalTool, outputToText, type TerminalEntry } from './components/TerminalPeek';
 import { ApprovalCard } from './components/ApprovalCard';
 import { ApprovalCenterModal } from './components/ApprovalCenterModal';
 import { TodoPanel } from './components/TodoPanel';
 import { ReasoningBlock } from './components/ReasoningBlock';
 import { ToolActivityBlock } from './components/ToolActivityBlock';
+import { summarizeToolRun } from './lib/runSummary';
 import { GitHubView } from './components/GitHubView';
 import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
@@ -691,14 +692,12 @@ export default function App() {
   const [streamingTool, setStreamingTool] = useState<string | null>(null);
   const chatDiffs = useMemo<{ id: string; title: string; diff: string }[]>(
     () =>
-      artifacts
-        .flatMap((a) => {
-          const payload = a.payload;
-          if (a.kind !== 'patch' || payload?.type !== 'patch') return [];
-          const diff = payload.data?.diff;
-          return diff ? [{ id: a.id, title: a.title, diff }] : [];
-        })
-        .slice(0, 4),
+      artifacts.flatMap((a) => {
+        const payload = a.payload;
+        if (a.kind !== 'patch' || payload?.type !== 'patch') return [];
+        const diff = payload.data?.diff;
+        return diff ? [{ id: a.id, title: a.title, diff }] : [];
+      }),
     [artifacts],
   );
   const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null);
@@ -2241,9 +2240,11 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       const rows = (msg.toolCalls || []).filter(
                         (tc) => !String(tc.name || '').toLowerCase().startsWith('todo'),
                       );
-                      return rows.length > 0 ? (
-                      <div className="ml-7 flex flex-col gap-1 py-1">
-                        {rows.map((tc, idx) => {
+                      if (rows.length === 0) return null;
+                      const isLastMessage = messages[messages.length - 1]?.id === msg.id;
+                      const live = isGenerating && isLastMessage;
+                      const runLine = rows.length > 1 ? summarizeToolRun(rows, live) : '';
+                      const rowList = rows.map((tc, idx) => {
                           const tcLower = (tc.name || 'tool').toLowerCase();
                           const isTerm = ['terminal', 'bash', 'shell', 'exec', 'kill'].some(k => tcLower.includes(k));
                           const isWeb = ['browser', 'web', 'fetch', 'url', 'http'].some(k => tcLower.includes(k));
@@ -2292,9 +2293,23 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                               )}
                             </details>
                           );
-                        })}
+                      });
+                      return (
+                      <div className="ml-7 flex flex-col gap-1 py-1">
+                        {runLine ? (
+                          <details className="group/run rounded-lg border border-neutral-200 bg-neutral-50/70">
+                            <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-[11.5px] font-medium text-neutral-600">
+                              <Activity className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                              <span className="min-w-0 flex-1 truncate">{runLine}</span>
+                              <ChevronRight className="h-3 w-3 shrink-0 text-neutral-400 transition-transform group-open/run:rotate-90" />
+                            </summary>
+                            <div className="flex flex-col gap-1 border-t border-neutral-200 p-1.5">{rowList}</div>
+                          </details>
+                        ) : (
+                          rowList
+                        )}
                       </div>
-                      ) : null;
+                      );
                     })()}
 
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -2541,20 +2556,16 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 )}
 
                 {chatDiffs.length > 0 && (
-                  <div className="flex flex-col gap-2 mt-2">
-                    {chatDiffs.map((card) => (
-                      <div key={card.id} className="flex gap-2.5">
-                        <div className="w-5 h-5 rounded-full bg-white border border-neutral-200 text-neutral-900 shadow-2xs flex items-center justify-center shrink-0 mt-3">
-                          <CatLogo className="w-3.5 h-3.5 text-neutral-900" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-0.5">
-                            Patch applied · {card.title}
-                          </div>
-                          <DiffView diff={card.diff} maxRows={14} />
-                        </div>
+                  <div className="flex gap-2.5 mt-2">
+                    <div className="w-5 h-5 rounded-full bg-white border border-neutral-200 text-neutral-900 shadow-2xs flex items-center justify-center shrink-0 mt-3">
+                      <CatLogo className="w-3.5 h-3.5 text-neutral-900" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">
+                        Changes in this session
                       </div>
-                    ))}
+                      <ChangeRollup files={chatDiffs} />
+                    </div>
                   </div>
                 )}
 
