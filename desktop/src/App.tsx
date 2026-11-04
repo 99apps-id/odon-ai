@@ -1239,9 +1239,11 @@ export default function App() {
   };
 
   // ── Workspace picker handlers ────────────────────────────────────────────
-  const workspaceLabel = (path: string) => {
-    const parts = path.split(/[\\/]/).filter(Boolean);
-    return parts.length > 0 ? parts[parts.length - 1] : path;
+  const workspaceLabel = (path?: string | null) => {
+    const raw = typeof path === 'string' ? path.trim() : '';
+    if (!raw) return '';
+    const parts = raw.split(/[\\/]/).filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : raw;
   };
 
   const loadWorkspaceBrowse = async (path?: string) => {
@@ -1967,7 +1969,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('chat'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'chat'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <MessageSquare className={`w-4 h-4 ${activeNav === 'chat' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -1978,7 +1980,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('code'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'code'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <Code2 className={`w-4 h-4 ${activeNav === 'code' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -1989,7 +1991,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('terminal'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'terminal'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <Terminal className={`w-4 h-4 ${activeNav === 'terminal' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -2000,7 +2002,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('ssh'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'ssh'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <Server className={`w-4 h-4 ${activeNav === 'ssh' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -2011,7 +2013,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('github'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'github'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <GitPullRequest className={`w-4 h-4 ${activeNav === 'github' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -2022,7 +2024,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('automations'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'automations'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <Share2 className={`w-4 h-4 ${activeNav === 'automations' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -2033,7 +2035,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => { setActiveNav('mcp'); }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'mcp'
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <Cpu className={`w-4 h-4 ${activeNav === 'mcp' ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -2044,7 +2046,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 onClick={() => setActiveNav('files')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${(activeNav === 'files' || activeNav === 'explorer')
                     ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
-                    : 'text-neutral-700 hover:bg-neutral-100/70'
+                    : 'text-neutral-700 hover:bg-neutral-200'
                   }`}
               >
                 <Folder className={`w-4 h-4 ${(activeNav === 'files' || activeNav === 'explorer') ? 'text-blue-600' : 'text-neutral-600'}`} />
@@ -2354,8 +2356,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
                     {msg.thought && (
                       <div className="ml-7 my-1.5">
-                        <details className="group rounded-xl bg-neutral-50/80 border border-neutral-200/80 overflow-hidden shadow-2xs">
-                          <summary className="px-3 py-1.5 cursor-pointer text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center justify-between select-none bg-neutral-100/50 hover:bg-neutral-200 transition-colors">
+                        <details className="group rounded-xl bg-sand-100 border border-neutral-300/80 overflow-hidden shadow-2xs">
+                          <summary className="px-3 py-1.5 cursor-pointer text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center justify-between select-none bg-sand-200/80 hover:bg-sand-300/80 transition-colors">
                             <div className="flex items-center gap-1.5">
                               <ListTree className="w-3 h-3 text-clay-600" />
                               <span className="text-[11.5px] font-semibold text-neutral-700">Reasoning & Thought Process</span>
@@ -2904,8 +2906,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                           aria-pressed={active}
                           className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium transition-colors ${
                             active
-                              ? 'bg-white text-neutral-900'
-                              : 'text-neutral-500 hover:text-neutral-800'
+                              ? 'bg-white text-neutral-900 shadow-2xs'
+                              : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200'
                           }`}
                         >
                           <m.Icon className="w-3 h-3" />
@@ -3226,7 +3228,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     {/* 1.5 Host Terminal Quick Launch Card */}
                     <div
                       onClick={() => setRightPanelView('terminal')}
-                      className="flex items-center justify-between p-2.5 rounded-xl border border-neutral-200/90 bg-neutral-50/70 hover:bg-neutral-100/70 transition-all cursor-pointer group shadow-2xs"
+                      className="flex items-center justify-between p-2.5 rounded-xl border border-neutral-200/90 bg-neutral-50/70 hover:bg-neutral-200 transition-all cursor-pointer group shadow-2xs"
                     >
                       <div className="flex items-center gap-2.5">
                         <div className="p-2 rounded-xl bg-blue-600 text-white group-hover:scale-105 transition-transform shadow-2xs">
@@ -3276,10 +3278,10 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                           <div className="flex items-center gap-2">
                             <div className="flex items-center gap-1.5 text-[11px] text-neutral-600">
                               <span
-                                className={`w-1.5 h-1.5 rounded-full ${systemStatus?.relays.telegram ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
+                                className={`w-1.5 h-1.5 rounded-full ${systemStatus?.relays?.telegram ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
                                   }`}
                               />
-                              <span>{systemStatus?.relays.telegram ? 'Connected' : 'Standby'}</span>
+                              <span>{systemStatus?.relays?.telegram ? 'Connected' : 'Standby'}</span>
                             </div>
                             <ChevronRight className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
                           </div>
@@ -3302,10 +3304,10 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                           <div className="flex items-center gap-2">
                             <div className="flex items-center gap-1.5 text-[11px] text-neutral-600">
                               <span
-                                className={`w-1.5 h-1.5 rounded-full ${systemStatus?.relays.whatsapp ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
+                                className={`w-1.5 h-1.5 rounded-full ${systemStatus?.relays?.whatsapp ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'
                                   }`}
                               />
-                              <span>{systemStatus?.relays.whatsapp ? 'Connected' : 'Standby'}</span>
+                              <span>{systemStatus?.relays?.whatsapp ? 'Connected' : 'Standby'}</span>
                             </div>
                             <ChevronRight className="w-3.5 h-3.5 text-neutral-400 group-hover:text-neutral-700 transition-colors" />
                           </div>
@@ -3767,14 +3769,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
                 <span className="text-neutral-600">Telegram Bot Relay</span>
-                <span className={`font-semibold ${systemStatus?.relays.telegram ? 'text-emerald-600' : 'text-neutral-700'}`}>
-                  {systemStatus?.relays.telegram ? 'Connected & polling' : 'Standby — configure in Settings → Relays'}
+                <span className={`font-semibold ${systemStatus?.relays?.telegram ? 'text-emerald-600' : 'text-neutral-700'}`}>
+                  {systemStatus?.relays?.telegram ? 'Connected & polling' : 'Standby — configure in Settings → Relays'}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
                 <span className="text-neutral-600">WhatsApp Cloud Relay</span>
-                <span className={`font-semibold ${systemStatus?.relays.whatsapp ? 'text-emerald-600' : 'text-neutral-700'}`}>
-                  {systemStatus?.relays.whatsapp ? 'Connected' : 'Standby — pair in Settings → Relays'}
+                <span className={`font-semibold ${systemStatus?.relays?.whatsapp ? 'text-emerald-600' : 'text-neutral-700'}`}>
+                  {systemStatus?.relays?.whatsapp ? 'Connected' : 'Standby — pair in Settings → Relays'}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between">
@@ -3828,8 +3830,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   </div>
                   <div className="text-[11px] text-neutral-500">
                     Status:{' '}
-                    <span className={`font-semibold ${systemStatus?.relays.telegram ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      {systemStatus?.relays.telegram
+                    <span className={`font-semibold ${systemStatus?.relays?.telegram ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {systemStatus?.relays?.telegram
                         ? 'Connected — polling for updates'
                         : 'Not connected — configure it in Settings → Relays'}
                     </span>
@@ -3850,8 +3852,8 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   </div>
                   <div className="text-[11px] text-neutral-500">
                     Status:{' '}
-                    <span className={`font-semibold ${systemStatus?.relays.whatsapp ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      {systemStatus?.relays.whatsapp
+                    <span className={`font-semibold ${systemStatus?.relays?.whatsapp ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {systemStatus?.relays?.whatsapp
                         ? 'Connected — bridge or webhook is live'
                         : 'Not connected — pair it in Settings → Relays'}
                     </span>

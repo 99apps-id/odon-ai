@@ -495,8 +495,8 @@ function formatInline(text: string, onOpenBrowser?: (url: string) => void, dense
   if (!text) return '';
 
   const codeClass = dense
-    ? 'px-1 py-0.2 rounded text-[0.875em] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 font-normal'
-    : 'px-1.5 py-0.5 rounded text-[0.875em] font-mono bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200/90 dark:border-neutral-700 font-normal';
+    ? 'px-1 py-0.2 rounded text-[0.875em] font-mono bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700 font-normal'
+    : 'px-1.5 py-0.5 rounded text-[0.875em] font-mono bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-700 font-normal';
 
   // Escape first: model output is untrusted and must never inject raw HTML.
   return escapeHtml(text)

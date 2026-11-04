@@ -443,7 +443,21 @@ export const api = {
   async listSessions(): Promise<Session[]> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions`);
     if (!res.ok) throw new Error(`Failed to list sessions: ${res.statusText}`);
-    return res.json();
+    const rows = await res.json();
+    // Normalise at the boundary: a legacy row without active_model used to
+    // crash the whole window when the model pill split it. Missing strings
+    // become '' so callers can rely on the declared types.
+    if (!Array.isArray(rows)) return [];
+    return rows.map((s: any) => ({
+      ...s,
+      id: String(s?.id ?? ''),
+      title: String(s?.title ?? ''),
+      mode: s?.mode ?? 'general',
+      status: s?.status ?? 'active',
+      active_model: String(s?.active_model ?? ''),
+      created_at: String(s?.created_at ?? ''),
+      updated_at: String(s?.updated_at ?? ''),
+    }));
   },
 
   async createSession(
