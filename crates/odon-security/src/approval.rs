@@ -709,7 +709,7 @@ mod tests {
             })
         };
 
-        let id = match rx.recv().await.unwrap() {
+        let id = match rx.recv().await.unwrap().event {
             AgentEvent::ApprovalRequested {
                 approval_id,
                 tool_name,
@@ -728,7 +728,7 @@ mod tests {
                 .await
         );
 
-        match rx.recv().await.unwrap() {
+        match rx.recv().await.unwrap().event {
             AgentEvent::ApprovalResolved {
                 approval_id,
                 decision,
@@ -747,7 +747,7 @@ mod tests {
 
     /// Engine whose policy/audit files live in a throwaway temp dir so tests
     /// never touch the operator's real `approval-policies.json`.
-    fn test_engine() -> (ApprovalEngine, tokio::sync::broadcast::Receiver<AgentEvent>) {
+    fn test_engine() -> (ApprovalEngine, odon_core::events::EventReceiver) {
         let (tx, rx) = odon_core::events::create_event_bus(64);
         let engine = ApprovalEngine::new(SecurityPolicy::default());
         let tmp = std::env::temp_dir().join(format!(
@@ -763,9 +763,9 @@ mod tests {
         (engine, rx)
     }
 
-    async fn next_requested_id(rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> String {
+    async fn next_requested_id(rx: &mut odon_core::events::EventReceiver) -> String {
         loop {
-            match rx.recv().await.unwrap() {
+            match rx.recv().await.unwrap().event {
                 AgentEvent::ApprovalRequested { approval_id, .. } => return approval_id,
                 _ => continue,
             }

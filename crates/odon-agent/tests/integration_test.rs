@@ -28,7 +28,7 @@ fn auto_approve(policy: SecurityPolicy) -> Arc<ApprovalEngine> {
     let approver = engine.clone();
     tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
-            if let AgentEvent::ApprovalRequested { approval_id, .. } = event {
+            if let AgentEvent::ApprovalRequested { approval_id, .. } = event.event {
                 let _ = approver
                     .submit_decision(&approval_id, ApprovalDecision::Approved)
                     .await;
@@ -219,7 +219,7 @@ async fn test_conversational_agent_turn_with_artifacts() {
     let received_clone = received_artifacts.clone();
     tokio::spawn(async move {
         while let Ok(evt) = event_rx.recv().await {
-            if let AgentEvent::ArtifactCreated { .. } = evt {
+            if let AgentEvent::ArtifactCreated { .. } = evt.event {
                 received_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
@@ -607,14 +607,23 @@ async fn test_steer_waits_for_running_turn_then_is_applied() {
     );
 
     let mut saw_applied = false;
+    let mut applied_session = None;
     while let Ok(event) = event_rx.try_recv() {
-        if let AgentEvent::SteerApplied { steer_id, .. } = event {
+        if let AgentEvent::SteerApplied { steer_id, .. } = event.event {
             if steer_id == "steer-1" {
                 saw_applied = true;
+                applied_session = event.session_id;
             }
         }
     }
     assert!(saw_applied, "SteerApplied event must be emitted");
+    // The turn's session id is stamped on the envelope, so an SSE subscriber
+    // can route this event without parsing the payload.
+    assert_eq!(
+        applied_session.as_deref(),
+        Some(session.id.as_str()),
+        "the event must carry the session id bound to the running turn"
+    );
 }
 
 /// Provider that delegates with run_subagent whenever the user asks, runs

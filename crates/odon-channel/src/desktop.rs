@@ -1,17 +1,17 @@
 use async_trait::async_trait;
-use odon_core::{AgentEvent, Result};
+use odon_core::{AgentEvent, EventSender, Result};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock};
 
 use crate::adapter::{ChannelAdapter, IncomingChannelMessage};
 
 pub struct DesktopChannel {
-    event_tx: broadcast::Sender<AgentEvent>,
+    event_tx: EventSender,
     incoming_tx: Arc<RwLock<Option<mpsc::Sender<IncomingChannelMessage>>>>,
 }
 
 impl DesktopChannel {
-    pub fn new(event_tx: broadcast::Sender<AgentEvent>) -> Self {
+    pub fn new(event_tx: EventSender) -> Self {
         Self {
             event_tx,
             incoming_tx: Arc::new(RwLock::new(None)),

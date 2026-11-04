@@ -115,17 +115,51 @@ export interface SystemStatus {
   };
 }
 
+/**
+ * Session scope of an SSE event. Optional, and nullable, on purpose: some
+ * events are genuinely global (relay log lines, daemon-wide notices), and older
+ * daemons omit the field entirely. The UI treats an absent or empty id as
+ * "global" and drops only events that name a *different* session.
+ */
+export interface AgentEventSessionScope {
+  session_id?: string | null;
+}
+
+/**
+ * One member of the AgentEvent union: a literal `type` tag plus its payload.
+ * The envelope may repeat `session_id` at the top level, so an emitter that
+ * puts the scope beside the payload instead of inside it still filters right.
+ */
+type AgentEventEnvelope<T extends string, P> = {
+  type: T;
+  payload: P & AgentEventSessionScope;
+  session_id?: string | null;
+};
+
+/** Discriminated on `type`; narrow with `if (event.type === 'text_delta')`. */
 export type AgentEvent =
-  | { type: 'state_changed'; payload: { session_id: string; state: string } }
-  | { type: 'text_delta'; payload: { session_id: string; delta: string } }
-  | { type: 'thought_delta'; payload: { session_id: string; delta: string } }
-  | { type: 'tool_call_started'; payload: { session_id: string; call_id: string; tool_name: string; arguments: any } }
-  | { type: 'tool_call_finished'; payload: { session_id: string; call_id: string; output: any; is_error: boolean } }
-  | { type: 'artifact_created'; payload: { session_id: string; artifact: Artifact } }
-  | { type: 'steer_applied'; payload: { session_id: string; steer_id: string; text: string } }
-  | { type: 'approval_requested'; payload: { session_id: string; approval_id: string; tool_name: string; risk_tier: number; description: string; parameters?: Record<string, unknown> } }
-  | { type: 'approval_resolved'; payload: { session_id: string; approval_id: string; decision: 'approved' | 'rejected' | 'expired' } }
-  | { type: 'error'; payload: { session_id: string; message: string } };
+  | AgentEventEnvelope<'state_changed', { state: string }>
+  | AgentEventEnvelope<'text_delta', { delta: string }>
+  | AgentEventEnvelope<'thought_delta', { delta: string }>
+  | AgentEventEnvelope<'tool_call_started', { call_id: string; tool_name: string; arguments: any }>
+  | AgentEventEnvelope<'tool_call_finished', { call_id: string; output: any; is_error: boolean }>
+  | AgentEventEnvelope<'artifact_created', { artifact: Artifact }>
+  | AgentEventEnvelope<'steer_applied', { steer_id: string; text: string }>
+  | AgentEventEnvelope<
+      'approval_requested',
+      {
+        approval_id: string;
+        tool_name: string;
+        risk_tier: number;
+        description: string;
+        parameters?: Record<string, unknown>;
+      }
+    >
+  | AgentEventEnvelope<
+      'approval_resolved',
+      { approval_id: string; decision: 'approved' | 'rejected' | 'expired' }
+    >
+  | AgentEventEnvelope<'error', { message: string }>;
 
 export interface ModelItem {
   id: string;

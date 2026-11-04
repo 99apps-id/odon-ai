@@ -336,7 +336,7 @@ async fn main() -> anyhow::Result<()> {
     // Spawn event printer
     tokio::spawn(async move {
         while let Ok(evt) = event_rx.recv().await {
-            let _ = cli_channel.broadcast_event(&evt).await;
+            let _ = cli_channel.broadcast_event(&evt.event).await;
         }
     });
 

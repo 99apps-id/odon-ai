@@ -151,6 +151,28 @@ export interface GitHubRepoItem {
   description: string;
 }
 
+/**
+ * Whether an SSE event belongs to the session the UI is showing.
+ *
+ * `/api/events` is a single broadcast stream: every session the daemon is
+ * running (including subagents and relay-driven turns) writes into it. An event
+ * that names a session other than the active one must be dropped before it
+ * touches any state. Events with no session id are global and always pass, so
+ * daemon-wide notices are never suppressed.
+ *
+ * `activeSessionId` is passed per event rather than captured, which keeps a
+ * long-lived subscriber from filtering against the session it opened with.
+ */
+export function isAgentEventForSession(
+  event: { session_id?: string | null; payload?: { session_id?: string | null } | null },
+  activeSessionId: string | null,
+): boolean {
+  const raw = event.payload?.session_id ?? event.session_id;
+  const eventSessionId = typeof raw === 'string' ? raw.trim() : '';
+  if (!eventSessionId) return true;
+  return eventSessionId === activeSessionId;
+}
+
 export const api = {
   getApiToken(): string {
     if (typeof window === 'undefined') return '';
@@ -1099,9 +1121,11 @@ export const api = {
         connected = true;
         if (wasConnected) onReconnect?.();
       };
+      // Events for every session arrive here; callers gate them with
+      // isAgentEventForSession before applying anything.
       next.onmessage = (e) => {
         try {
-          const parsed = JSON.parse(e.data);
+          const parsed: AgentEvent = JSON.parse(e.data);
           onEvent(parsed);
         } catch (err) {
           console.error('Failed to parse SSE event:', err);

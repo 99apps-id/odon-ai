@@ -7,7 +7,10 @@ pub mod session;
 
 pub use artifact::{Artifact, ArtifactFile, ArtifactKind, ArtifactPayload};
 pub use error::{OdonError, Result};
-pub use events::{AgentEvent, AgentState, EventSender};
+pub use events::{
+    current_session_id, AgentEvent, AgentEventEnvelope, AgentState, EventReceiver, EventSender,
+    ACTIVE_SESSION_ID,
+};
 pub use message::{
     Message, MessageAttachment, MessageContent, MessageRole, OutputActionChip, ToolCallInfo,
 };

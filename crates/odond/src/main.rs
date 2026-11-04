@@ -37,7 +37,7 @@ use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_channel::{ChannelAdapter, IncomingChannelMessage, TelegramRelay, WhatsAppChannel};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
-use odon_core::{AgentEvent, ArtifactPayload, Message, OdonError};
+use odon_core::{AgentEvent, ArtifactPayload, EventSender, Message, OdonError};
 use odon_provider::{
     anthropic::AnthropicProvider,
     host_creds::{discover_antigravity, discover_github_copilot},
@@ -2019,7 +2019,7 @@ struct AppState {
     #[allow(dead_code)]
     audit: Arc<AuditLogger>,
     tools: Arc<ToolRegistry>,
-    event_tx: broadcast::Sender<AgentEvent>,
+    event_tx: EventSender,
     workspace_root: String,
     oauth_accounts: Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
     automations: Arc<tokio::sync::RwLock<Vec<AutomationJob>>>,
@@ -2420,7 +2420,7 @@ async fn main() -> anyhow::Result<()> {
                             risk_tier,
                             description,
                             ..
-                        } = event
+                        } = event.event
                         {
                             let Some((channel, sender)) = relay_channel_for_session(&session_id)
                             else {
@@ -6425,8 +6425,12 @@ async fn sse_events(headers: HeaderMap, State(state): State<AppState>) -> axum::
     let stream = async_stream::stream! {
         loop {
             match rx.recv().await {
-                Ok(event) => {
-                    if let Ok(data) = serde_json::to_string(&event) {
+                // Items arrive enveloped: a `session_id` (present whenever the
+                // event was published inside a turn) beside the flattened
+                // event, so the wire JSON keeps its flat `type` / `payload`
+                // shape and only gains the routing id.
+                Ok(envelope) => {
+                    if let Ok(data) = serde_json::to_string(&envelope) {
                         yield Ok::<Event, Infallible>(Event::default().data(data));
                     }
                 }

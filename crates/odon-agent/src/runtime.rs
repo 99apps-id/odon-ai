@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use odon_core::{
-    AgentEvent, AgentState, Artifact, Message, MessageAttachment, MessageRole, OdonError, Result,
-    Session, SessionMode, ToolCallInfo,
+    AgentEvent, AgentState, Artifact, EventSender, Message, MessageAttachment, MessageRole,
+    OdonError, Result, Session, SessionMode, ToolCallInfo, ACTIVE_SESSION_ID,
 };
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent, ToolDefinition};
 use odon_security::{ApprovalEngine, AuditLogger};
@@ -115,7 +115,7 @@ pub struct AgentRuntime {
     audit: Arc<AuditLogger>,
     providers: Arc<RwLock<HashMap<String, Arc<dyn ModelProvider>>>>,
     default_provider: Arc<RwLock<String>>,
-    event_tx: broadcast::Sender<AgentEvent>,
+    event_tx: EventSender,
     workspace_root: String,
     max_turn_iterations: AtomicUsize,
     /// True once the operator pinned a cap (env var or
@@ -131,7 +131,7 @@ impl AgentRuntime {
         tools: Arc<ToolRegistry>,
         approval: Arc<ApprovalEngine>,
         audit: Arc<AuditLogger>,
-        event_tx: broadcast::Sender<AgentEvent>,
+        event_tx: EventSender,
         workspace_root: String,
     ) -> Self {
         Self {
@@ -195,7 +195,7 @@ impl AgentRuntime {
         self.approval.clone()
     }
 
-    pub fn event_sender(&self) -> broadcast::Sender<AgentEvent> {
+    pub fn event_sender(&self) -> EventSender {
         self.event_tx.clone()
     }
 
@@ -448,12 +448,52 @@ impl AgentRuntime {
         .await
     }
 
+    /// Enters a turn with `session_id` bound to the current task.
+    ///
+    /// Binding here, once, instead of at each event callsite is what stamps a
+    /// session id onto every event the turn publishes: the bus reads the
+    /// task-local value when it sends. A delegated child turn re-enters this
+    /// scope with its own session id, so nesting stays correct.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_turn_inner(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        attachments: Vec<MessageAttachment>,
+        model_override: Option<&str>,
+        effort: Option<&str>,
+        cancellation: CancellationToken,
+        steer: Option<SteerQueue>,
+        extra_system_prompt: Option<&str>,
+        depth: u32,
+        iteration_cap: Option<usize>,
+    ) -> Result<Message> {
+        ACTIVE_SESSION_ID
+            .scope(
+                session_id.to_string(),
+                self.execute_turn_body(
+                    session_id,
+                    user_prompt,
+                    attachments,
+                    model_override,
+                    effort,
+                    cancellation,
+                    steer,
+                    extra_system_prompt,
+                    depth,
+                    iteration_cap,
+                ),
+            )
+            .await
+    }
+
     /// The turn loop. `depth` counts subagent nesting (a delegated run may
     /// not delegate further), and `iteration_cap` overrides the configured
-    /// step cap for bounded child runs.
+    /// step cap for bounded child runs. Always entered through
+    /// [`AgentRuntime::execute_turn_inner`], which supplies the session scope.
     #[allow(clippy::too_many_arguments)]
     #[async_recursion::async_recursion]
-    async fn execute_turn_inner(
+    async fn execute_turn_body(
         &self,
         session_id: &str,
         user_prompt: &str,

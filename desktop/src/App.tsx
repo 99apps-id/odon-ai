@@ -74,7 +74,13 @@ import { AutomationsView } from './components/AutomationsView';
 import { McpView } from './components/McpView';
 import { PromptStartersGrid } from './components/PromptStartersGrid';
 import { ArtifactVersionsModal } from './components/ArtifactVersionsModal';
-import { api, WorkspaceInfo, WorkspaceBrowseResult, type TodoItem } from './api';
+import {
+  api,
+  isAgentEventForSession,
+  WorkspaceInfo,
+  WorkspaceBrowseResult,
+  type TodoItem,
+} from './api';
 import { isDesktopShell, pickFolder, daemonToken } from './lib/desktop';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
@@ -511,7 +517,6 @@ export default function App() {
     isImage: boolean;
   }
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
-  const activeSessionRef = useRef<string | null>(null);
 
   const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
   const [quickModelInput, setQuickModelInput] = useState('');
@@ -831,13 +836,13 @@ export default function App() {
     });
 
     const unsubscribe = api.subscribeEvents((event) => {
-      const eventSession = 'session_id' in event.payload ? event.payload.session_id : null;
-      // Drop session-bound events when no session is active, and drop events
-      // belonging to another session. Without the null check, a background
-      // session (or subagent) could feed this view before any session opens.
-      if (eventSession && eventSession !== activeSessionRef.current) {
-        return;
-      }
+      // Filter first, before any state is touched: the daemon broadcasts every
+      // session's events on one stream, so a background session or subagent
+      // would otherwise type into the view of the session on screen. The id is
+      // read from the ref per event (not captured by this effect), so a session
+      // switch cannot leave the callback filtering against the previous session.
+      const activeSessionId = currentSessionIdRef.current;
+      if (!isAgentEventForSession(event, activeSessionId)) return;
       if (event.type === 'text_delta') {
         setStreamingText((prev) => prev + event.payload.delta);
       } else if (event.type === 'thought_delta') {
@@ -875,8 +880,8 @@ export default function App() {
         }
       } else if (event.type === 'tool_call_finished') {
         setStreamingTool(null);
-        if (todoCallIdsRef.current.delete(event.payload.call_id) && currentSessionId) {
-          api.getTodos(currentSessionId).then(setTodos).catch(() => {});
+        if (todoCallIdsRef.current.delete(event.payload.call_id) && activeSessionId) {
+          api.getTodos(activeSessionId).then(setTodos).catch(() => {});
         }
         const pending = pendingTerminalRef.current.get(event.payload.call_id);
         if (pending) {
@@ -892,9 +897,9 @@ export default function App() {
         if (event.payload.state === 'completed') {
           setIsGenerating(false);
           setStreamingTool(null);
-          if (currentSessionId) {
-            loadArtifacts(currentSessionId);
-            api.getTodos(currentSessionId).then(setTodos).catch(() => {});
+          if (activeSessionId) {
+            loadArtifacts(activeSessionId);
+            api.getTodos(activeSessionId).then(setTodos).catch(() => {});
             loadSessions();
           }
         }
@@ -906,7 +911,10 @@ export default function App() {
       if (statusTimer !== undefined) window.clearTimeout(statusTimer);
       unsubscribe();
     };
-  }, [currentSessionId]);
+    // The event handler reads the active session from currentSessionIdRef for
+    // every event, so the stream does not need rebuilding on a session switch —
+    // and rebuilding it dropped whatever the daemon emitted in the gap.
+  }, []);
 
   // Cross-panel integration event listeners (Terminal, Browser, Agent interaction)
   useEffect(() => {
@@ -980,7 +988,6 @@ export default function App() {
   const loadSessionChat = async (id: string, title: string) => {
     setCurrentSessionId(id);
     currentSessionIdRef.current = id;
-    activeSessionRef.current = id;
     setInChatMode(true);
     setStreamingText('');
     setStreamingThought('');
@@ -1293,14 +1300,11 @@ export default function App() {
             activeWorkspace || workspaces.default || undefined,
           );
           sid = newSession.id;
-          activeSessionRef.current = sid;
           currentSessionIdRef.current = sid;
           setCurrentSessionId(sid);
           setSessions((prev) => [newSession, ...prev]);
           // Consumed once: a later session must not silently inherit this label.
           setPendingSessionMode('general');
-        } else {
-          activeSessionRef.current = sid;
         }
 
         const wireProviderId = activeProvider?.id || activeProviderId;
