@@ -36,6 +36,8 @@ export interface Desk {
   workHours?: string;
   /** Active subagent delegations under this desk's current conversation. */
   children?: number;
+  /** Newest-first activity trail mirrored from the live event state. */
+  log?: string[];
 }
 
 export interface DeskEventState {
@@ -48,6 +50,8 @@ export interface DeskEventState {
   thought: string;
   /** Tail of the latest answer stream, for the hover tooltip. */
   answer: string;
+  /** Newest-first bounded activity trail, for the selected-desk panel. */
+  log: string[];
 }
 
 export const MODE_ROOMS: Record<string, string> = {
@@ -134,7 +138,16 @@ export function emptyDeskState(): DeskEventState {
     artifacts: [],
     thought: '',
     answer: '',
+    log: [],
   };
+}
+
+/** Bound for the per-desk activity trail; older entries fall off. */
+const MAX_LOG_ENTRIES = 6;
+
+function pushLog(current: DeskEventState, entry: string): void {
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  current.log = [`${time} ${entry}`, ...current.log].slice(0, MAX_LOG_ENTRIES);
 }
 
 /** Keep a bounded tail so a long session cannot grow the office state. */
@@ -172,6 +185,7 @@ export function applyOfficeEvent(
             ? 'failed'
             : 'thinking';
     if (phase === 'working' && event.payload.detail) current.tool = event.payload.detail;
+    if (phase !== 'working') pushLog(current, `delegation ${phase}`);
     events.set(childId, current);
     return true;
   }
@@ -193,6 +207,7 @@ export function applyOfficeEvent(
       return false;
     case 'state_changed':
       current.state = stateFrom(event.payload.state);
+      pushLog(current, `state → ${STATE_LABELS[current.state]}`);
       if (current.state !== 'executing_tool') current.tool = '';
       if (current.state !== 'awaiting_approval') {
         current.approval = '';
@@ -202,25 +217,31 @@ export function applyOfficeEvent(
     case 'tool_call_started':
       current.tool = event.payload.tool_name || '';
       current.state = 'executing_tool';
+      pushLog(current, `running ${current.tool || 'tool'}`);
       break;
     case 'tool_call_finished':
       if (!event.payload.is_error) current.tool = '';
+      else pushLog(current, `tool error: ${current.tool || 'unknown tool'}`);
       break;
     case 'approval_requested':
       current.approval = event.payload.tool_name || 'approval';
       current.approvalId = event.payload.approval_id || '';
       current.state = 'awaiting_approval';
+      pushLog(current, `needs approval: ${current.approval}`);
       break;
     case 'approval_resolved':
       current.approval = '';
       current.approvalId = '';
+      pushLog(current, `approval ${event.payload.decision}`);
       break;
     case 'artifact_created':
       current.artifacts = [event.payload.artifact.kind, ...current.artifacts].slice(0, 4);
       current.state = 'generating_artifact';
+      pushLog(current, `artifact: ${event.payload.artifact.kind}`);
       break;
     case 'error':
       current.state = 'failed';
+      pushLog(current, `error: ${(event.payload.message || '').slice(0, 80)}`);
       break;
     default:
       return false;
@@ -261,6 +282,7 @@ export function desksFromSessions(
         approval: live.approval,
         approvalId: live.approvalId || undefined,
         artifacts: live.artifacts,
+        log: live.log,
         updatedAt: session.updated_at,
       };
     });
@@ -406,6 +428,7 @@ export function desksFromAgents(
         approval: current.approval,
         approvalId: current.approvalId || undefined,
         artifacts: current.artifacts,
+        log: current.log,
         updatedAt: session?.updated_at || agent.updated_at,
         agentId: agent.id,
         role: agent.role,
@@ -431,6 +454,7 @@ export function desksFromAgents(
       approval: current.approval,
       approvalId: current.approvalId || undefined,
       artifacts: current.artifacts,
+      log: current.log,
       updatedAt: session.updated_at,
       agentId: session.agent_id || undefined,
       sessionId: session.id,

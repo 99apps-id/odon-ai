@@ -803,6 +803,24 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
                 </button>
               </div>
 
+              {(selected.log?.length || 0) > 0 && (
+                <div>
+                  <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">
+                    Recent activity
+                  </div>
+                  <div className="max-h-28 space-y-0.5 overflow-y-auto rounded-lg border border-neutral-100 bg-sand-50/60 p-1.5">
+                    {(selected.log || []).map((entry, index) => (
+                      <div
+                        key={`${index}-${entry}`}
+                        className="font-mono text-[9.5px] leading-snug text-neutral-600"
+                      >
+                        {entry}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {selected.agentId && agentSessions.length > 0 && (
                 <div>
                   <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-neutral-400">

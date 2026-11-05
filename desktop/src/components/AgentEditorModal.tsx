@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Save, Loader2 } from 'lucide-react';
 import { api } from '../api';
+import type { SkillItemInfo } from '../api';
 import type {
   Agent,
   AgentTelegramStatus,
@@ -66,7 +67,7 @@ const EMPTY_AGENT: Agent = {
  */
 export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorModalProps) {
   const [draft, setDraft] = useState<Agent>(agent || EMPTY_AGENT);
-  const [skillsText, setSkillsText] = useState('');
+  const [skillsCatalog, setSkillsCatalog] = useState<SkillItemInfo[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -87,12 +88,19 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
     if (!open) return;
     const next = agent || EMPTY_AGENT;
     setDraft({ ...next, schedule: { ...next.schedule } });
-    setSkillsText((next.skills || []).join(', '));
     const parts = (next.model || '').includes('::') ? next.model.split('::') : ['', next.model];
     setProviderId(parts[0] || '');
     setModelFilter('');
     setError('');
   }, [agent, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    api
+      .getSkills()
+      .then((data) => setSkillsCatalog(data.skills || []))
+      .catch(() => setSkillsCatalog([]));
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -157,6 +165,17 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
   }, [open, providerId, draft.model, providers]);
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
+  const skillChoices = Array.from(
+    new Set([...skillsCatalog.map((skill) => skill.name), ...(draft.skills || [])]),
+  );
+  const toggleSkill = (name: string) => {
+    const current = draft.skills || [];
+    patch({
+      skills: current.includes(name)
+        ? current.filter((skill) => skill !== name)
+        : [...current, name],
+    });
+  };
   const providerOptions = providers.filter(
     (provider) => provider.configured || provider.connected || provider.id === providerId,
   );
@@ -245,10 +264,7 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
         system_prompt: draft.system_prompt,
         model: draft.model.trim() || 'odon-auto',
         workspace_root: draft.workspace_root?.trim() || null,
-        skills: skillsText
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean),
+        skills: [...(draft.skills || [])],
         enabled: draft.enabled,
         sort_order: draft.sort_order,
         schedule: draft.schedule,
@@ -408,15 +424,38 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
                 placeholder="Use the daemon default"
               />
             </label>
-            <label className="text-[11px] font-medium text-neutral-600">
-              Skills (comma separated)
-              <input
-                value={skillsText}
-                onChange={(e) => setSkillsText(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs text-neutral-800 outline-none focus:border-blue-500"
-                placeholder="skill slugs"
-              />
-            </label>
+            <div className="text-[11px] font-medium text-neutral-600">
+              Skills
+              {(skillChoices.length > 0 || (draft.skills || []).length > 0) && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {skillChoices.map((name) => {
+                    const active = (draft.skills || []).includes(name);
+                    const info = skillsCatalog.find((skill) => skill.name === name);
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        aria-pressed={active}
+                        title={info?.description || name}
+                        onClick={() => toggleSkill(name)}
+                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                          active
+                            ? 'bg-blue-600 text-white hover:bg-blue-700'
+                            : 'bg-white text-neutral-500 ring-1 ring-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        {info?.title || name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <span className="mt-1 block text-[10px] font-normal leading-snug text-neutral-400">
+                {skillChoices.length > 0
+                  ? 'Tap to assign the skills this agent may load.'
+                  : 'No skills published yet.'}
+              </span>
+            </div>
           </div>
 
           <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-3">
