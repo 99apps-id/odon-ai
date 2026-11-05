@@ -1517,7 +1517,9 @@ export const api = {
       };
       next.onerror = () => {
         if (closed || es !== next) return;
-        connected = false;
+        // Do not reset `connected`: it tracks "has ever connected", so the next
+        // successful open fires `onReconnect`. Resetting it here made the
+        // reconnect handler dead code.
         next.close();
         es = null;
         onDisconnect?.();

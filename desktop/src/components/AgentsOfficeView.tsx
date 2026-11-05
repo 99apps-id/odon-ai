@@ -240,7 +240,10 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
     return () => {
       cancelled = true;
     };
-  }, [selectedId, selected?.agentId, desks]);
+    // Depend on the agent id only: `desks` is a fresh array on every poll/render,
+    // so including it refetched the whole history several times a second.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.agentId]);
 
   const openDeskChat = async (desk: Desk) => {
     if (!onOpenSession) return;
@@ -618,7 +621,12 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
               </button>
               <button
                 type="button"
-                onClick={() => sceneRef.current?.setNight(true)}
+                onClick={() => {
+                  // Keep the toggle state and the scene flag in sync; setting
+                  // only the scene left the button showing "☀ Day".
+                  setNightMode(true);
+                  sceneRef.current?.setNight(true);
+                }}
                 className="flex-1 rounded-lg border border-amber-300/70 bg-white/80 px-2 py-1 text-[10px] font-semibold text-amber-900 transition-colors hover:bg-white"
               >
                 Lights on

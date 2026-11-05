@@ -60,13 +60,19 @@ export default function SftpExplorer({ profileId, hostLabel, onClose, onError }:
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const report = useCallback(
-    (message: string) => {
-      setError(message);
-      onError?.(message);
-    },
-    [onError]
-  );
+  // Keep the latest callback in a ref so `report` (and every effect that
+  // depends on it) stays stable. The parent passes an inline `onError`, which
+  // used to make the mount effect refetch the remote directory on every render
+  // (including every drag-resize tick).
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  const report = useCallback((message: string) => {
+    setError(message);
+    onErrorRef.current?.(message);
+  }, []);
 
   const load = useCallback(
     async (target: string) => {

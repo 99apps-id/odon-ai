@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { SkillItemInfo } from '../api';
 import type {
   Agent,
+  AgentSchedule,
   AgentTelegramStatus,
   AgentWebhookStatus,
   ProviderItem,
@@ -44,6 +45,13 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
+const AgentScheduleDefaults: AgentSchedule = {
+  start: '09:00',
+  end: '18:00',
+  days: [1, 2, 3, 4, 5],
+  timezone: null,
+};
+
 const EMPTY_AGENT: Agent = {
   id: '',
   name: '',
@@ -55,7 +63,7 @@ const EMPTY_AGENT: Agent = {
   skills: [],
   enabled: true,
   sort_order: 0,
-  schedule: { start: '09:00', end: '18:00', days: [1, 2, 3, 4, 5], timezone: null },
+  schedule: { ...AgentScheduleDefaults },
   created_at: '',
   updated_at: '',
 };
@@ -93,7 +101,7 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
       ...next,
       skills: next.skills || [],
       schedule: {
-        ...EMPTY_AGENT.schedule,
+        ...AgentScheduleDefaults,
         ...next.schedule,
       },
     });

@@ -466,14 +466,15 @@ export function createOfficeScene(
     rod.position.set(x, y + 0.2, z);
     scene.add(rod);
   }
-  // Soft pools over the desks so monitors read at night.
+  // Soft pools over the desks so monitors read at night. These sit exactly
+  // under four of the pendants, matching the floor pools below.
   for (const [x, z] of [
-    [-8, -2],
-    [8, -2],
-    [-8, 2],
-    [8, 2],
-    [-8, 11],
-    [8, 11],
+    [-4.5, -3.5],
+    [4.5, -3.5],
+    [-4.5, 3.5],
+    [4.5, 3.5],
+    [-4.5, 9.6],
+    [4.5, 9.6],
   ] as const) {
     const light = new THREE.PointLight('#cfe2ee', 0, 7, 2.0);
     light.position.set(x, 1.9, z);
@@ -514,7 +515,7 @@ export function createOfficeScene(
 
   // Light pools for each pendant, projected onto the floor directly below
   // the bulb. One shared texture is used for all of them so we can keep them
-  // cheap. They glow only as darkness rises.
+  // aligned with the fixtures. They glow only as darkness rises.
   const poolTexture = makeLightPoolTexture();
   const poolMaterial = new THREE.MeshBasicMaterial({
     map: poolTexture,
@@ -532,6 +533,11 @@ export function createOfficeScene(
     pool.renderOrder = 2;
     scene.add(pool);
     pools.push(pool);
+  }
+  // The night glow is strongest under the pendant: the cool blue monitor pools
+  // were nudging the same desks sideways, so they now share the pendant grid.
+  for (const light of lampLights) {
+    light.position.y -= 0.15;
   }
 
   function addRug(width: number, depth: number, x: number, z: number, color: string) {
@@ -1263,6 +1269,10 @@ export function createOfficeScene(
         if (entry.lastBubbleKind !== bubbleKind) {
           entry.lastBubbleKind = bubbleKind;
           entry.thoughtBubbleUntil = performance.now() + 4200;
+          // Detach before disposing: disposal frees the material/texture but
+          // leaves the old sprite as a child of the group, so it kept rendering
+          // (and its children accumulated) on every bubble-kind change.
+          entry.group.remove(entry.thoughtBubble);
           disposeSpritePair(entry.thoughtBubble);
           const replacement = makeThoughtBubble(bubbleKind);
           entry.thoughtBubble = replacement.sprite;

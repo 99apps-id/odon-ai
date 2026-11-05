@@ -507,6 +507,7 @@ export const SshTerminalView: React.FC = () => {
             style={{ width: `${filesWidth}px`, maxWidth: '55%' }}
           >
             <SftpExplorer
+              key={selectedProfile.id}
               profileId={selectedProfile.id}
               hostLabel={`${selectedProfile.user}@${selectedProfile.host}`}
               onClose={() => setShowFiles(false)}

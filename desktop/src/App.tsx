@@ -555,6 +555,7 @@ export default function App() {
     isImage: boolean;
   }
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
 
   const [customOpenAiModels, setCustomOpenAiModels] = useState<ModelItem[]>(() => getCustomOpenAiModels());
   const [quickModelInput, setQuickModelInput] = useState('');
@@ -1017,6 +1018,36 @@ export default function App() {
     setCustomOpenAiModels(getCustomOpenAiModels());
   };
 
+  // Reconnect recovery (Hermes pattern: resubscribe, then resnapshot).
+  // Deltas and state transitions that happened while the stream was down are
+  // gone for good, so after a drop the view is rebuilt from the daemon rather
+  // than left holding half-streamed text or a spinner that never clears.
+  // Lives at component scope: both the SSE reconnect callback and the send
+  // handler need it.
+  const resyncSession = async () => {
+    const id = currentSessionIdRef.current;
+    loadSessions();
+    if (!id) return;
+    try {
+      const data = await api.getSession(id);
+      if (currentSessionIdRef.current !== id) return;
+      if (Array.isArray(data.messages)) setMessages(normalizeSessionHistory(data.messages));
+      if (Array.isArray(data.artifacts)) setArtifacts(data.artifacts);
+      const running = Boolean((data as { running?: boolean }).running);
+      setIsGenerating(running);
+      if (!running) {
+        setStreamingText('');
+        setStreamingThought('');
+        setStreamingTool(null);
+      }
+      const sessionTodos = await api.getTodos(id);
+      if (currentSessionIdRef.current !== id) return;
+      setTodos(sessionTodos);
+    } catch {
+      // The daemon is still unreachable; the status poll surfaces that.
+    }
+  };
+
   // Initial setup & SSE subscription
   useEffect(() => {
     let statusTimer: number | undefined;
@@ -1074,34 +1105,6 @@ export default function App() {
       // Use fallback
     });
 
-    // Reconnect recovery (Hermes pattern: resubscribe, then resnapshot).
-    // Deltas and state transitions that happened while the stream was down are
-    // gone for good, so after a drop the view is rebuilt from the daemon rather
-    // than left holding half-streamed text or a spinner that never clears.
-    const resyncSession = async () => {
-      const id = currentSessionIdRef.current;
-      loadSessions();
-      if (!id) return;
-      try {
-        const data = await api.getSession(id);
-        if (currentSessionIdRef.current !== id) return;
-        if (Array.isArray(data.messages)) setMessages(normalizeSessionHistory(data.messages));
-        if (Array.isArray(data.artifacts)) setArtifacts(data.artifacts);
-        const running = Boolean((data as { running?: boolean }).running);
-        setIsGenerating(running);
-        if (!running) {
-          setStreamingText('');
-          setStreamingThought('');
-          setStreamingTool(null);
-        }
-        const sessionTodos = await api.getTodos(id);
-        if (currentSessionIdRef.current !== id) return;
-        setTodos(sessionTodos);
-      } catch {
-        // The daemon is still unreachable; the status poll surfaces that.
-      }
-    };
-
     const unsubscribe = api.subscribeEvents(
       (event) => {
         // Filter first, before any state is touched: the daemon broadcasts every
@@ -1125,6 +1128,12 @@ export default function App() {
             description: event.payload.description,
           },
         });
+      } else if (event.type === 'approval_resolved') {
+        // The approval may be granted/denied from Telegram, another window, or
+        // the audit center. Without this the card kept blocking the turn.
+        setPendingApproval((current) =>
+          current && current.id === event.payload.approval_id ? null : current,
+        );
       } else if (event.type === 'tool_call_started') {
         const toolName = event.payload.tool_name;
         setStreamingTool(toolName);
@@ -1192,8 +1201,17 @@ export default function App() {
         }
         const pending = pendingTerminalRef.current.get(event.payload.call_id);
         if (pending) {
-          pending.output = outputToText(event.payload.output);
+          // Keep only a preview: the full tool output can be megabytes, and
+          // this map lives for the whole window.
+          pending.output = outputToText(event.payload.output).slice(0, 8000);
           pending.isError = Boolean(event.payload.is_error);
+          // Bound the map so a long tool-heavy session cannot pin every call's
+          // output in memory forever.
+          while (pendingTerminalRef.current.size > 20) {
+            const oldest = pendingTerminalRef.current.keys().next().value;
+            if (oldest === undefined) break;
+            pendingTerminalRef.current.delete(oldest);
+          }
           setLiveTerminal(Array.from(pendingTerminalRef.current.values()).slice(-4));
         }
       } else if (event.type === 'artifact_created') {
@@ -1797,7 +1815,10 @@ export default function App() {
         const assistantMsg: ChatMessage = {
           id: resMsg.id,
           role: 'assistant',
-          content: resMsg.content.text || streamingText,
+          // Trust the persisted text: `streamingText` was cleared before the
+          // await, so the old fallback could only ever contribute an empty
+          // string. The runtime guarantees a non-empty final text.
+          content: resMsg.content.text,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           showAppCard: resMsg.content.artifact_ids?.length > 0 || resMsg.content.text.includes('```'),
           thought: resMsg.content.thought,
@@ -1813,7 +1834,13 @@ export default function App() {
           terminal: terminalEntriesOf([resMsg]),
         };
 
-        setMessages((prev) => [...prev, assistantMsg]);
+        // Only append into the transcript if the operator is still on this
+        // session; otherwise the reply for session A landed in session B.
+        if (currentSessionIdRef.current === sid) {
+          setMessages((prev) => [...prev, assistantMsg]);
+        } else {
+          void resyncSession();
+        }
         loadArtifacts(sid);
         loadSessions();
       } catch (err: any) {
@@ -1844,7 +1871,9 @@ export default function App() {
           content: `⚠️ **Failed to contact the AI model**: ${detail}\n\n${hint}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
-        setMessages((prev) => [...prev, errorMsg]);
+        if (currentSessionIdRef.current === sid) {
+          setMessages((prev) => [...prev, errorMsg]);
+        }
       } finally {
         setIsGenerating(false);
         setStreamingText('');
@@ -1897,10 +1926,24 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    // Reads are unbounded: a huge file would be slurped into memory, base64
+    // inflated, then posted. Reject oversize attachments up front.
+    const MAX_TEXT_BYTES = 5 * 1024 * 1024;
+    const MAX_BINARY_BYTES = 20 * 1024 * 1024;
+    const skipped: string[] = [];
+
     Array.from(files).forEach((file) => {
       const mime = file.type || guessMimeType(file.name);
+      const asText = isTextFile(file);
+      const cap = asText ? MAX_TEXT_BYTES : MAX_BINARY_BYTES;
+      if (file.size > cap) {
+        skipped.push(
+          `${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB, max ${cap / (1024 * 1024)} MB)`,
+        );
+        return;
+      }
       const reader = new FileReader();
-      if (isTextFile(file)) {
+      if (asText) {
         reader.onload = () => {
           const text = typeof reader.result === 'string' ? reader.result : '';
           setAttachedFiles((prev) => [
@@ -1935,6 +1978,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       }
     });
 
+    setAttachmentNotice(
+      skipped.length > 0 ? `Skipped oversized attachment(s): ${skipped.join(', ')}` : null,
+    );
     e.target.value = '';
   };
 
@@ -3100,6 +3146,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               )}
 
               {/* Attached Files Preview Chips */}
+              {attachmentNotice && (
+                <div className="mb-2 text-[11px] text-amber-700">{attachmentNotice}</div>
+              )}
               {attachedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2 pb-2 border-b border-neutral-100">
                   {attachedFiles.map((file, idx) => (

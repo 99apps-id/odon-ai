@@ -78,6 +78,12 @@ export function BrowserPreviewView({
   const liveInFlightRef = useRef<boolean>(false);
   // An action that finished while a refresh was running still needs its frame.
   const liveRefreshQueuedRef = useRef<boolean>(false);
+  // The session the panel is currently attached to. Async refreshes must not
+  // write a previous session's screenshot/state after the operator switched.
+  const liveSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    liveSessionIdRef.current = liveSessionId;
+  }, [liveSessionId]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -179,8 +185,16 @@ export function BrowserPreviewView({
     renderUrl(formatted);
   };
 
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
   const buildPreviewError = (targetUrl: string, message: string) =>
-    `<!doctype html><html><head><meta charset="utf-8"><title>Preview unavailable</title></head><body style="margin:0;background:#fff;color:#111;font-family:system-ui"><div style="padding:24px"><h1 style="font-size:18px;margin:0 0 8px">Preview unavailable</h1><p style="font-size:13px;line-height:1.5;margin:0 0 12px">${message.replace(/[<>&]/g, '')}</p><code style="font-size:12px;color:#555">${targetUrl}</code></div></body></html>`;
+    `<!doctype html><html><head><meta charset="utf-8"><title>Preview unavailable</title></head><body style="margin:0;background:#fff;color:#111;font-family:system-ui"><div style="padding:24px"><h1 style="font-size:18px;margin:0 0 8px">Preview unavailable</h1><p style="font-size:13px;line-height:1.5;margin:0 0 12px">${escapeHtml(message)}</p><code style="font-size:12px;color:#555">${escapeHtml(targetUrl)}</code></div></body></html>`;
 
   const fetchPagePreview = async (targetUrl: string) => {
     setReaderLoading(true);
@@ -275,21 +289,26 @@ export function BrowserPreviewView({
     liveInFlightRef.current = true;
     try {
       const png = await api.browserScreenshot(id);
+      if (liveSessionIdRef.current !== id) return;
       if (png) setLivePng(png);
       setLiveError('');
       const state = await api.browserPageState(id);
+      if (liveSessionIdRef.current !== id) return;
       if (state?.url) {
         setLiveUrl(state.url);
         setInputUrl(state.url);
       }
       setLiveTitle(state?.title || '');
     } catch (e: any) {
-      setLiveError(e?.message || 'Live view unavailable');
+      if (liveSessionIdRef.current === id) {
+        setLiveError(e?.message || 'Live view unavailable');
+      }
     } finally {
       liveInFlightRef.current = false;
       if (liveRefreshQueuedRef.current) {
         liveRefreshQueuedRef.current = false;
-        void refreshLive(id);
+        const current = liveSessionIdRef.current;
+        if (current) void refreshLive(current);
       }
     }
   };

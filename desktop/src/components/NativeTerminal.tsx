@@ -28,6 +28,9 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // Bumped on every (re)connect. Handlers from a superseded socket check this
+  // so a stale `onclose` cannot clobber the new session's state after Restart.
+  const connectionGenRef = useRef(0);
 
   const [connected, setConnected] = useState<boolean>(false);
   const [connecting, setConnecting] = useState<boolean>(true);
@@ -41,7 +44,14 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
 
     // Clean up previous terminal instance if any
     if (wsRef.current) {
-      wsRef.current.close();
+      const previous = wsRef.current;
+      // Detach first: closing fires `onclose` asynchronously, and its handler
+      // belongs to the socket being torn down.
+      previous.onopen = null;
+      previous.onmessage = null;
+      previous.onclose = null;
+      previous.onerror = null;
+      previous.close();
       wsRef.current = null;
     }
     if (termRef.current) {
@@ -49,6 +59,8 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
       termRef.current = null;
     }
     containerRef.current.innerHTML = '';
+
+    const gen = ++connectionGenRef.current;
 
     // Initialize xterm.js
     const term = new Terminal({
@@ -113,6 +125,7 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (connectionGenRef.current !== gen) return;
       setConnected(true);
       setConnecting(false);
       term.focus();
@@ -122,7 +135,7 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
 
       if (initialCommand) {
         setTimeout(() => {
-          if (ws.readyState === WebSocket.OPEN) {
+          if (connectionGenRef.current === gen && ws.readyState === WebSocket.OPEN) {
             ws.send(initialCommand + '\r');
           }
         }, 300);
@@ -130,6 +143,7 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
     };
 
     ws.onmessage = (event) => {
+      if (connectionGenRef.current !== gen) return;
       if (typeof event.data === 'string') {
         term.write(event.data);
         if (onData) onData(event.data);
@@ -141,12 +155,14 @@ export const NativeTerminal: React.FC<NativeTerminalProps> = ({
     };
 
     ws.onclose = () => {
+      if (connectionGenRef.current !== gen) return;
       setConnected(false);
       setConnecting(false);
       term.write('\r\n\x1b[33m[Session disconnected. Press Reconnect to restart.]\x1b[0m\r\n');
     };
 
     ws.onerror = () => {
+      if (connectionGenRef.current !== gen) return;
       setConnected(false);
       setConnecting(false);
       setErrorMsg('Failed to connect to ODON native PTY server');
