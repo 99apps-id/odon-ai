@@ -2014,7 +2014,8 @@ async fn release_off_shift_queue(state: AppState) {
     }
 }
 
-async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) {    // A per-agent bot carries its agent id; the global WhatsApp/Telegram relay
+async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) {
+    // A per-agent bot carries its agent id; the global WhatsApp/Telegram relay
     // leaves it empty and keeps the operator's main session.
     let agent = message
         .agent_id
@@ -8872,6 +8873,13 @@ async fn get_github_prs(
         return (StatusCode::OK, Json(json!([])));
     }
 
+    if !valid_github_slug(&owner) || !valid_github_slug(&repo) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid GitHub owner or repository name" })),
+        );
+    }
+
     let client = reqwest::Client::new();
     let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls?per_page=20");
     let mut req = client.get(&url).header("User-Agent", "odon-desktop");
@@ -8900,6 +8908,18 @@ async fn get_github_prs(
             Json(json!({ "error": e.to_string() })),
         ),
     }
+}
+
+/// A GitHub owner or repository name segment. Rejecting `/`, `?`, `#`, `..`
+/// and whitespace keeps a query-supplied value from rewriting the API path or
+/// smuggling extra query parameters into the authenticated request.
+fn valid_github_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !value.contains("..")
 }
 
 /// Normalises a GitHub error payload so the UI always gets `{ error: "..." }`.
@@ -8939,6 +8959,13 @@ async fn get_github_issues(
 
     if owner.is_empty() || repo.is_empty() {
         return (StatusCode::OK, Json(json!([])));
+    }
+
+    if !valid_github_slug(&owner) || !valid_github_slug(&repo) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid GitHub owner or repository name" })),
+        );
     }
 
     let st = q.state.unwrap_or_else(|| "open".to_string());
@@ -8994,6 +9021,13 @@ async fn create_github_issue(
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "Owner and repo are required" })),
+        );
+    }
+
+    if !valid_github_slug(&owner) || !valid_github_slug(&repo) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid GitHub owner or repository name" })),
         );
     }
 
@@ -9213,10 +9247,29 @@ async fn fs_read_file(
         return Json(json!({ "error": e, "path": q.path }));
     }
 
+    // Bound the read: the whole payload is buffered and (for binary files)
+    // base64-inflated into one JSON response, so a multi-gigabyte log inside
+    // the workspace would freeze the webview and spike daemon memory. The
+    // SFTP editor applies the same class of limit.
+    const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
+    match std::fs::metadata(&abs) {
+        Ok(meta) if meta.len() > MAX_READ_BYTES => {
+            return Json(json!({
+                "error": format!(
+                    "File is {} MB; the editor opens files up to {} MB",
+                    meta.len().div_ceil(1024 * 1024),
+                    MAX_READ_BYTES / (1024 * 1024)
+                ),
+                "path": q.path
+            }));
+        }
+        _ => {}
+    }
+
     match std::fs::read(&abs) {
         Ok(bytes) => {
             let size = bytes.len() as u64;
-            match String::from_utf8(bytes.clone()) {
+            match String::from_utf8(bytes) {
                 Ok(content) => Json(json!({
                     "path": q.path,
                     "name": abs.file_name().unwrap_or_default().to_string_lossy(),
@@ -9224,8 +9277,9 @@ async fn fs_read_file(
                     "is_text": true,
                     "content": content
                 })),
-                Err(_) => {
+                Err(error) => {
                     use base64::Engine;
+                    let bytes = error.into_bytes();
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                     Json(json!({
                         "path": q.path,
