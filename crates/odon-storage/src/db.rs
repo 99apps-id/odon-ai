@@ -1462,10 +1462,7 @@ mod tests {
             .unwrap()
             .is_empty());
         let released_ids = [first.id.clone(), second.id.clone()];
-        assert_eq!(
-            storage.mark_agent_inbox_released(&released_ids).unwrap(),
-            2
-        );
+        assert_eq!(storage.mark_agent_inbox_released(&released_ids).unwrap(), 2);
         assert!(storage.queued_agent_messages(&agent.id).unwrap().is_empty());
         // Releasing twice is a no-op, not an error.
         assert_eq!(
