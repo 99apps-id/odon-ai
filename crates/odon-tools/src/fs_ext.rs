@@ -52,26 +52,31 @@ fn add_path_to_zip(
 }
 
 fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
-    let p = Path::new(relative);
-    if p.is_absolute()
-        || p.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(OdonError::Tool {
-            tool: "filesystem_ext".to_string(),
-            message: format!("Path must stay inside the workspace: {relative}"),
-        });
-    }
-
     let canonical_root = fs::canonicalize(root).map_err(|e| OdonError::Tool {
         tool: "filesystem_ext".to_string(),
         message: format!("Failed to resolve workspace root: {e}"),
     })?;
-    let candidate = canonical_root.join(p);
+    let p = Path::new(relative);
+    // fs_tree/fs_find are routinely handed the workspace root as an absolute
+    // path, because that is how the harness prints it. Accept the absolute form
+    // and let the containment check below decide; a path outside the workspace
+    // is still rejected.
+    let candidate = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        if p.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            return Err(OdonError::Tool {
+                tool: "filesystem_ext".to_string(),
+                message: format!("Path must stay inside the workspace: {relative}"),
+            });
+        }
+        canonical_root.join(p)
+    };
 
     let mut existing = candidate.as_path();
     while std::fs::symlink_metadata(existing).is_err() {
@@ -1370,5 +1375,31 @@ mod budget_tests {
         let mut total = 0u64;
         assert!(charge_extraction_budget(&mut total, 1, LIMIT));
         assert!(!charge_extraction_budget(&mut total, LIMIT + 1, LIMIT));
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::resolve_path;
+
+    /// `fs_tree` and `fs_find` are routinely given the workspace root exactly
+    /// as the harness prints it — an absolute path. Rejecting that made the
+    /// agent unable to inspect its own workspace.
+    #[test]
+    fn accepts_absolute_paths_inside_the_workspace_only() {
+        let root = std::env::temp_dir().join(format!("odon-ext-path-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!("odon-ext-outside-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let root_str = root.to_string_lossy().to_string();
+
+        assert!(resolve_path(&root_str, &root_str).is_ok());
+        assert!(resolve_path(&root_str, &root.join("nested").to_string_lossy()).is_ok());
+        assert!(resolve_path(&root_str, &outside.to_string_lossy()).is_err());
+        assert!(resolve_path(&root_str, "../outside").is_err());
+        assert!(resolve_path(&root_str, "nested").is_ok());
+
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(outside).ok();
     }
 }

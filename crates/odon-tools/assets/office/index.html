@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}}</title>
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>{{TITLE}}</h1>
+        <p>Live map of ODON sessions and delegated agents.</p>
+      </div>
+      <div class="pills">
+        <span id="status" class="pill">connecting…</span>
+        <span id="counts" class="pill">0 desks</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <div class="stage">
+        <canvas id="office"></canvas>
+        <div id="toast" class="toast hidden"></div>
+      </div>
+      <aside class="panel">
+        <section>
+          <h2>Rooms</h2>
+          <div id="rooms" class="rooms"></div>
+        </section>
+        <section class="detail">
+          <h2>Selected desk</h2>
+          <div id="detail"><p class="muted">Click a desk in the office.</p></div>
+        </section>
+      </aside>
+    </main>
+
+    <div id="config" class="config hidden">
+      <div class="config-card">
+        <h2>Waiting for the ODON daemon</h2>
+        <p id="config-detail" class="muted"></p>
+        <p class="muted">
+          Run <code>odond serve</code>, confirm the token exists at
+          <code>~/.odon/api-token</code>, then reconnect. This page reaches the daemon through
+          its local <code>serve.mjs</code> proxy; no token is stored in the browser.
+        </p>
+        <div class="config-actions">
+          <button id="retry" type="button">Reconnect</button>
+          <a href="http://localhost:3000" target="_blank" rel="noreferrer">Open ODON</a>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}}</title>
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="bar">
+        <div>
+          <h1>{{TITLE}}</h1>
+          <p class="tag">Collect the five rings, then return to the glowing pad.</p>
+        </div>
+        <div class="hud"><span id="coins">Rings 0/5</span></div>
+      </header>
+
+      <div class="stage">
+        <canvas id="scene"></canvas>
+        <div id="hint" class="toast hidden"></div>
+        <div id="win" class="overlay hidden">
+          <div>
+            <h2>All rings found</h2>
+            <p id="win-detail">Nice work.</p>
+            <button type="button" id="again">Play again</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="help">
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move ·
+        <kbd>Space</kbd> jump · <kbd>R</kbd> restart
+      </p>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

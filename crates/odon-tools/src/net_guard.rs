@@ -213,7 +213,7 @@ impl ValidatedTarget {
                 message: format!("Host '{}' did not resolve to any address", self.host),
             });
         }
-        check_resolved_addrs(&self.host, self.loopback_scope, &addrs)?;
+        let addrs = permitted_addrs(&self.host, self.loopback_scope, &addrs)?;
         Ok(Self {
             url: self.url.clone(),
             host: self.host.clone(),
@@ -398,7 +398,7 @@ async fn validate_url_inner(raw: &str, allow_loopback: bool) -> Result<Validated
         Ok(ip) => (vec![SocketAddr::new(ip, port)], false),
         Err(_) => {
             let addrs = lookup_host(&host, port).await?;
-            check_resolved_addrs(&host, loopback_scope, &addrs)?;
+            let addrs = permitted_addrs(&host, loopback_scope, &addrs)?;
             (addrs, true)
         }
     };
@@ -429,26 +429,43 @@ async fn lookup_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     Ok(addrs)
 }
 
-/// Every resolved address must be public unless the operator opted into
-/// private networks, or the caller explicitly scoped this request to loopback
-/// and the answer really is loopback.
-fn check_resolved_addrs(host: &str, loopback_scope: bool, addrs: &[SocketAddr]) -> Result<()> {
+/// Keep the addresses that pass the policy.
+///
+/// Many Windows setups run a DNS64/NAT64 resolver that answers with a private
+/// ULA (`fd00:…`) *in addition to* the public A record, and some proxies answer
+/// an extra `::1`. Rejecting the whole host over one synthetic answer made
+/// `web_fetch`/`web_search` fail for every public site. The public answers are
+/// still safe to pin, so drop the blocked ones and fail only when nothing
+/// public remains.
+fn permitted_addrs(
+    host: &str,
+    loopback_scope: bool,
+    addrs: &[SocketAddr],
+) -> Result<Vec<SocketAddr>> {
     if allow_private_network() {
-        return Ok(());
+        return Ok(addrs.to_vec());
     }
-    for addr in addrs {
-        let permitted_loopback = loopback_scope && addr.ip().is_loopback();
-        if is_blocked_ip(addr.ip()) && !permitted_loopback {
-            return Err(OdonError::Tool {
-                tool: "url_guard".to_string(),
-                message: format!(
-                    "Host '{host}' resolves to a private/internal address ({})",
-                    addr.ip()
-                ),
-            });
-        }
+    let permitted: Vec<SocketAddr> = addrs
+        .iter()
+        .copied()
+        .filter(|addr| {
+            let permitted_loopback = loopback_scope && addr.ip().is_loopback();
+            !is_blocked_ip(addr.ip()) || permitted_loopback
+        })
+        .collect();
+    if permitted.is_empty() {
+        let example = addrs
+            .first()
+            .map(|addr| addr.ip().to_string())
+            .unwrap_or_else(|| "no address".to_string());
+        return Err(OdonError::Tool {
+            tool: "url_guard".to_string(),
+            message: format!(
+                "Host '{host}' resolves only to private/internal addresses ({example})"
+            ),
+        });
     }
-    Ok(())
+    Ok(permitted)
 }
 
 /// Redirect policy for a client whose connections are pinned to `hosts`.
@@ -536,11 +553,68 @@ mod tests {
     }
 
     #[test]
+    fn mixed_public_and_private_dns_answers_keep_public_addresses() {
+        if allow_private_network() {
+            return;
+        }
+        let public: SocketAddr = "172.66.159.70:443".parse().unwrap();
+        let ula: SocketAddr = "[fd00:aa:bb:2050::ac42:9f46]:443".parse().unwrap();
+        let loopback: SocketAddr = "[::1]:443".parse().unwrap();
+
+        let kept = permitted_addrs("www.bmkg.go.id", false, &[public, ula, loopback])
+            .expect("the public answer must survive");
+        assert_eq!(kept, vec![public], "only the public answer may be pinned");
+        assert!(
+            permitted_addrs("private.example", false, &[ula, loopback]).is_err(),
+            "a host with only private answers must still be rejected"
+        );
+    }
+
+    #[test]
     fn blocks_localhost_and_metadata_names() {
         assert!(is_blocked_hostname("localhost"));
         assert!(is_blocked_hostname("foo.local"));
         assert!(is_blocked_hostname("metadata.google.internal"));
         assert!(!is_blocked_hostname("github.com"));
+    }
+
+    /// Real resolver check for the DNS64/NAT64 setup that broke the web tools.
+    /// Network-dependent, so it only runs when explicitly requested.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn public_host_with_a_private_dns64_answer_still_validates() {
+        let target = validate_url("https://www.bmkg.go.id/")
+            .await
+            .expect("the public A record must survive a synthetic private answer");
+        assert!(
+            target.addrs().iter().all(|addr| !is_blocked_ip(addr.ip())),
+            "validated target still contains a blocked address"
+        );
+    }
+
+    /// End-to-end check that the pinned client can actually reach a public
+    /// page on a machine whose resolver also returns a private DNS64 answer.
+    #[tokio::test]
+    #[ignore = "requires network access"]
+    async fn pinned_client_fetches_a_public_page() {
+        let target = validate_url("https://example.com/")
+            .await
+            .expect("example.com must validate");
+        let client = target
+            .client(
+                reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)),
+            )
+            .expect("client");
+        let response = client
+            .get(target.as_str())
+            .send()
+            .await
+            .expect("request must reach the public address");
+        assert!(
+            response.status().is_success(),
+            "unexpected HTTP {}",
+            response.status()
+        );
     }
 
     #[tokio::test]

@@ -2634,6 +2634,39 @@
                    ]
     },
     {
+        "name":  "video_merge",
+        "availability":  {
+                             "status":  "stable"
+                         },
+        "visibility":  "model",
+        "ready":  true,
+        "issues":  [
+
+                   ]
+    },
+    {
+        "name":  "video_probe",
+        "availability":  {
+                             "status":  "stable"
+                         },
+        "visibility":  "model",
+        "ready":  true,
+        "issues":  [
+
+                   ]
+    },
+    {
+        "name":  "video_trim",
+        "availability":  {
+                             "status":  "stable"
+                         },
+        "visibility":  "model",
+        "ready":  true,
+        "issues":  [
+
+                   ]
+    },
+    {
         "name":  "web_fetch",
         "availability":  {
                              "status":  "stable"
@@ -2734,6 +2767,39 @@
     },
     {
         "name":  "write_file",
+        "availability":  {
+                             "status":  "stable"
+                         },
+        "visibility":  "model",
+        "ready":  true,
+        "issues":  [
+
+                   ]
+    },
+    {
+        "name":  "agents_office_create",
+        "availability":  {
+                             "status":  "stable"
+                         },
+        "visibility":  "model",
+        "ready":  true,
+        "issues":  [
+
+                   ]
+    },
+    {
+        "name":  "game_scaffold",
+        "availability":  {
+                             "status":  "stable"
+                         },
+        "visibility":  "model",
+        "ready":  true,
+        "issues":  [
+
+                   ]
+    },
+    {
+        "name":  "model3d_create",
         "availability":  {
                              "status":  "stable"
                          },

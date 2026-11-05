@@ -7,26 +7,32 @@ use std::path::{Component, Path, PathBuf};
 use crate::registry::{Tool, ToolContext};
 
 fn resolve_path(root: &str, relative: &str) -> Result<PathBuf> {
-    let p = Path::new(relative);
-    if p.is_absolute()
-        || p.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(OdonError::Tool {
-            tool: "filesystem".to_string(),
-            message: format!("Path must stay inside the workspace: {relative}"),
-        });
-    }
-
     let canonical_root = std::fs::canonicalize(root).map_err(|e| OdonError::Tool {
         tool: "filesystem".to_string(),
         message: format!("Failed to resolve workspace root: {e}"),
     })?;
-    let candidate = canonical_root.join(p);
+    let p = Path::new(relative);
+    // The harness prints the workspace as an absolute path, so models routinely
+    // pass it back (including the root itself). Accept an absolute path and let
+    // the canonical containment check below decide: inside passes, outside is
+    // still refused. Parent-dir segments stay rejected in the relative form,
+    // where they are never meaningful.
+    let candidate = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        if p.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            return Err(OdonError::Tool {
+                tool: "filesystem".to_string(),
+                message: format!("Path must stay inside the workspace: {relative}"),
+            });
+        }
+        canonical_root.join(p)
+    };
 
     // Canonicalize the target when it exists. For a new path, canonicalize its
     // nearest existing ancestor so an in-workspace symlink cannot escape root.
@@ -87,7 +93,10 @@ impl Tool for FsReadTool {
             .await
             .map_err(|e| OdonError::Tool {
                 tool: self.name().to_string(),
-                message: format!("Failed to read file {}: {}", path_str, e),
+                message: format!(
+                    "Failed to read file {}: {}. Use fs_find or fs_tree to locate the correct path.",
+                    path_str, e
+                ),
             })?;
 
         Ok(json!({ "path": path_str, "content": content }))
@@ -903,8 +912,18 @@ mod tests {
         let root_str = root.to_string_lossy();
 
         assert!(resolve_path(&root_str, "../outside.txt").is_err());
-        assert!(resolve_path(&root_str, &root.join("absolute.txt").to_string_lossy()).is_err());
         assert!(resolve_path(&root_str, "nested/file.txt").is_ok());
+
+        // The harness prints the workspace absolutely, so the model passes the
+        // root back verbatim. That must resolve instead of being rejected as
+        // "outside the workspace"; an absolute path outside is still refused.
+        assert!(resolve_path(&root_str, &root_str).is_ok());
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        assert!(resolve_path(&root_str, &root.join("nested").to_string_lossy()).is_ok());
+        let outside = std::env::temp_dir().join(format!("odon-fs-outside-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(resolve_path(&root_str, &outside.to_string_lossy()).is_err());
+        std::fs::remove_dir_all(outside).ok();
 
         std::fs::remove_dir_all(root).unwrap();
     }

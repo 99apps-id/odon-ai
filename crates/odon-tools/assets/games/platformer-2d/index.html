@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}}</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="bar">
+        <div>
+          <h1>{{TITLE}}</h1>
+          <p class="tag">Collect every coin, then reach the flag.</p>
+        </div>
+        <div class="hud">
+          <span id="coins">Coins 0/4</span>
+          <span id="timer">0.0s</span>
+        </div>
+      </header>
+
+      <div class="stage">
+        <canvas id="game" width="960" height="540"></canvas>
+        <div id="overlay" class="overlay hidden"></div>
+      </div>
+
+      <p class="help">
+        <kbd>A</kbd><kbd>D</kbd> or <kbd>←</kbd><kbd>→</kbd> move ·
+        <kbd>W</kbd><kbd>↑</kbd><kbd>Space</kbd> jump · <kbd>R</kbd> restart
+      </p>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

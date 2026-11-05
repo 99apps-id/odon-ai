@@ -9,6 +9,7 @@ pub mod dev_server;
 pub mod docs;
 pub mod fs;
 pub mod fs_ext;
+pub mod game_scaffold;
 pub mod git;
 pub mod git_ext;
 pub mod github;
@@ -19,8 +20,10 @@ pub mod local_app;
 pub mod mcp;
 pub mod media;
 pub mod memory;
+pub mod model3d;
 pub mod monitoring;
 pub mod net_guard;
+pub mod office_scaffold;
 pub mod ops_ext;
 pub mod packages;
 pub mod project_ops;
@@ -33,10 +36,12 @@ pub mod sftp;
 pub mod shell;
 pub mod shell_ext;
 pub mod skills;
+pub mod skills_builtin;
 pub mod system;
 pub mod testing;
 pub mod unified;
 pub mod ux;
+pub mod video;
 pub mod web;
 pub mod web_ext;
 pub mod workspace_path;
@@ -274,6 +279,16 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(media::SendDocumentTool));
     reg.register(Box::new(media::SendImageTool));
     reg.register(Box::new(media::SendMediaTool));
+
+    // Video editing (ffmpeg/ffprobe on the host PATH)
+    reg.register(Box::new(video::VideoProbeTool));
+    reg.register(Box::new(video::VideoTrimTool));
+    reg.register(Box::new(video::VideoMergeTool));
+
+    // Game / 3D asset builders
+    reg.register(Box::new(model3d::Model3dCreateTool));
+    reg.register(Box::new(game_scaffold::GameScaffoldTool));
+    reg.register(Box::new(office_scaffold::AgentsOfficeCreateTool));
     reg.register(Box::new(browser_session::BrowserSessionCreateTool));
     reg.register(Box::new(browser_session::BrowserSessionListTool));
     reg.register(Box::new(browser_session::BrowserSessionResumeTool));
@@ -379,7 +394,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            234,
+            240,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
@@ -465,7 +480,7 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 241);
+        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 247);
     }
 
     #[test]
