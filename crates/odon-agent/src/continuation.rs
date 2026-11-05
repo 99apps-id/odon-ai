@@ -25,6 +25,102 @@ pub const NETWORK_CUT_NUDGE: &str = "[System: Your previous message was interrup
 transport error before it finished. Continue from the interruption point. Do not repeat the text \
 you already produced and do not restart the answer.]";
 
+/// Text appended when the model announced a next step but never took it.
+///
+/// A step with no tool call ends the ReAct loop, so a reply that only says
+/// "Next I'll inspect…" strands the task even though nothing failed. This
+/// nudge turns that promise into the action it describes.
+pub const PROMISED_ACTION_NUDGE: &str = "[System: Your previous message announced the next step \
+but contained no tool call, so the turn ended with the task still unfinished. Act now: issue the \
+tool call you announced. If the task is genuinely finished, say so plainly instead of promising \
+more work.]";
+
+/// Text appended when the model streamed only reasoning and no answer.
+///
+/// Reasoning models sometimes spend the whole output budget on their hidden
+/// thoughts and close the step with neither prose nor a tool call. The ReAct
+/// loop treats that as the end of the turn, so the operator gets
+/// "[The model returned no reply…]". One bounded follow-up asks for the answer
+/// that reasoning was preparing.
+pub const EMPTY_REPLY_NUDGE: &str = "[System: Your previous step ended without a tool call and \
+without a final answer; its output budget was consumed by reasoning. Resume the task from the work \
+already done: if you still need information, issue the next tool call now; otherwise write the \
+final response now. Do not repeat tool calls that already succeeded, and do not restart the task.]";
+
+/// How many empty-reply continuations one turn may trigger.
+pub const MAX_EMPTY_REPLY_CONTINUATIONS: usize = 2;
+
+/// How many promised-action continuations one turn may trigger.
+pub const MAX_PROMISED_ACTION_CONTINUATIONS: usize = 2;
+
+/// True when a reply ends by announcing a concrete next action instead of
+/// taking it.
+///
+/// Only the tail is inspected: a complete answer may explain "the next step"
+/// earlier and still be finished. The phrases are deliberately concrete
+/// ("next I'll inspect", "saya lanjut") so a closing courtesy such as
+/// "let me know" is not mistaken for unfinished work.
+pub fn promises_next_action(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 2_000 {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    let mut tail: Vec<char> = lower.chars().collect();
+    let keep_from = tail.len().saturating_sub(500);
+    tail.drain(..keep_from);
+    let tail: String = tail.into_iter().collect();
+
+    const PROMISES: &[&str] = &[
+        "next i'll",
+        "next, i'll",
+        "next i will",
+        "next i am going to",
+        "i'll now ",
+        "i will now ",
+        "let me now ",
+        "let me check",
+        "let me look",
+        "let me inspect",
+        "let me read",
+        "let me run",
+        "let me search",
+        "let me examine",
+        "let me verify",
+        "let me open",
+        "let me find",
+        "i'm going to check",
+        "i'm going to inspect",
+        "i'm going to read",
+        "i'm going to run",
+        "i'm going to search",
+        "saya lanjut",
+        "saya akan lanjut",
+        "selanjutnya saya",
+        "mari saya cek",
+        "mari saya periksa",
+        "mari saya lihat",
+        "mari saya baca",
+        "saya cek ",
+        "saya periksa ",
+        "saya baca ",
+        "saya jalankan ",
+    ];
+    const COMPLETIONS: &[&str] = &[
+        "done",
+        "selesai",
+        "finished",
+        "complete",
+        "no further",
+        "that's all",
+        "itu saja",
+        "sudah selesai",
+    ];
+
+    PROMISES.iter().any(|phrase| tail.contains(phrase))
+        && !COMPLETIONS.iter().any(|phrase| tail.contains(phrase))
+}
+
 /// Longest prefix of `continuation` that repeats the suffix of `previous`.
 ///
 /// Uses the KMP prefix function, so the cost is linear in the input length
@@ -172,6 +268,33 @@ mod tests {
             "resume",
         ] {
             assert!(trailing_continue_intent(text), "should match {text:?}");
+        }
+    }
+
+    #[test]
+    fn promised_actions_are_detected_at_the_tail() {
+        for text in [
+            "Next I'll inspect the exact security-relevant modules.",
+            "I'm switching to targeted reads now. Next I'll read approval.rs.",
+            "Saya lanjut audit repo ini dengan fokus ke bug berpotensi.",
+            "Setelah itu saya lanjut ke area lain seperti path traversal.",
+            "Let me check the approval module now.",
+            "Mari saya periksa bagian canonicalization.",
+        ] {
+            assert!(promises_next_action(text), "should match {text:?}");
+        }
+    }
+
+    #[test]
+    fn finished_answers_are_not_mistaken_for_promises() {
+        for text in [
+            "",
+            "Done. The bug is in approval.rs:260 and the fix is applied.",
+            "Laporan selesai: tidak ada masalah yang ditemukan.",
+            "Let me know if you need anything else.",
+            "The next step is documented in the README; the work is complete.",
+        ] {
+            assert!(!promises_next_action(text), "should not match {text:?}");
         }
     }
 
