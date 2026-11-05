@@ -34,6 +34,8 @@ export interface Desk {
   sessionId?: string;
   onShift?: boolean;
   workHours?: string;
+  /** Active subagent delegations under this desk's current conversation. */
+  children?: number;
 }
 
 export interface DeskEventState {
@@ -353,6 +355,26 @@ export function desksFromAgents(
   const cutoff = now - 24 * 60 * 60 * 1000;
   const live = (session?: Session) => (session ? events.get(session.id) || emptyDeskState() : emptyDeskState());
 
+  // Running child sessions are rendered as desks in the wing instead of being
+  // folded into the parent's state. Finished children from the last 24 hours
+  // are kept so the wing still shows recent delegations.
+  const childSessions = sessions
+    .filter((session) => {
+      const updated = Date.parse(session.updated_at || '');
+      return Boolean(session.metadata?.parent_session) && (Number.isNaN(updated) || updated >= cutoff);
+    })
+    .sort(byId);
+  // Active delegations per parent conversation: the workload badge an agent
+  // desk shows next to its own state.
+  const activeChildren = new Map<string, number>();
+  for (const session of childSessions) {
+    const parent = session.metadata?.parent_session;
+    if (!parent) continue;
+    if (ACTIVE_STATES.has(live(session).state)) {
+      activeChildren.set(parent, (activeChildren.get(parent) || 0) + 1);
+    }
+  }
+
   const desks: Desk[] = agents
     .filter((agent) => agent.enabled)
     .map((agent) => {
@@ -391,18 +413,10 @@ export function desksFromAgents(
         sessionId: session?.id,
         onShift,
         workHours: `${agent.schedule?.start || '09:00'}–${agent.schedule?.end || '18:00'}`,
+        children: activeChildren.get(session?.id || '') || undefined,
       };
     });
 
-  // Running child sessions are rendered as desks in the wing instead of being
-  // folded into the parent's state. Finished children from the last 24 hours
-  // are kept so the wing still shows recent delegations.
-  const childSessions = sessions
-    .filter((session) => {
-      const updated = Date.parse(session.updated_at || '');
-      return Boolean(session.metadata?.parent_session) && (Number.isNaN(updated) || updated >= cutoff);
-    })
-    .sort(byId);
   for (const session of childSessions) {
     const current = live(session);
     const parentAgent = agents.find((agent) => agent.id === session.agent_id);

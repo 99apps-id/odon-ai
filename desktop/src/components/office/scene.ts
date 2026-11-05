@@ -42,6 +42,9 @@ export interface OfficeScene {
   dispose(): void;
 }
 
+export const DIRECTOR_ID = 'director';
+export const DIRECTOR_POSITION = new THREE.Vector3(0, 0.05, -13);
+
 type Entry = DeskVisual & {
   id: string;
   state: DeskState;
@@ -187,8 +190,28 @@ function makeThoughtBubble(kind: 'thinking' | 'approval' | 'tool'): ThoughtBubbl
   return { sprite, material, kind, until: 0 };
 }
 
-export const DIRECTOR_ID = 'director';
-export const DIRECTOR_POSITION = new THREE.Vector3(0, 0.05, -13);
+/**
+ * A soft radial pool directly under each pendant, so the brightest area sits
+ * beneath the bulb rather than sideways from it.
+ */
+function makeLightPoolTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    gradient.addColorStop(0, 'rgba(255, 225, 160, 0.52)');
+    gradient.addColorStop(0.45, 'rgba(255, 215, 140, 0.24)');
+    gradient.addColorStop(1, 'rgba(255, 210, 130, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 2;
+  return texture;
+}
 
 function disposeSpritePair(sprite: THREE.Sprite) {
   const material = sprite.material as THREE.SpriteMaterial;
@@ -488,6 +511,28 @@ export function createOfficeScene(
   (grid.material as THREE.Material).opacity = 0.22;
   (grid.material as THREE.Material).transparent = true;
   scene.add(grid);
+
+  // Light pools for each pendant, projected onto the floor directly below
+  // the bulb. One shared texture is used for all of them so we can keep them
+  // cheap. They glow only as darkness rises.
+  const poolTexture = makeLightPoolTexture();
+  const poolMaterial = new THREE.MeshBasicMaterial({
+    map: poolTexture,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const pools: THREE.Mesh[] = [];
+  for (const zone of lampZones) {
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 6.6), poolMaterial);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(zone.x, 0.035, zone.z);
+    pool.renderOrder = 2;
+    scene.add(pool);
+    pools.push(pool);
+  }
 
   function addRug(width: number, depth: number, x: number, z: number, color: string) {
     const border = box(width + 0.3, 0.02, depth + 0.3, '#cec2b0', x, 0.008, z);
@@ -1416,6 +1461,14 @@ export function createOfficeScene(
     for (const light of lampLights) light.intensity = lampLevel * 38;
     for (const light of ceilingLights) light.intensity = lampLevel * 13;
 
+    // Light pools ride the darkness level: strongest directly under each
+    // pendant, gone by day, so the glow follows the fixtures.
+    poolMaterial.opacity = lampLevel * 0.85;
+    for (const [index, pool] of pools.entries()) {
+      const zone = lampZones[index];
+      pool.position.set(zone.x, 0.035, zone.z);
+    }
+
     // Bulb meshes (pendants) and sconces get brighter with darkness too.
     for (const bulb of bulbMaterials) {
       bulb.color.set(lampLevel > 0.35 ? '#ffe6a8' : '#fff0c8');
@@ -1555,6 +1608,8 @@ export function createOfficeScene(
       (grid.material as THREE.Material).dispose();
       skyTexture.dispose();
       skyNightTexture.dispose();
+      poolTexture.dispose();
+      poolMaterial.dispose();
       renderer.dispose();
       renderer.forceContextLoss?.();
     },

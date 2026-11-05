@@ -576,6 +576,14 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
                         <span className="min-w-0 flex-1 truncate text-[10.5px]">
                           {desk.title}
                         </span>
+                        {desk.children ? (
+                          <span
+                            className="shrink-0 rounded-md bg-blue-100 px-1 font-mono text-[9px] font-semibold text-blue-700"
+                            title={`${desk.children} active delegation${desk.children === 1 ? '' : 's'}`}
+                          >
+                            ×{desk.children}
+                          </span>
+                        ) : null}
                         <span className="shrink-0 font-mono text-[9px] text-neutral-400">
                           {STATE_LABELS[desk.state]}
                         </span>
@@ -711,6 +719,9 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
                         ['Shift', selected.onShift ? 'on shift' : 'off shift'],
                         ['Hours', selected.workHours || '—'],
                       ] as Array<[string, string]>)
+                    : []),
+                  ...(selected.children
+                    ? ([['Delegations', String(selected.children)]] as Array<[string, string]>)
                     : []),
                   ['Model', selected.model || '—'],
                   ['Tool', selected.tool || '—'],
@@ -876,6 +887,9 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
               {areaFor(hoveredDesk)} · {hoveredDesk.role || roomFor(hoveredDesk.mode)}
               {hoveredDesk.model ? ` · ${hoveredDesk.model}` : ''}
               {hoveredDesk.workHours ? ` · ${hoveredDesk.workHours}` : ''}
+              {hoveredDesk.children
+                ? ` · ${hoveredDesk.children} active delegation${hoveredDesk.children === 1 ? '' : 's'}`
+                : ''}
             </div>
             {(hoveredDesk.tool || hoveredDesk.approval) && (
               <div className="mt-1.5 flex flex-wrap gap-1">
