@@ -1167,6 +1167,88 @@ mod tests {
         let _ = std::fs::remove_dir_all(elsewhere);
     }
 
+    /// A symlink planted inside the workspace must not become a trampoline out
+    /// of it. The ancestor is canonicalised before the prefix check, so this
+    /// holds even when the leaf file does not exist yet.
+    #[test]
+    fn symlink_inside_the_workspace_cannot_escape_it() {
+        let root = temp_dir("ws-link-root");
+        let outside = temp_dir("ws-link-outside");
+        std::fs::write(outside.join("secret.txt"), "secret").expect("write outside file");
+
+        let link = root.join("escape");
+        let linked = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside, &link).is_ok()
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(&outside, &link).is_ok()
+            }
+        };
+        if !linked {
+            // Creating symlinks needs a privilege this runner may not have.
+            let _ = std::fs::remove_dir_all(root);
+            let _ = std::fs::remove_dir_all(outside);
+            return;
+        }
+
+        for target in ["escape/secret.txt", "escape/new-file.txt"] {
+            assert!(
+                ApprovalEngine::outside_workspace_target(
+                    &serde_json::json!({ "path": target }),
+                    &root
+                )
+                .is_some(),
+                "a target reached through an escaping symlink must be reported: {target}"
+            );
+        }
+        // The root's spelling must not change the answer.
+        assert!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "path": "escape/new-file.txt" }),
+                &root.join(".")
+            )
+            .is_some(),
+            "a non-canonical root spelling must not hide the escape"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(outside);
+    }
+
+    /// Absolute targets are resolved (`..` included) before containment is
+    /// decided, so an absolute in-workspace path is not treated as an escape.
+    #[test]
+    fn absolute_targets_are_resolved_before_containment() {
+        let root = temp_dir("ws-absolute");
+        std::fs::create_dir_all(root.join("nested")).expect("create nested");
+        let inside = root.join("nested").join("..").join("file.txt");
+
+        assert_eq!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "path": inside.to_string_lossy() }),
+                &root
+            ),
+            None,
+            "an absolute path that resolves inside the workspace is fine"
+        );
+
+        let elsewhere = temp_dir("ws-absolute-out");
+        assert!(
+            ApprovalEngine::outside_workspace_target(
+                &serde_json::json!({ "path": elsewhere.to_string_lossy() }),
+                &root
+            )
+            .is_some(),
+            "an absolute path outside the workspace must be reported"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(elsewhere);
+    }
+
     /// An out-of-workspace target must reach a human even in Autonomous mode,
     /// where Tier-1 calls are otherwise auto-approved, and even when a cached
     /// grant exists for exactly these arguments.
