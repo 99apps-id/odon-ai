@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use odon_core::{
-    Artifact, ArtifactKind, ArtifactPayload, Message, MessageContent, MessageRole, Session,
-    SessionMode, SessionStatus,
+    Agent, AgentSchedule, Artifact, ArtifactKind, ArtifactPayload, Message, MessageContent,
+    MessageRole, Session, SessionMode, SessionStatus,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
@@ -175,6 +175,22 @@ impl StorageEngine {
                 is_default INTEGER DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '#557a95',
+                system_prompt TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT 'odon-auto',
+                workspace_root TEXT,
+                skills_json TEXT NOT NULL DEFAULT '[]',
+                schedule_json TEXT NOT NULL DEFAULT '{}',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             ",
         )?;
         // Older databases predate columns such as `sessions.metadata` and
@@ -198,9 +214,21 @@ impl StorageEngine {
                 "metadata",
                 "ALTER TABLE sessions ADD COLUMN metadata TEXT",
             ),
+            (
+                "sessions",
+                "agent_id",
+                "ALTER TABLE sessions ADD COLUMN agent_id TEXT",
+            ),
         ] {
             ensure_column(&conn, table, column, ddl)?;
         }
+        // The index lives outside the batch: on a legacy database the column
+        // above is added first, so creating the index inside the batch would
+        // reference a column that does not exist yet.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions (agent_id)",
+            [],
+        )?;
         // Best-effort cleanup for databases created before cascades existed.
         let _ = conn.execute(
             "DELETE FROM artifact_versions WHERE artifact_id NOT IN (SELECT id FROM artifacts)",
@@ -231,6 +259,20 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Removes the session's plan.
+    ///
+    /// A plan is per-turn working state: once every item is done it is cleared
+    /// so the next turn does not inherit a finished list in the harness or the
+    /// UI. Paused and stopped turns keep it so they stay resumable.
+    pub fn clear_todos(&self, session_id: &str) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "DELETE FROM todos WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_todos(&self, session_id: &str) -> Result<serde_json::Value> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare("SELECT items_json FROM todos WHERE session_id = ?1")?;
@@ -254,14 +296,15 @@ impl StorageEngine {
             None => None,
         };
         conn.execute(
-            "INSERT INTO sessions (id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO sessions (id, title, mode, status, active_model, workspace_root, agent_id, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 mode = excluded.mode,
                 status = excluded.status,
                 active_model = excluded.active_model,
                 workspace_root = excluded.workspace_root,
+                agent_id = excluded.agent_id,
                 metadata = excluded.metadata,
                 updated_at = excluded.updated_at",
             params![
@@ -271,6 +314,7 @@ impl StorageEngine {
                 status_str,
                 session.active_model,
                 session.workspace_root,
+                session.agent_id,
                 metadata_json,
                 session.created_at.to_rfc3339(),
                 session.updated_at.to_rfc3339(),
@@ -282,7 +326,7 @@ impl StorageEngine {
     pub fn get_session(&self, id: &str) -> Result<Session> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at
+            "SELECT id, title, mode, status, active_model, workspace_root, agent_id, metadata, created_at, updated_at
              FROM sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -290,8 +334,8 @@ impl StorageEngine {
             let mode_str: String = row.get(2)?;
             let status_str: String = row.get(3)?;
             let _metadata: Option<String> = row.get(6)?;
-            let created_at_str: String = row.get(7)?;
-            let updated_at_str: String = row.get(8)?;
+            let created_at_str: String = row.get(8)?;
+            let updated_at_str: String = row.get(9)?;
 
             let mode: SessionMode = serde_json::from_str(&mode_str)?;
             let status: SessionStatus = serde_json::from_str(&status_str)?;
@@ -315,8 +359,9 @@ impl StorageEngine {
                 status,
                 active_model: row.get(4)?,
                 workspace_root: row.get(5)?,
+                agent_id: row.get(6)?,
                 metadata: row
-                    .get(6)
+                    .get(7)
                     .ok()
                     .and_then(|v: Option<String>| v.and_then(|s| serde_json::from_str(&s).ok())),
                 created_at,
@@ -330,7 +375,7 @@ impl StorageEngine {
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, mode, status, active_model, workspace_root, metadata, created_at, updated_at
+            "SELECT id, title, mode, status, active_model, workspace_root, agent_id, metadata, created_at, updated_at
              FROM sessions ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -340,9 +385,10 @@ impl StorageEngine {
             let status_str: String = row.get(3)?;
             let active_model: String = row.get(4)?;
             let workspace_root: Option<String> = row.get(5)?;
-            let metadata: Option<String> = row.get(6)?;
-            let created_at_str: String = row.get(7)?;
-            let updated_at_str: String = row.get(8)?;
+            let agent_id: Option<String> = row.get(6)?;
+            let metadata: Option<String> = row.get(7)?;
+            let created_at_str: String = row.get(8)?;
+            let updated_at_str: String = row.get(9)?;
 
             let mode: SessionMode = serde_json::from_str(&mode_str).unwrap_or(SessionMode::General);
             let status: SessionStatus =
@@ -367,6 +413,7 @@ impl StorageEngine {
                 status,
                 active_model,
                 workspace_root,
+                agent_id,
                 metadata: metadata.and_then(|v| serde_json::from_str(&v).ok()),
                 created_at,
                 updated_at,
@@ -1102,6 +1149,107 @@ impl StorageEngine {
         )?;
         Ok(count > 0)
     }
+
+    // --- Agent Operations (persisted office roster) ---
+
+    pub fn save_agent(&self, agent: &Agent) -> Result<()> {
+        let conn = self.lock_conn()?;
+        let skills_json = serde_json::to_string(&agent.skills)?;
+        let schedule_json = serde_json::to_string(&agent.schedule)?;
+        conn.execute(
+            "INSERT INTO agents (id, name, role, color, system_prompt, model, workspace_root, skills_json, schedule_json, enabled, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                role = excluded.role,
+                color = excluded.color,
+                system_prompt = excluded.system_prompt,
+                model = excluded.model,
+                workspace_root = excluded.workspace_root,
+                skills_json = excluded.skills_json,
+                schedule_json = excluded.schedule_json,
+                enabled = excluded.enabled,
+                sort_order = excluded.sort_order,
+                updated_at = excluded.updated_at",
+            params![
+                agent.id,
+                agent.name,
+                agent.role,
+                agent.color,
+                agent.system_prompt,
+                agent.model,
+                agent.workspace_root,
+                skills_json,
+                schedule_json,
+                if agent.enabled { 1 } else { 0 },
+                agent.sort_order,
+                agent.created_at.to_rfc3339(),
+                agent.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_agent(&self, id: &str) -> Result<Agent> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, color, system_prompt, model, workspace_root, skills_json, schedule_json, enabled, sort_order, created_at, updated_at
+             FROM agents WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => agent_from_row(row),
+            None => Err(StorageError::NotFound(format!("Agent {}", id))),
+        }
+    }
+
+    pub fn list_agents(&self) -> Result<Vec<Agent>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, color, system_prompt, model, workspace_root, skills_json, schedule_json, enabled, sort_order, created_at, updated_at
+             FROM agents ORDER BY sort_order ASC, name ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut agents = Vec::new();
+        while let Some(row) = rows.next()? {
+            agents.push(agent_from_row(row)?);
+        }
+        Ok(agents)
+    }
+
+    pub fn delete_agent(&self, id: &str) -> Result<bool> {
+        let conn = self.lock_conn()?;
+        let count = conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
+        Ok(count > 0)
+    }
+}
+
+fn agent_from_row(row: &rusqlite::Row<'_>) -> Result<Agent> {
+    let skills_json: String = row.get(7)?;
+    let schedule_json: String = row.get(8)?;
+    let enabled: i64 = row.get(9)?;
+    let created_at_str: String = row.get(11)?;
+    let updated_at_str: String = row.get(12)?;
+    let parse_time = |value: &str| {
+        DateTime::parse_from_rfc3339(value)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now())
+    };
+    Ok(Agent {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        role: row.get(2)?,
+        color: row.get(3)?,
+        system_prompt: row.get(4)?,
+        model: row.get(5)?,
+        workspace_root: row.get(6)?,
+        skills: serde_json::from_str(&skills_json).unwrap_or_default(),
+        schedule: serde_json::from_str(&schedule_json).unwrap_or_else(|_| AgentSchedule::default()),
+        enabled: enabled != 0,
+        sort_order: row.get(10)?,
+        created_at: parse_time(&created_at_str),
+        updated_at: parse_time(&updated_at_str),
+    })
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1182,6 +1330,39 @@ fn ensure_column(conn: &rusqlite::Connection, table: &str, column: &str, ddl: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agents_round_trip_and_sessions_keep_agent_id() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        let mut agent = Agent::new("Coding", "Software Engineering");
+        agent.color = "#123456".to_string();
+        agent.system_prompt = "Own the code.".to_string();
+        agent.skills = vec!["rust".to_string(), "testing".to_string()];
+        agent.schedule.days = vec![1, 3, 5];
+        storage.save_agent(&agent).unwrap();
+
+        let loaded = storage.get_agent(&agent.id).unwrap();
+        assert_eq!(loaded.name, "Coding");
+        assert_eq!(loaded.role, "Software Engineering");
+        assert_eq!(loaded.skills, vec!["rust", "testing"]);
+        assert_eq!(loaded.schedule.days, vec![1, 3, 5]);
+        assert!(loaded.enabled);
+
+        let mut session = Session::new("Agent thread", SessionMode::General, "odon-auto");
+        session.agent_id = Some(agent.id.clone());
+        storage.save_session(&session).unwrap();
+
+        let stored = storage.get_session(&session.id).unwrap();
+        assert_eq!(stored.agent_id.as_deref(), Some(agent.id.as_str()));
+        let listed = storage.list_sessions().unwrap();
+        assert!(listed
+            .iter()
+            .any(|row| row.agent_id.as_deref() == Some(agent.id.as_str())));
+
+        assert_eq!(storage.list_agents().unwrap().len(), 1);
+        assert!(storage.delete_agent(&agent.id).unwrap());
+        assert!(storage.list_agents().unwrap().is_empty());
+    }
 
     #[test]
     fn legacy_sessions_table_gains_metadata_column() {
@@ -1538,5 +1719,40 @@ mod tests {
         assert_eq!(storage.drop_empty_assistant_messages().unwrap(), 1);
         assert_eq!(storage.list_messages(&session.id).unwrap().len(), 2);
         assert_eq!(storage.drop_empty_assistant_messages().unwrap(), 0);
+    }
+
+    #[test]
+    fn clearing_a_plan_leaves_other_sessions_alone() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        let done = Session::new("Done", SessionMode::Code, "m");
+        let running = Session::new("Running", SessionMode::Code, "m");
+        storage.save_session(&done).unwrap();
+        storage.save_session(&running).unwrap();
+        storage
+            .set_todos(
+                &done.id,
+                &serde_json::json!([{ "title": "ship it", "status": "completed" }]),
+            )
+            .unwrap();
+        storage
+            .set_todos(
+                &running.id,
+                &serde_json::json!([{ "title": "still going", "status": "in_progress" }]),
+            )
+            .unwrap();
+
+        storage.clear_todos(&done.id).unwrap();
+
+        assert_eq!(storage.get_todos(&done.id).unwrap(), serde_json::json!([]));
+        assert_eq!(
+            storage
+                .get_todos(&running.id)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1,
+            "another session's plan must survive"
+        );
     }
 }
