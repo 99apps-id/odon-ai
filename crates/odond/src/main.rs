@@ -41,7 +41,7 @@ use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_channel::{ChannelAdapter, IncomingChannelMessage, TelegramRelay, WhatsAppChannel};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
-use odon_core::{AgentEvent, ArtifactPayload, EventSender, Message, OdonError};
+use odon_core::{Agent, AgentEvent, AgentSchedule, ArtifactPayload, EventSender, Message, OdonError};
 use odon_provider::{
     anthropic::AnthropicProvider,
     host_creds::{discover_antigravity, discover_github_copilot},
@@ -339,6 +339,12 @@ struct TelegramRelayConfig {
     allowed_users: Vec<String>,
 }
 
+/// Inbound HTTP connector for one agent (N8N, Zapier, a custom service).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AgentWebhookConfig {
+    token: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct WhatsAppWebConfig {
     #[serde(default)]
@@ -354,6 +360,13 @@ struct WhatsAppWebConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct RelayConfig {
     telegram: Option<TelegramRelayConfig>,
+    /// One bot per persisted agent. The global `telegram` entry stays the
+    /// operator's main chat; these route to the matching agent session.
+    #[serde(default)]
+    telegram_agents: HashMap<String, TelegramRelayConfig>,
+    /// Secret path token for each agent's inbound webhook.
+    #[serde(default)]
+    agent_webhooks: HashMap<String, AgentWebhookConfig>,
     whatsapp_web: Option<WhatsAppWebConfig>,
 }
 
@@ -386,6 +399,33 @@ fn save_relay_config(config: &RelayConfig) {
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
     }
+}
+
+/// A 192-bit secret for one agent's inbound webhook.
+fn generate_webhook_token() -> String {
+    let rng = ring::rand::SystemRandom::new();
+    let mut bytes = [0u8; 24];
+    if rng.fill(&mut bytes).is_err() {
+        return format!("wh_{}", uuid::Uuid::new_v4().simple());
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn webhook_url(token: &str) -> String {
+    let base = std::env::var("ODON_DAEMON_URL")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string());
+    format!("{base}/hooks/agents/{token}")
+}
+
+fn sanitize_relay_fragment(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+        .take(48)
+        .collect()
 }
 
 struct BridgeChild {
@@ -1584,11 +1624,15 @@ async fn send_relay_attachments(
     sender: &str,
     caption: &str,
     files: &[(String, String, Vec<u8>)],
+    agent_id: Option<&str>,
 ) {
     for (file_name, mime_type, bytes) in files.iter().take(4) {
         let result = match channel {
             "telegram" => {
-                let relay = state.telegram.read().await.clone();
+                let relay = match agent_id {
+                    Some(id) => state.telegram_agents.read().await.get(id).cloned(),
+                    None => state.telegram.read().await.clone(),
+                };
                 match relay {
                     Some(relay) => {
                         relay
@@ -1648,6 +1692,13 @@ fn relay_session_title(channel: &str) -> String {
         "telegram" => "Telegram session".to_string(),
         "whatsapp" => "WhatsApp session".to_string(),
         other => format!("{other} session"),
+    }
+}
+
+fn relay_session_title_for(agent: Option<&Agent>, channel: &str) -> String {
+    match agent {
+        Some(agent) => format!("{} · {}", agent.name, relay_session_title(channel)),
+        None => relay_session_title(channel),
     }
 }
 
@@ -1748,22 +1799,36 @@ fn relay_channel_for_session(session_id: &str) -> Option<(String, String)> {
 fn relay_peer_for_session(
     relay_sessions: &std::collections::HashMap<String, String>,
     session_id: &str,
-) -> Option<(String, String)> {
-    if let Some(found) = relay_channel_for_session(session_id) {
-        return Some(found);
-    }
+) -> Option<(String, String, Option<String>)> {
+    // Agent relays use `telegram:<agent_id>:<sender>`. Check the live map
+    // first: an agent session id has no channel prefix to parse.
     for (key, mapped) in relay_sessions {
         if mapped != session_id {
             continue;
         }
-        if let Some((channel, sender)) = key.split_once(':') {
-            if channel == "telegram" || channel == "whatsapp" {
-                return Some((channel.to_string(), sender.to_string()));
-            }
+        if let Some((channel, sender, agent_id)) = parse_relay_key(key) {
+            return Some((channel, sender, agent_id));
         }
     }
-    #[allow(unreachable_code)]
-    None
+    relay_channel_for_session(session_id).map(|(channel, sender)| (channel, sender, None))
+}
+
+/// Parse a relay-session map key into channel, sender and optional agent.
+fn parse_relay_key(key: &str) -> Option<(String, String, Option<String>)> {
+    let mut parts = key.splitn(3, ':');
+    let channel = parts.next()?;
+    if channel != "telegram" && channel != "whatsapp" {
+        return None;
+    }
+    let second = parts.next()?;
+    match parts.next() {
+        Some(sender) => Some((
+            channel.to_string(),
+            sender.to_string(),
+            Some(second.to_string()),
+        )),
+        None => Some((channel.to_string(), second.to_string(), None)),
+    }
 }
 
 async fn send_relay_text(
@@ -1771,10 +1836,14 @@ async fn send_relay_text(
     channel: &str,
     sender: &str,
     text: &str,
+    agent_id: Option<&str>,
 ) -> odon_core::Result<()> {
     match channel {
         "telegram" => {
-            let relay = state.telegram.read().await.clone();
+            let relay = match agent_id {
+                Some(id) => state.telegram_agents.read().await.get(id).cloned(),
+                None => state.telegram.read().await.clone(),
+            };
             match relay {
                 Some(relay) => relay.send_direct_message(sender, text).await,
                 None => Ok(()),
@@ -1891,18 +1960,59 @@ async fn relay_status_text(state: &AppState, session_id: &str) -> String {
 }
 
 async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) {
-    let key = relay_session_key(&message.channel, &message.sender_id);
+    // A per-agent bot carries its agent id; the global WhatsApp/Telegram relay
+    // leaves it empty and keeps the operator's main session.
+    let agent = message
+        .agent_id
+        .as_deref()
+        .and_then(|id| state.storage.get_agent(id).ok());
+    let key = match message.agent_id.as_deref() {
+        Some(id) if agent.is_some() => {
+            format!("{}:{}:{}", message.channel, id, message.sender_id)
+        }
+        _ => relay_session_key(&message.channel, &message.sender_id),
+    };
     let session_id = {
         let overrides = state.relay_sessions.read().await;
         overrides
             .get(&key)
             .cloned()
-            .or_else(|| message.session_id.clone())
-            .unwrap_or_else(|| format!("{}_{}", message.channel, message.sender_id))
+            .or_else(|| {
+                if agent.is_some() {
+                    None
+                } else {
+                    message.session_id.clone()
+                }
+            })
+            .unwrap_or_else(|| match message.agent_id.as_deref() {
+                Some(id) if agent.is_some() => {
+                    format!("agent_telegram_{id}_{}", message.sender_id)
+                }
+                _ => format!("{}_{}", message.channel, message.sender_id),
+            })
     };
+    let relay_model_override = state.relay_model.read().await.clone();
+    let effective_model = relay_model_override.clone().or_else(|| {
+        agent
+            .as_ref()
+            .map(|agent| agent.model.clone())
+            .filter(|model| !model.trim().is_empty())
+    });
+    // Keep the peer map current for agent relays: their session ids have no
+    // `tg_`/`wa_` prefix, so approvals could not find the right bot otherwise.
+    if agent.is_some() {
+        state
+            .relay_sessions
+            .write()
+            .await
+            .insert(key.clone(), session_id.clone());
+    }
     info!(
-        "Relay message from {} [{}] in session {}",
-        message.channel, message.sender_id, session_id
+        "Relay message from {} [{}] in session {} (agent: {})",
+        message.channel,
+        message.sender_id,
+        session_id,
+        message.agent_id.as_deref().unwrap_or("main")
     );
 
     let trimmed = message.text.trim();
@@ -1922,15 +2032,18 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
         let reply = match command.as_str() {
             "/start" | "/help" => relay_help_text(&message.channel),
             "/new" | "/reset" => {
-                let model = state.relay_model.read().await.clone();
                 let mut session = Session::new(
-                    relay_session_title(&message.channel),
+                    relay_session_title_for(agent.as_ref(), &message.channel),
                     SessionMode::General,
-                    model.as_deref().unwrap_or("odon-auto"),
+                    effective_model.as_deref().unwrap_or("odon-auto"),
                 );
+                session.agent_id = agent.as_ref().map(|agent| agent.id.clone());
+                session.workspace_root =
+                    agent.as_ref().and_then(|agent| agent.workspace_root.clone());
                 session.metadata = Some(serde_json::json!({
                     "channel": message.channel.clone(),
                     "peer": message.sender_id.clone(),
+                    "agent_id": message.agent_id.clone(),
                 }));
                 let _ = state.storage.save_session(&session);
                 state
@@ -1943,11 +2056,16 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             "/models" => relay_models_text(&state, &session_id).await,
             "/model" => {
                 if argument.is_empty() {
-                    let current = state.relay_model.read().await.clone();
                     format!(
                         "Current relay model: `{}`",
-                        current.as_deref().unwrap_or("provider default")
+                        effective_model.as_deref().unwrap_or("provider default")
                     )
+                } else if let Some(existing) = agent.as_ref() {
+                    let mut updated = existing.clone();
+                    updated.model = argument.clone();
+                    updated.updated_at = chrono::Utc::now();
+                    let _ = state.storage.save_agent(&updated);
+                    format!("Model agent `{}` diubah ke `{argument}`.", updated.name)
                 } else {
                     *state.relay_model.write().await = Some(argument.clone());
                     format!("Model switched to `{argument}` for this relay.")
@@ -2031,7 +2149,14 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             }
         };
 
-        let _ = send_relay_text(&state, &message.channel, &message.sender_id, &reply).await;
+        let _ = send_relay_text(
+            &state,
+            &message.channel,
+            &message.sender_id,
+            &reply,
+            message.agent_id.as_deref(),
+        )
+        .await;
         return;
     }
 
@@ -2052,13 +2177,38 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                 &message.channel,
                 &message.sender_id,
                 "🧭 Steer queued for the active turn.",
+                message.agent_id.as_deref(),
             )
             .await;
             return;
         }
     }
 
-    let model = state.relay_model.read().await.clone();
+    let model = effective_model.clone();
+    // Agent relays: create the thread bound to the agent before the runtime
+    // auto-creates a plain session.
+    if let Some(existing) = agent.as_ref() {
+        if state.storage.get_session(&session_id).is_err() {
+            let mut session = Session::new(
+                relay_session_title_for(Some(existing), &message.channel),
+                SessionMode::General,
+                model.as_deref().unwrap_or("odon-auto"),
+            );
+            session.id = session_id.clone();
+            session.agent_id = Some(existing.id.clone());
+            session.workspace_root = existing.workspace_root.clone();
+            session.metadata = Some(serde_json::json!({
+                "channel": message.channel.clone(),
+                "peer": message.sender_id.clone(),
+                "agent_id": existing.id.clone(),
+            }));
+            let _ = state.storage.save_session(&session);
+        }
+    }
+    let agent_prompt = agent
+        .as_ref()
+        .map(|agent| agent.system_prompt.as_str())
+        .filter(|prompt| !prompt.trim().is_empty());
     let cancel = tokio_util::sync::CancellationToken::new();
     let steer = SteerQueue::new();
     let turn_id = uuid::Uuid::new_v4().to_string();
@@ -2087,7 +2237,7 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             None,
             cancel,
             Some(steer),
-            None,
+            agent_prompt,
         )
         .await;
     {
@@ -2114,7 +2264,14 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             (text, Vec::new())
         }
     };
-    if let Err(error) = send_relay_text(&state, &message.channel, &message.sender_id, &reply).await
+    if let Err(error) = send_relay_text(
+        &state,
+        &message.channel,
+        &message.sender_id,
+        &reply,
+        message.agent_id.as_deref(),
+    )
+    .await
     {
         tracing::error!("Failed to deliver {} reply: {error}", message.channel);
     }
@@ -2125,6 +2282,7 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             &message.sender_id,
             "Generated by ODON",
             &attachments,
+            message.agent_id.as_deref(),
         )
         .await;
     }
@@ -2230,6 +2388,8 @@ struct AppState {
     telegram_online: Arc<std::sync::atomic::AtomicBool>,
     whatsapp_online: Arc<std::sync::atomic::AtomicBool>,
     telegram: Arc<tokio::sync::RwLock<Option<Arc<TelegramRelay>>>>,
+    /// Per-agent bots, keyed by the persisted agent id.
+    telegram_agents: Arc<tokio::sync::RwLock<HashMap<String, Arc<TelegramRelay>>>>,
     whatsapp_cloud: Arc<tokio::sync::RwLock<Option<Arc<WhatsAppChannel>>>>,
     whatsapp_bridge: WhatsAppBridge,
     relay_config: Arc<tokio::sync::RwLock<RelayConfig>>,
@@ -2363,6 +2523,14 @@ async fn main() -> anyhow::Result<()> {
                 Ok(evicted) => info!("Pruned {evicted} stale memory row(s)"),
                 Err(error) => warn!("Could not prune storage memory: {error}"),
             }
+            // The office is a fixed roster of persisted agents. Seed it once so
+            // a fresh install opens with ten editable desks instead of an empty
+            // floor; an existing roster is never overwritten.
+            match ensure_default_agents(&storage) {
+                Ok(0) => {}
+                Ok(seeded) => info!("Seeded {seeded} default agent(s)"),
+                Err(error) => warn!("Could not seed the default agent roster: {error}"),
+            }
 
             // 2. Event Bus (created first so approvals can publish on it)
             // Headroom for a burst of token/tool events. A web search or fetch result
@@ -2469,6 +2637,9 @@ async fn main() -> anyhow::Result<()> {
 
             let telegram_handle: Arc<tokio::sync::RwLock<Option<Arc<TelegramRelay>>>> =
                 Arc::new(tokio::sync::RwLock::new(None));
+            let telegram_agents_handle: Arc<
+                tokio::sync::RwLock<HashMap<String, Arc<TelegramRelay>>>,
+            > = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
             let whatsapp_cloud_handle: Arc<tokio::sync::RwLock<Option<Arc<WhatsAppChannel>>>> =
                 Arc::new(tokio::sync::RwLock::new(None));
             let whatsapp_bridge = WhatsAppBridge::new(&bind, api_token.clone());
@@ -2486,6 +2657,35 @@ async fn main() -> anyhow::Result<()> {
                             *telegram_handle.write().await = Some(relay);
                         }
                         Err(e) => tracing::error!("Telegram relay failed to start: {e}"),
+                    }
+                }
+
+                // One bot per agent. A token whose agent no longer exists is
+                // left on disk but not started, so deleting an agent cannot
+                // resurrect its connector on the next boot.
+                for (agent_id, telegram) in config.telegram_agents.clone() {
+                    if storage.get_agent(&agent_id).is_err() {
+                        warn!("Skipping Telegram bot for unknown agent {agent_id}");
+                        continue;
+                    }
+                    println!("Connecting Telegram bot for agent {agent_id}...");
+                    let relay = Arc::new(
+                        TelegramRelay::with_allowlist(
+                            Some(telegram.token.clone()),
+                            telegram.allowed_users.clone(),
+                        )
+                        .with_agent_id(agent_id.clone()),
+                    );
+                    match relay.start(relay_tx.clone()).await {
+                        Ok(()) => {
+                            telegram_agents_handle
+                                .write()
+                                .await
+                                .insert(agent_id, relay);
+                        }
+                        Err(e) => {
+                            tracing::error!("Telegram bot for agent {agent_id} failed: {e}")
+                        }
                     }
                 }
 
@@ -2597,6 +2797,7 @@ async fn main() -> anyhow::Result<()> {
                 telegram_online,
                 whatsapp_online,
                 telegram: telegram_handle,
+                telegram_agents: telegram_agents_handle,
                 whatsapp_cloud: whatsapp_cloud_handle,
                 whatsapp_bridge,
                 relay_config,
@@ -2653,7 +2854,7 @@ async fn main() -> anyhow::Result<()> {
                         } = event.event
                         {
                             let relay_map = approval_state.relay_sessions.read().await.clone();
-                            let Some((channel, sender)) =
+                            let Some((channel, sender, agent_id)) =
                                 relay_peer_for_session(&relay_map, &session_id)
                             else {
                                 continue;
@@ -2661,8 +2862,14 @@ async fn main() -> anyhow::Result<()> {
                             let text = format!(
                                 "🔒 *Approval required*\n\nID: `{approval_id}`\nTool: `{tool_name}`\nRisk: Tier {risk_tier}\n\n{description}\n\nReply:\n/approve {approval_id}\n/deny {approval_id}"
                             );
-                            let _ =
-                                send_relay_text(&approval_state, &channel, &sender, &text).await;
+                            let _ = send_relay_text(
+                                &approval_state,
+                                &channel,
+                                &sender,
+                                &text,
+                                agent_id.as_deref(),
+                            )
+                            .await;
                         }
                     }
                 });
@@ -2699,7 +2906,9 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/sessions", get(list_sessions).post(create_session))
                 .route(
                     "/api/sessions/{id}",
-                    get(get_session).delete(delete_session),
+                    get(get_session)
+                        .patch(update_session)
+                        .delete(delete_session),
                 )
                 .route(
                     "/api/sessions/{id}/messages",
@@ -2710,6 +2919,32 @@ async fn main() -> anyhow::Result<()> {
                 .route("/api/sessions/{id}/workspace", post(set_session_workspace))
                 .route("/api/sessions/{id}/artifacts", get(list_session_artifacts))
                 .route("/api/sessions/{id}/todos", get(get_session_todos))
+                // Persisted agent roster that the office renders. Sessions are
+                // linked to an agent through `sessions.agent_id`.
+                .route("/api/agents", get(list_agents).post(save_agent))
+                .route(
+                    "/api/agents/{id}",
+                    get(get_agent).put(update_agent).delete(delete_agent),
+                )
+                .route(
+                    "/api/agents/{id}/sessions",
+                    get(list_agent_sessions).post(create_agent_session),
+                )
+                .route(
+                    "/api/agents/{id}/telegram",
+                    get(get_agent_telegram)
+                        .put(save_agent_telegram)
+                        .delete(delete_agent_telegram),
+                )
+                .route(
+                    "/api/agents/{id}/webhook",
+                    get(get_agent_webhook)
+                        .put(save_agent_webhook)
+                        .delete(delete_agent_webhook),
+                )
+                // Inbound automation hook. The path secret is the credential;
+                // the daemon-token middleware already exempts non-/api paths.
+                .route("/hooks/agents/{token}", post(agent_webhook))
                 .route(
                     "/api/workspaces",
                     get(list_workspaces)
@@ -3620,12 +3855,746 @@ async fn list_sessions(
     }
 }
 
+fn default_agents() -> Vec<Agent> {
+    let seeds = [
+        (
+            "agent_coding",
+            "Coding",
+            "Software Engineering",
+            "#557a95",
+            "You are the Coding agent. Own software engineering work: read the repository before editing, keep changes minimal, run the project's checks, and report the exact files changed. Do not take over finance, design, sales or support work unless asked to support them.",
+        ),
+        (
+            "agent_fat",
+            "F.A.T",
+            "Finance, Accounting & Tax",
+            "#a8775f",
+            "You are the F.A.T agent (Finance, Accounting & Tax). Prepare financial reports, reconciliations and tax calculations with explicit assumptions and sources. Never submit a filing, move money or declare tax on your own: surface every item that needs human approval and keep an audit trail.",
+        ),
+        (
+            "agent_design",
+            "Design",
+            "Design & Brand",
+            "#b45309",
+            "You are the Design agent. Own UI/UX, visual identity and asset production: start from the user's brand and constraints, produce concrete deliverables, and keep layouts accessible and consistent. Do not change product logic or infrastructure.",
+        ),
+        (
+            "agent_crm",
+            "CRM",
+            "CRM & Leads",
+            "#047857",
+            "You are the CRM agent. Own leads, pipeline and customer records: qualify leads, keep stages accurate, draft follow-ups, and never send a message or change a record without approval when it affects a real customer.",
+        ),
+        (
+            "agent_research",
+            "Research",
+            "Research & Analysis",
+            "#6b7280",
+            "You are the Research agent. Investigate questions thoroughly, cite sources, separate evidence from inference, and summarize findings with clear confidence levels. Do not make irreversible changes.",
+        ),
+        (
+            "agent_marketing",
+            "Marketing",
+            "Marketing & Growth",
+            "#8d5f49",
+            "You are the Marketing agent. Own campaigns, positioning and growth experiments: define the audience, the message and the measurable outcome. Do not publish externally without explicit approval.",
+        ),
+        (
+            "agent_content",
+            "Content",
+            "Content & Social",
+            "#7495ad",
+            "You are the Content agent. Produce copy, scripts and social content in the requested voice, keep a consistent tone, and adapt to each channel's format. Do not post or schedule without approval.",
+        ),
+        (
+            "agent_ops",
+            "Ops",
+            "Operations & Admin",
+            "#b7a68c",
+            "You are the Ops agent. Own internal operations: checklists, SOPs, scheduling and coordination. Prefer small, reversible steps and record decisions so the operator can audit them.",
+        ),
+        (
+            "agent_data",
+            "Data",
+            "Data & Reporting",
+            "#5b7c99",
+            "You are the Data agent. Own analysis and reporting: state the source, the transformation and the assumptions, and prefer reproducible queries over one-off numbers. Do not invent metrics.",
+        ),
+        (
+            "agent_support",
+            "Support",
+            "Customer Support",
+            "#7c6f64",
+            "You are the Support agent. Own customer questions and incidents: be precise and empathetic, gather the facts first, and escalate anything that needs a human or a policy exception.",
+        ),
+    ];
+    seeds
+        .into_iter()
+        .enumerate()
+        .map(|(index, (id, name, role, color, prompt))| {
+            let mut agent = Agent::new(name, role);
+            agent.id = id.to_string();
+            agent.color = color.to_string();
+            agent.system_prompt = prompt.to_string();
+            agent.sort_order = index as i64;
+            agent.schedule = AgentSchedule::default();
+            agent
+        })
+        .collect()
+}
+
+/// Seed the fixed ten-agent roster once. Returns how many agents were written.
+fn ensure_default_agents(storage: &StorageEngine) -> anyhow::Result<usize> {
+    if !storage.list_agents()?.is_empty() {
+        return Ok(0);
+    }
+    let agents = default_agents();
+    for agent in &agents {
+        storage.save_agent(agent)?;
+    }
+    Ok(agents.len())
+}
+
+async fn resolve_allowed_workspace(state: &AppState, raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = canonical_workspace(raw).ok()?;
+    let config = state.workspaces.read().await;
+    workspace_allowed(&config, &path).then_some(path)
+}
+
+async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
+    match state.storage.list_agents() {
+        Ok(agents) => (StatusCode::OK, Json(json!(agents))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn get_agent(Path(id): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
+    match state.storage.get_agent(&id) {
+        Ok(agent) => (StatusCode::OK, Json(json!(agent))),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Unknown agent '{id}'") })),
+        ),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct AgentInput {
+    id: Option<String>,
+    name: Option<String>,
+    role: Option<String>,
+    color: Option<String>,
+    system_prompt: Option<String>,
+    model: Option<String>,
+    workspace_root: Option<String>,
+    skills: Option<Vec<String>>,
+    enabled: Option<bool>,
+    sort_order: Option<i64>,
+    schedule: Option<AgentSchedule>,
+}
+
+fn apply_agent_input(agent: &mut Agent, input: AgentInput) {
+    if let Some(value) = input.name {
+        let value = value.trim();
+        if !value.is_empty() {
+            agent.name = value.to_string();
+        }
+    }
+    if let Some(value) = input.role {
+        let value = value.trim();
+        if !value.is_empty() {
+            agent.role = value.to_string();
+        }
+    }
+    if let Some(value) = input.color.filter(|v| !v.trim().is_empty()) {
+        agent.color = value;
+    }
+    if let Some(value) = input.system_prompt {
+        agent.system_prompt = value;
+    }
+    if let Some(value) = input.model.filter(|v| !v.trim().is_empty()) {
+        agent.model = value;
+    }
+    if let Some(value) = input.workspace_root {
+        agent.workspace_root = Some(value).filter(|v| !v.trim().is_empty());
+    }
+    if let Some(value) = input.skills {
+        agent.skills = value;
+    }
+    if let Some(value) = input.enabled {
+        agent.enabled = value;
+    }
+    if let Some(value) = input.sort_order {
+        agent.sort_order = value;
+    }
+    if let Some(value) = input.schedule {
+        agent.schedule = value;
+    }
+    agent.updated_at = Utc::now();
+}
+
+async fn save_agent(
+    State(state): State<AppState>,
+    Json(input): Json<AgentInput>,
+) -> impl IntoResponse {
+    let mut agent = match input.id.as_deref().and_then(|id| state.storage.get_agent(id).ok()) {
+        Some(existing) => existing,
+        None => {
+            let name = input
+                .name
+                .clone()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "New Agent".to_string());
+            let role = input
+                .role
+                .clone()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "General".to_string());
+            let mut agent = Agent::new(name, role);
+            if let Some(id) = input.id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                agent.id = id.to_string();
+            }
+            agent
+        }
+    };
+    apply_agent_input(&mut agent, input);
+    match state.storage.save_agent(&agent) {
+        Ok(_) => (StatusCode::CREATED, Json(json!(agent))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn update_agent(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(input): Json<AgentInput>,
+) -> impl IntoResponse {
+    let mut agent = match state.storage.get_agent(&id) {
+        Ok(agent) => agent,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("Unknown agent '{id}'") })),
+            )
+        }
+    };
+    apply_agent_input(&mut agent, input);
+    match state.storage.save_agent(&agent) {
+        Ok(_) => (StatusCode::OK, Json(json!(agent))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn delete_agent(Path(id): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
+    // Stop the connector first: a deleted agent must not keep polling Telegram
+    // or write into an orphan session.
+    if let Some(relay) = state.telegram_agents.write().await.remove(&id) {
+        relay.stop();
+    }
+    {
+        let mut config = state.relay_config.write().await;
+        if config.telegram_agents.remove(&id).is_some() {
+            save_relay_config(&config);
+        }
+    }
+    match state.storage.delete_agent(&id) {
+        Ok(deleted) => (StatusCode::OK, Json(json!({ "id": id, "deleted": deleted }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn get_agent_telegram(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let online = state
+        .telegram_agents
+        .read()
+        .await
+        .get(&agent_id)
+        .map(|relay| relay.is_connected())
+        .unwrap_or(false);
+    let config = state.relay_config.read().await;
+    match config.telegram_agents.get(&agent_id) {
+        Some(telegram) => Json(json!({
+            "configured": true,
+            "online": online,
+            "token_masked": mask_secret(&telegram.token),
+            "allowed_users": telegram.allowed_users,
+        })),
+        None => Json(json!({
+            "configured": false,
+            "online": online,
+            "token_masked": "",
+            "allowed_users": [],
+        })),
+    }
+}
+
+async fn save_agent_telegram(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<TelegramRelayRequest>,
+) -> impl IntoResponse {
+    if state.storage.get_agent(&agent_id).is_err() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Unknown agent '{agent_id}'") })),
+        );
+    }
+    let token_input = req.token.trim().to_string();
+    // An empty token means "keep the existing credential", so the operator can
+    // edit the allowlist without pasting the secret again.
+    let existing = state
+        .relay_config
+        .read()
+        .await
+        .telegram_agents
+        .get(&agent_id)
+        .cloned();
+    let token = if token_input.is_empty() {
+        existing.as_ref().map(|config| config.token.clone())
+    } else {
+        Some(token_input)
+    };
+    let Some(token) = token.filter(|value| !value.trim().is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Telegram bot token is required" })),
+        );
+    };
+    let allowed_users: Vec<String> = req
+        .allowed_users
+        .into_iter()
+        .map(|item| item.trim().trim_start_matches('@').to_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect();
+
+    if let Some(previous) = state.telegram_agents.write().await.remove(&agent_id) {
+        previous.stop();
+    }
+    let relay = Arc::new(
+        TelegramRelay::with_allowlist(Some(token.clone()), allowed_users.clone())
+            .with_agent_id(agent_id.clone()),
+    );
+    if let Err(error) = relay.start(state.relay_tx.clone()).await {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": error.to_string() })),
+        );
+    }
+    state
+        .telegram_agents
+        .write()
+        .await
+        .insert(agent_id.clone(), relay);
+    {
+        let mut config = state.relay_config.write().await;
+        config.telegram_agents.insert(
+            agent_id.clone(),
+            TelegramRelayConfig {
+                token: token.clone(),
+                allowed_users: allowed_users.clone(),
+            },
+        );
+        save_relay_config(&config);
+    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "configured": true,
+            "online": true,
+            "token_masked": mask_secret(&token),
+            "allowed_users": allowed_users,
+        })),
+    )
+}
+
+async fn delete_agent_telegram(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if let Some(relay) = state.telegram_agents.write().await.remove(&agent_id) {
+        relay.stop();
+    }
+    {
+        let mut config = state.relay_config.write().await;
+        config.telegram_agents.remove(&agent_id);
+        save_relay_config(&config);
+    }
+    Json(json!({ "configured": false, "online": false }))
+}
+
+async fn get_agent_webhook(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let config = state.relay_config.read().await;
+    match config.agent_webhooks.get(&agent_id) {
+        Some(webhook) => Json(json!({
+            "configured": true,
+            "url": webhook_url(&webhook.token),
+            "method": "POST",
+        })),
+        None => Json(json!({
+            "configured": false,
+            "url": "",
+            "method": "POST",
+        })),
+    }
+}
+
+/// Create or rotate the agent's webhook secret.
+async fn save_agent_webhook(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if state.storage.get_agent(&agent_id).is_err() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Unknown agent '{agent_id}'") })),
+        );
+    }
+    let token = generate_webhook_token();
+    {
+        let mut config = state.relay_config.write().await;
+        config
+            .agent_webhooks
+            .insert(agent_id.clone(), AgentWebhookConfig { token: token.clone() });
+        save_relay_config(&config);
+    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "configured": true,
+            "url": webhook_url(&token),
+            "method": "POST",
+        })),
+    )
+}
+
+async fn delete_agent_webhook(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    {
+        let mut config = state.relay_config.write().await;
+        config.agent_webhooks.remove(&agent_id);
+        save_relay_config(&config);
+    }
+    Json(json!({ "configured": false }))
+}
+
+#[derive(Deserialize)]
+struct AgentWebhookRequest {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    attachments: Vec<AttachmentInput>,
+}
+
+/// Inbound webhook for one agent (N8N, Zapier, a custom service).
+///
+/// The path token authenticates the caller because external automations cannot
+/// know the daemon's API token. The handler runs the turn synchronously and
+/// returns the answer, so an N8N HTTP node can use the reply directly.
+async fn agent_webhook(
+    Path(token): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<AgentWebhookRequest>,
+) -> impl IntoResponse {
+    let agent_id = {
+        let config = state.relay_config.read().await;
+        config
+            .agent_webhooks
+            .iter()
+            .find(|(_, webhook)| constant_time_eq(&webhook.token, &token))
+            .map(|(id, _)| id.clone())
+    };
+    let Some(agent_id) = agent_id else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Webhook not found" })),
+        );
+    };
+    let agent = match state.storage.get_agent(&agent_id) {
+        Ok(agent) => agent,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Agent no longer exists" })),
+            )
+        }
+    };
+    let text = req
+        .text
+        .or(req.message)
+        .or(req.prompt)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if text.is_empty() && req.attachments.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "text (or message/prompt) is required" })),
+        );
+    }
+
+    let requested_session = req
+        .session_id
+        .as_deref()
+        .map(sanitize_relay_fragment)
+        .filter(|id| !id.is_empty());
+    let session_id = match requested_session {
+        Some(id) => match state.storage.get_session(&id) {
+            Ok(session) if session.agent_id.as_deref() == Some(agent.id.as_str()) => id,
+            Ok(_) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({ "error": "session_id belongs to another agent" })),
+                )
+            }
+            // The caller manages its own conversation id; bind it to the agent.
+            Err(_) => id,
+        },
+        None => format!("agent_webhook_{}", sanitize_relay_fragment(&agent.id)),
+    };
+
+    if state.storage.get_session(&session_id).is_err() {
+        let model = if agent.model.trim().is_empty() {
+            "odon-auto".to_string()
+        } else {
+            agent.model.clone()
+        };
+        let mut session = Session::new(
+            format!("{} · Webhook", agent.name),
+            SessionMode::General,
+            model,
+        );
+        session.id = session_id.clone();
+        session.agent_id = Some(agent.id.clone());
+        session.workspace_root = agent.workspace_root.clone();
+        session.metadata = Some(serde_json::json!({
+            "channel": "webhook",
+            "peer": req.source.clone().unwrap_or_else(|| "webhook".to_string()),
+            "agent_id": agent.id.clone(),
+        }));
+        let _ = state.storage.save_session(&session);
+    }
+
+    let attachments: Vec<odon_core::MessageAttachment> = req
+        .attachments
+        .into_iter()
+        .map(|attachment| odon_core::MessageAttachment {
+            name: attachment.name,
+            mime_type: attachment.mime_type,
+            data_base64: attachment.data_base64,
+        })
+        .collect();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut turns = state.active_turns.write().await;
+        if let Some(previous) = turns.get(&session_id) {
+            previous.cancel.cancel();
+        }
+        turns.insert(
+            session_id.clone(),
+            TurnHandle {
+                turn_id: turn_id.clone(),
+                cancel: cancel.clone(),
+                steer: SteerQueue::new(),
+            },
+        );
+    }
+    let model = if agent.model.trim().is_empty() {
+        None
+    } else {
+        Some(agent.model.as_str())
+    };
+    let prompt = if agent.system_prompt.trim().is_empty() {
+        None
+    } else {
+        Some(agent.system_prompt.as_str())
+    };
+    let result = state
+        .runtime
+        .execute_turn_controlled(
+            &session_id,
+            &text,
+            attachments,
+            model,
+            None,
+            cancel,
+            None,
+            prompt,
+        )
+        .await;
+    {
+        let mut turns = state.active_turns.write().await;
+        retire_turn_handle(&mut turns, &session_id, &turn_id);
+    }
+    match result {
+        Ok(message) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "session_id": session_id,
+                "model": agent.model,
+                "reply": message.content.text,
+                "artifact_ids": message.content.artifact_ids,
+            })),
+        ),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "ok": false, "error": error.to_string() })),
+        ),
+    }
+}
+
+async fn list_agent_sessions(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.storage.list_sessions() {
+        Ok(sessions) => {
+            let rows: Vec<Session> = sessions
+                .into_iter()
+                .filter(|session| session.agent_id.as_deref() == Some(id.as_str()))
+                .collect();
+            (StatusCode::OK, Json(json!(rows)))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateAgentSessionRequest {
+    title: Option<String>,
+}
+
+async fn create_agent_session(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<CreateAgentSessionRequest>,
+) -> impl IntoResponse {
+    let agent = match state.storage.get_agent(&id) {
+        Ok(agent) => agent,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("Unknown agent '{id}'") })),
+            )
+        }
+    };
+    let title = req.title.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
+        format!(
+            "{} · {}",
+            agent.name,
+            chrono::Local::now().format("%d %b %H:%M")
+        )
+    });
+    let model = if agent.model.trim().is_empty() {
+        "odon-auto".to_string()
+    } else {
+        agent.model.clone()
+    };
+    let mut session = Session::new(title, SessionMode::General, model);
+    session.agent_id = Some(agent.id.clone());
+    session.workspace_root = resolve_allowed_workspace(&state, agent.workspace_root.as_deref()).await;
+    match state.storage.save_session(&session) {
+        Ok(_) => (StatusCode::CREATED, Json(json!(session))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateSessionRequest {
+    title: Option<String>,
+    model: Option<String>,
+    agent_id: Option<String>,
+}
+
+async fn update_session(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<UpdateSessionRequest>,
+) -> impl IntoResponse {
+    let mut session = match state.storage.get_session(&id) {
+        Ok(session) => session,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": e.to_string() })),
+            )
+        }
+    };
+    if let Some(title) = req.title.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        session.title = title;
+    }
+    if let Some(model) = req.model.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        session.active_model = model;
+    }
+    if let Some(agent_id) = req.agent_id {
+        let agent_id = agent_id.trim().to_string();
+        if agent_id.is_empty() {
+            session.agent_id = None;
+        } else if state.storage.get_agent(&agent_id).is_ok() {
+            session.agent_id = Some(agent_id);
+        } else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("Unknown agent '{agent_id}'") })),
+            );
+        }
+    }
+    session.updated_at = Utc::now();
+    match state.storage.save_session(&session) {
+        Ok(_) => (StatusCode::OK, Json(json!(session))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
 #[derive(Deserialize)]
 struct CreateSessionRequest {
     title: Option<String>,
     mode: Option<String>,
     model: Option<String>,
     workspace_root: Option<String>,
+    agent_id: Option<String>,
 }
 
 async fn create_session(
@@ -3641,10 +4610,42 @@ async fn create_session(
         Some("automations") => SessionMode::Automations,
         _ => SessionMode::General,
     };
+    // A session started from an agent desk inherits that agent's model and
+    // workspace, so the office and the composer cannot disagree about who runs
+    // the turn.
+    let agent = match req
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => match state.storage.get_agent(id) {
+            Ok(agent) => Some(agent),
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": format!("Unknown agent '{id}'") })),
+                )
+            }
+        },
+        None => None,
+    };
     let title = req.title.unwrap_or_else(|| "New Conversation".to_string());
-    let model = req.model.unwrap_or_else(|| "odon-auto".to_string());
+    let model = req
+        .model
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            agent
+                .as_ref()
+                .map(|agent| agent.model.clone())
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "odon-auto".to_string());
 
-    let workspace_root = match req.workspace_root.filter(|p| !p.trim().is_empty()) {
+    let requested_workspace = req
+        .workspace_root
+        .or_else(|| agent.as_ref().and_then(|agent| agent.workspace_root.clone()));
+    let workspace_root = match requested_workspace.filter(|p| !p.trim().is_empty()) {
         Some(raw) => match canonical_workspace(&raw) {
             Ok(path) => {
                 let config = state.workspaces.read().await;
@@ -3667,6 +4668,7 @@ async fn create_session(
 
     let mut session = Session::new(title, mode, model);
     session.workspace_root = workspace_root;
+    session.agent_id = agent.map(|agent| agent.id);
     match state.storage.save_session(&session) {
         Ok(_) => (StatusCode::CREATED, Json(json!(session))),
         Err(e) => (
@@ -3981,6 +4983,22 @@ struct TurnPlan {
     instructions: Option<String>,
 }
 
+/// Whose model wins for one turn: the operator's pick for this turn, then the
+/// agent's configured model, then the session's last model. Keeping this pure
+/// makes the wrong-provider regression directly testable.
+fn pick_effective_model(
+    requested: Option<&str>,
+    agent_model: Option<&str>,
+    session_model: Option<&str>,
+) -> Option<String> {
+    [requested, agent_model, session_model]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn resolve_turn_plan(
     mode: &str,
     requested_model: Option<&str>,
@@ -4053,11 +5071,48 @@ async fn send_message(
         .unwrap_or("chat")
         .trim()
         .to_ascii_lowercase();
+    // The model the operator picked for this turn always wins. An agent's
+    // configured model is the next fallback (so an agent desk keeps its own
+    // model when the composer sends none), and the session's last model is the
+    // final fallback. Forcing the agent model here sent a composer selection
+    // for StepFun to the default Anthropic provider instead.
+    let session = state.storage.get_session(&session_id).ok();
+    let agent = session
+        .as_ref()
+        .and_then(|session| session.agent_id.as_deref())
+        .and_then(|id| state.storage.get_agent(id).ok());
+    let effective_model = pick_effective_model(
+        req.model.as_deref(),
+        agent.as_ref().map(|agent| agent.model.as_str()),
+        session.as_ref().map(|session| session.active_model.as_str()),
+    );
+    let agent_instruction = agent
+        .as_ref()
+        .filter(|agent| !agent.system_prompt.trim().is_empty())
+        .map(|agent| {
+            format!(
+                "## Agent: {} — {}\n{}",
+                agent.name,
+                agent.role,
+                agent.system_prompt.trim()
+            )
+        });
+    let custom_instruction = req
+        .custom_instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let merged_instructions = match (agent_instruction, custom_instruction) {
+        (Some(agent), Some(custom)) => Some(format!("{agent}\n\n{custom}")),
+        (Some(agent), None) => Some(agent),
+        (None, Some(custom)) => Some(custom.to_string()),
+        (None, None) => None,
+    };
     let turn = resolve_turn_plan(
         &mode,
-        req.model.as_deref(),
+        effective_model.as_deref(),
         req.plan_mode,
-        req.custom_instructions.as_deref(),
+        merged_instructions.as_deref(),
     );
     let _ = odon_tools::harness::set_plan_mode(&state.storage, &session_id, turn.plan_mode);
     let requested_model = turn.model.clone();
@@ -4499,6 +5554,7 @@ async fn whatsapp_bridge_inbound(
         session_id: Some(format!("wa_{}", req.from)),
         text,
         attachments: req.attachments,
+        agent_id: None,
     };
     let _ = state.relay_tx.send(message).await;
     (StatusCode::OK, Json(json!({ "accepted": true })))
@@ -6884,9 +7940,13 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
             let catalogue = models.len();
             for model in models {
                 if let Some(mid) = model.get("id").and_then(|v| v.as_str()) {
+                    let context = model
+                        .get("context")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
                     state
                         .runtime
-                        .register_model_route(mid, pid, catalogue)
+                        .register_model_route_with_context(mid, pid, catalogue, context)
                         .await;
                 }
             }
@@ -8929,11 +9989,14 @@ struct SkillItemInfo {
     description: String,
     path: String,
     content: String,
+    /// "user" (a markdown file on disk) or "builtin" (compiled into ODON).
+    source: String,
 }
 
 async fn get_skills_list() -> impl IntoResponse {
     let dir = get_skills_dir();
     let mut skills = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -8959,15 +10022,33 @@ async fn get_skills_list() -> impl IntoResponse {
                 };
                 let desc = content.lines().nth(1).unwrap_or("").trim().to_string();
 
+                seen.insert(name.clone());
                 skills.push(SkillItemInfo {
                     name,
                     title,
                     description: desc,
                     path: p.to_string_lossy().to_string(),
                     content,
+                    source: "user".to_string(),
                 });
             }
         }
+    }
+
+    // Built-ins ship with the binary; a user skill with the same slug shadows
+    // them, which is how an operator overrides the house procedure.
+    for skill in odon_tools::skills_builtin::builtin_skills() {
+        if seen.contains(skill.slug) {
+            continue;
+        }
+        skills.push(SkillItemInfo {
+            name: skill.slug.to_string(),
+            title: skill.title.to_string(),
+            description: skill.description.to_string(),
+            path: format!("builtin:{}", skill.slug),
+            content: skill.body.to_string(),
+            source: "builtin".to_string(),
+        });
     }
 
     Json(json!({ "skills": skills }))
@@ -9016,8 +10097,17 @@ async fn save_skill_item(Json(payload): Json<SaveSkillPayload>) -> impl IntoResp
 
 async fn delete_skill_item(Path(name): Path<String>) -> impl IntoResponse {
     let dir = get_skills_dir();
-    let filename = format!("{}.md", safe_skill_slug(&name));
-    let path = dir.join(filename);
+    let slug = safe_skill_slug(&name);
+    let path = dir.join(format!("{}.md", slug));
+
+    // A built-in has no file to delete. A user file with the same slug is an
+    // override, so removing it is allowed and the built-in shows again.
+    if !path.exists() && odon_tools::skills_builtin::find_builtin_skill(&slug).is_some() {
+        return Json(json!({
+            "success": false,
+            "error": "Built-in skills cannot be deleted; create a user skill with the same name to override one"
+        }));
+    }
 
     match std::fs::remove_file(&path) {
         Ok(_) => Json(json!({ "success": true })),
@@ -9097,12 +10187,26 @@ mod tests {
 
         assert_eq!(
             relay_peer_for_session(&map, "e5a1-uuid"),
-            Some(("telegram".to_string(), "4242".to_string()))
+            Some(("telegram".to_string(), "4242".to_string(), None))
         );
         // Prefix ids keep working without the map.
         assert_eq!(
             relay_peer_for_session(&std::collections::HashMap::new(), "wa_6281"),
-            Some(("whatsapp".to_string(), "6281".to_string()))
+            Some(("whatsapp".to_string(), "6281".to_string(), None))
+        );
+        // An agent relay keeps the agent id so the reply goes out on its bot.
+        let mut agent_map = std::collections::HashMap::new();
+        agent_map.insert(
+            "telegram:agent_coding:4242".to_string(),
+            "agent-uuid".to_string(),
+        );
+        assert_eq!(
+            relay_peer_for_session(&agent_map, "agent-uuid"),
+            Some((
+                "telegram".to_string(),
+                "4242".to_string(),
+                Some("agent_coding".to_string())
+            ))
         );
         // Unknown sessions must not be attributed to a channel.
         assert_eq!(relay_peer_for_session(&map, "not-a-relay-session"), None);
@@ -9219,6 +10323,67 @@ mod tests {
         let text = custom.instructions.unwrap();
         assert!(text.starts_with("Answer in Indonesian"));
         assert!(text.contains("AGENT"));
+    }
+
+    /// Regression: an agent-owned session used to force its own `odon-auto`
+    /// over the composer selection, so picking StepFun ran on the default
+    /// Anthropic provider instead.
+    /// The relay map key is the only way an agent bot's approval reply finds
+    /// the right bot again; a `telegram:<agent>:<sender>` key must split into
+    /// all three parts.
+    #[test]
+    fn relay_keys_distinguish_agent_bots() {
+        assert_eq!(
+            parse_relay_key("telegram:12345"),
+            Some(("telegram".to_string(), "12345".to_string(), None))
+        );
+        assert_eq!(
+            parse_relay_key("telegram:agent_coding:12345"),
+            Some((
+                "telegram".to_string(),
+                "12345".to_string(),
+                Some("agent_coding".to_string())
+            ))
+        );
+        assert_eq!(
+            parse_relay_key("whatsapp:628123"),
+            Some(("whatsapp".to_string(), "628123".to_string(), None))
+        );
+        assert_eq!(parse_relay_key("desktop:user"), None);
+        assert_eq!(parse_relay_key("telegram"), None);
+    }
+
+    #[test]
+    fn webhook_tokens_are_192_bit_hex_and_unique() {
+        let first = generate_webhook_token();
+        let second = generate_webhook_token();
+        assert_eq!(first.len(), 48, "24 random bytes as hex");
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+        assert!(webhook_url("abc").ends_with("/hooks/agents/abc"));
+    }
+
+    #[test]
+    fn composer_model_wins_over_agent_and_session_models() {
+        assert_eq!(
+            pick_effective_model(
+                Some("compat-stepfun-plan::step-3.7-flash"),
+                Some("odon-auto"),
+                Some("anthropic::claude-haiku-4.5"),
+            )
+            .as_deref(),
+            Some("compat-stepfun-plan::step-3.7-flash")
+        );
+        assert_eq!(
+            pick_effective_model(None, Some("odon-auto"), Some("anthropic::claude-haiku-4.5"))
+                .as_deref(),
+            Some("odon-auto")
+        );
+        assert_eq!(
+            pick_effective_model(Some("   "), None, Some("deepseek::deepseek-v4-pro")).as_deref(),
+            Some("deepseek::deepseek-v4-pro")
+        );
+        assert_eq!(pick_effective_model(None, None, None), None);
     }
 
     #[test]

@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-19-blue?style=flat-square&logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-5.8-blue?style=flat-square&logo=typescript" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat-square&logo=tailwind-css" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Tools_Registry-249_Registered-emerald?style=flat-square" alt="249 registered tools" />
+  <img src="https://img.shields.io/badge/Tools_Registry-255_Registered-emerald?style=flat-square" alt="255 registered tools" />
   <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=flat-square" alt="License" />
 </p>
 
@@ -62,7 +62,7 @@ Unlike traditional rigid terminal loops, ODON delivers seamless multi-turn thoug
   - **Deny**: Rejects execution and passes feedback back to the agent.
 
 ### 4. 🧠 Explicit, Self-Diagnosing Tool Registry
-ODON exposes 249 registered tools (238 model-visible, 11 compatibility-only; 242 stable, 2 experimental, 5 honestly marked unavailable) with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`. A turn sends at most 128 tool schemas inline; past that a core set rides with `find_tools` and the rest of the catalogue loads on demand, and `run_subagent` delegates a bounded side task to a child session. Independent tool calls in one step run with bounded parallelism (4). Long sessions are compacted to a context budget before each request (trimming oversized tool outputs first, then eliding the oldest middle turns), and a turn that hits its step cap pauses with everything persisted instead of failing; send "continue" to resume, and a reply cut by the output budget is resumed automatically up to 4 times. Tune with `ODON_MAX_TURN_ITERATIONS` (default 500 for metered providers, 10000 for OAuth/keyless subscription providers, `0` for no cap) and `ODON_CONTEXT_BUDGET_TOKENS` (default 120000).
+ODON exposes 255 registered tools (244 model-visible, 11 compatibility-only; 248 stable, 2 experimental, 5 honestly marked unavailable) with complete parameter schemas, risk tiers, availability metadata, and runtime requirement checks. Run `odon tools doctor` to inspect readiness; unavailable capabilities are reported honestly and blocked before execution. A golden manifest is checked into the repository and validated in CI via `cargo test -p odon-tools tests::golden_manifest_matches_registry`. A turn sends at most 128 tool schemas inline; past that a core set rides with `find_tools` and the rest of the catalogue loads on demand, and `run_subagent` delegates a bounded side task to a child session. Independent tool calls in one step run with bounded parallelism (4). Long sessions are compacted to a context budget before each request (trimming oversized tool outputs first, then eliding the oldest middle turns), and a turn that hits its step cap pauses with everything persisted instead of failing; send "continue" to resume, and a reply cut by the output budget is resumed automatically up to 4 times. Tune with `ODON_MAX_TURN_ITERATIONS` (default 500 for metered providers, 10000 for OAuth/keyless subscription providers, `0` for no cap) and `ODON_CONTEXT_BUDGET_TOKENS` (default 120000).
 - **Filesystem (17 tools)**: `read_file`, `write_file`, `edit`, `multi_edit`, `list_directory`, `create_directory`, `delete_file`, `move_file`, `copy_file`, `grep`, `glob`, etc.
 - **Git (14 tools)**: `git_status`, `git_diff`, `git_commit`, `git_log`, `git_branch`, `git_add`, `git_checkout`, `git_show`, `git_stash`, `git_pull`, `git_push`, `git_reset`, etc.
 - **Browser Control (4 tools)**: `browser_open`, `browser_navigate`, `browser_screenshot`, and `browser_click`. `browser_click` launches a temporary headless Chrome/Edge instance and clicks via CDP.
@@ -75,7 +75,9 @@ ODON exposes 249 registered tools (238 model-visible, 11 compatibility-only; 242
 - **Dev Server Lifecycle (3 tools)**: `dev_server_start`, `dev_server_stop`, `dev_server_logs`. These tools manage dev server processes in the background. Task state is maintained for the current session; restart the agent if you need to reattach to running servers.
 - **Shell & Terminal (3 tools)**: `shell_exec`, `bash_run`, `terminal_exec`.
 - **Cybersecurity & Network (7 tools)**: `web_search`, `web_fetch`, `probe_url`, `http_get`, `http_post`, `dns_lookup`, `port_scan`.
-- **Autonomous Skills (3 tools)**: `skill_list`, `skill_create`, `skill_run`.
+- **Autonomous Skills (3 tools)**: `skill_list`, `skill_create`, `skill_run`. Three skills ship inside the binary — `game-project`, `procedural-3d-gltf`, and `agents-office-app` — and a user skill with the same name overrides one.
+- **Video & Audio (3 tools)**: `video_probe`, `video_trim`, `video_merge`. These call the host's `ffmpeg`/`ffprobe` with an argv vector (never a shell) and keep every path inside the workspace.
+- **Games, 3D & Agents Office (3 tools)**: `game_scaffold` writes a runnable canvas platformer or Three.js adventure project with a zero-dependency CORS preview server; `model3d_create` builds low-poly glTF assets from primitives; `agents_office_create` scaffolds a standalone isometric office for real ODON sessions and subagents.
 - **System & Environment (6 tools)**: `system_info`, `calc_eval`, `env_get`, `env_list`, `process_list`, `disk_usage`.
 - **Harness & Planning (6 tools)**: `todo_write`, `todo_read`, `todo_update`, `think`, `plan_mode`, `remember`.
 - **Model Context Protocol (2 tools)**: `mcp_list_tools`, `mcp_call`.
@@ -137,7 +139,7 @@ odon-ai/
 │   ├── odon-security/   # Central security policy, Risk Tiers (0-3), Approval engine, Persistence
 │   ├── odon-storage/    # Durable SQLite persistence for messages, artifacts, and sessions
 │   ├── odon-provider/   # ModelProvider trait & OAuth PKCE / Device Flow implementations
-│   ├── odon-tools/      # Registry of 149 real executable tools (Filesystem, Git, Web, Shell, SSH, MCP, Skills)
+│   ├── odon-tools/      # Registry of 255 real executable tools (Filesystem, Git, Web, Shell, SSH, MCP, Skills, Video, Games & 3D, Office)
 │   ├── odon-channel/    # Unified ChannelAdapter trait (CLI, Desktop IPC, Telegram Bot, WhatsApp relay)
 │   ├── odon-agent/      # Headless conversational agent runtime & streaming orchestrator
 │   ├── odon/            # Standalone CLI binary (`odon chat`, `odon run`, `odon status`)
