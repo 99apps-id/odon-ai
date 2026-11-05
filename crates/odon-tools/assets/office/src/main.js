@@ -4,6 +4,7 @@ import {
   roomFor,
   sessionIdOf,
   stateColor,
+  stateFrom,
   subscribe,
 } from './data.js';
 import { createOffice } from './office.js';
@@ -37,7 +38,11 @@ let reachable = false;
 let renderQueued = false;
 
 try {
-  office = createOffice({ canvas, onSelect: (id) => selectDesk(id) });
+  office = createOffice({
+    canvas,
+    onSelect: (id) => selectDesk(id),
+    onHover,
+  });
 } catch (error) {
   rendererFailed = error.message || 'WebGL is not available.';
   showConfig(`The 3D renderer could not start: ${rendererFailed}`);
@@ -71,7 +76,10 @@ function applyEvent(event) {
       state: 'thinking',
       tool: '',
       approval: null,
+      approvalId: '',
       artifacts: [],
+      thought: '',
+      answer: '',
     };
     const phase = event.payload.phase;
     current.state =
@@ -90,13 +98,40 @@ function applyEvent(event) {
 
   const id = sessionIdOf(event);
   if (!id) return;
-  const current = events.get(id) || { state: 'idle', tool: '', approval: null, artifacts: [] };
+  const current = events.get(id) || {
+    state: 'idle',
+    tool: '',
+    approval: null,
+    approvalId: '',
+    artifacts: [],
+    thought: '',
+    answer: '',
+  };
+
+  const MAX_SNIPPET_CHARS = 600;
+  const appendTail = (existing, delta) => {
+    const next = existing + delta;
+    return next.length > MAX_SNIPPET_CHARS
+      ? next.slice(next.length - MAX_SNIPPET_CHARS)
+      : next;
+  };
 
   switch (event.type) {
+    case 'thought_delta':
+      current.thought = appendTail(current.thought || '', event.payload.delta);
+      events.set(id, current);
+      return;
+    case 'text_delta':
+      current.answer = appendTail(current.answer || '', event.payload.delta);
+      events.set(id, current);
+      return;
     case 'state_changed':
-      current.state = event.payload.state;
+      current.state = stateFrom(event.payload.state);
       if (current.state !== 'executing_tool') current.tool = '';
-      if (current.state !== 'awaiting_approval') current.approval = null;
+      if (current.state !== 'awaiting_approval') {
+        current.approval = null;
+        current.approvalId = '';
+      }
       break;
     case 'tool_call_started':
       current.tool = event.payload.tool_name || '';
@@ -107,10 +142,12 @@ function applyEvent(event) {
       break;
     case 'approval_requested':
       current.approval = event.payload.tool_name || 'approval';
+      current.approvalId = event.payload.approval_id || '';
       current.state = 'awaiting_approval';
       break;
     case 'approval_resolved':
       current.approval = null;
+      current.approvalId = '';
       break;
     case 'artifact_created':
       current.artifacts = [event.payload.artifact?.kind || 'artifact', ...current.artifacts].slice(0, 4);
@@ -145,7 +182,10 @@ function desks() {
       state: 'idle',
       tool: '',
       approval: null,
+      approvalId: '',
       artifacts: [],
+      thought: '',
+      answer: '',
       ...(events.get(session.id) || {}),
     }));
 }
@@ -167,12 +207,18 @@ function selectDesk(id) {
   renderPanel(desks());
 }
 
-function detailRow(label, value) {
-  const dt = document.createElement('dt');
-  dt.textContent = label;
-  const dd = document.createElement('dd');
-  dd.textContent = value;
-  return [dt, dd];
+const filterInput = document.getElementById('filter-input');
+filterInput?.addEventListener('input', () => renderPanel(desks()));
+
+function matchesFilter(desk, query) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return (
+    desk.title.toLowerCase().includes(q) ||
+    desk.id.toLowerCase().includes(q) ||
+    roomFor(desk.mode).toLowerCase().includes(q) ||
+    (STATE_LABELS[desk.state] || '').toLowerCase().includes(q)
+  );
 }
 
 function renderDetail(list) {
@@ -210,7 +256,9 @@ function renderDetail(list) {
   detailEl.append(title, listEl, link);
 }
 
-function renderPanel(list) {
+function renderPanel(rawList) {
+  const query = filterInput?.value || '';
+  const list = rawList.filter((desk) => matchesFilter(desk, query));
   const active = list.filter((desk) => ACTIVE_STATES.has(desk.state)).length;
   const approvals = list.filter((desk) => desk.approval).length;
   countsEl.textContent = `${list.length} desk${list.length === 1 ? '' : 's'} · ${active} active${
@@ -218,12 +266,12 @@ function renderPanel(list) {
   }`;
 
   roomsEl.replaceChildren();
-  if (list.length === 0) {
+  if (rawList.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'muted';
     empty.textContent = 'No sessions updated in the last 24 hours.';
     roomsEl.append(empty);
-    renderDetail(list);
+    renderDetail(rawList);
     return;
   }
 
@@ -256,13 +304,16 @@ function renderPanel(list) {
       const state = document.createElement('small');
       state.textContent = STATE_LABELS[desk.state] || desk.state;
       row.append(dot, name, state);
-      row.addEventListener('click', () => selectDesk(desk.id));
+      row.addEventListener('click', () => {
+        selectDesk(desk.id);
+        office?.focus(desk.id);
+      });
       section.append(row);
     }
     roomsEl.append(section);
   }
 
-  renderDetail(list);
+  renderDetail(rawList);
 }
 
 async function refresh() {
@@ -298,5 +349,134 @@ async function connect() {
 retryButton.addEventListener('click', () => {
   connect();
 });
+
+// Standalone parity with the desktop office: hover tooltip, night toggle,
+// snapshot, and a director card. These are wired to the same desk data as
+// the desktop view; the standalone app never invents agents.
+const tooltipEl = document.getElementById('tooltip');
+const nightToggle = document.getElementById('night-toggle');
+const snapshotButton = document.getElementById('snapshot');
+const directorCard = document.getElementById('director-card');
+const focusDirector = document.getElementById('focus-director');
+const lightsOn = document.getElementById('lights-on');
+
+let nightMode = false;
+let hoveredId = '';
+let snippetTimer = null;
+
+function snippetTick() {
+  renderTooltip(desks());
+}
+function startSnippetTick() {
+  if (snippetTimer) clearInterval(snippetTimer);
+  snippetTimer = setInterval(snippetTick, 600);
+}
+function stopSnippetTick() {
+  if (snippetTimer) {
+    clearInterval(snippetTimer);
+    snippetTimer = null;
+  }
+}
+
+function renderTooltip(list) {
+  if (!hoveredId) return;
+  if (hoveredId === 'director') {
+    tooltipEl.classList.remove('hidden');
+    tooltipEl.innerHTML = '';
+    const title = document.createElement('strong');
+    title.textContent = 'You · Director';
+    const body = document.createElement('div');
+    body.textContent = 'The operator desk. Focus or turn the lights on from the card.';
+    tooltipEl.append(title, body);
+    return;
+  }
+  const desk = list.find((item) => item.id === hoveredId);
+  if (!desk) {
+    tooltipEl.classList.add('hidden');
+    return;
+  }
+  tooltipEl.classList.remove('hidden');
+  tooltipEl.innerHTML = '';
+  const heading = document.createElement('strong');
+  heading.textContent = `${desk.title} · ${STATE_LABELS[desk.state] || desk.state}`;
+  const meta = document.createElement('div');
+  meta.textContent = `${roomFor(desk.mode)}${desk.model ? ` · ${desk.model}` : ''}`;
+  tooltipEl.append(heading, meta);
+  if (desk.tool || desk.approval) {
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    if (desk.tool) {
+      const chip = document.createElement('span');
+      chip.textContent = desk.tool;
+      chips.append(chip);
+    }
+    if (desk.approval) {
+      const chip = document.createElement('span');
+      chip.textContent = `approval: ${desk.approval}`;
+      chips.append(chip);
+    }
+    tooltipEl.append(chips);
+  }
+  const thought = (desk.thought || '').trim();
+  const answer = (desk.answer || '').trim();
+  if (thought) {
+    const wrap = document.createElement('div');
+    const label = document.createElement('b');
+    label.textContent = 'Reasoning';
+    const text = document.createElement('p');
+    text.textContent = thought.slice(-220);
+    wrap.append(label, text);
+    tooltipEl.append(wrap);
+  }
+  if (answer) {
+    const wrap = document.createElement('div');
+    const label = document.createElement('b');
+    label.textContent = 'Reply';
+    const text = document.createElement('p');
+    text.textContent = answer.slice(-220);
+    wrap.append(label, text);
+    tooltipEl.append(wrap);
+  }
+}
+
+function handleHover(id, clientX, clientY) {
+  tooltipEl.style.left = `${Math.min(clientX + 16, window.innerWidth - 336)}px`;
+  tooltipEl.style.top = `${Math.min(clientY + 16, window.innerHeight - 220)}px`;
+  if (id !== hoveredId) {
+    hoveredId = id;
+    if (id) {
+      startSnippetTick();
+      renderTooltip(desks());
+      if (id !== 'director') {
+        // Keep the director card hidden until needed.
+      } else {
+        directorCard?.classList.remove('hidden');
+      }
+    } else {
+      stopSnippetTick();
+      tooltipEl.classList.add('hidden');
+    }
+  }
+}
+
+function onHover(id, clientX, clientY) {
+  handleHover(id, clientX, clientY);
+}
+
+nightToggle?.addEventListener('click', () => {
+  nightMode = !nightMode;
+  office?.setNight(nightMode);
+  nightToggle.textContent = nightMode ? '☾ Night on' : '☀ Day';
+});
+snapshotButton?.addEventListener('click', () => {
+  const url = office?.snapshot();
+  if (!url) return;
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'agents-office.png';
+  link.click();
+});
+focusDirector?.addEventListener('click', () => office?.focus('director'));
+lightsOn?.addEventListener('click', () => office?.setNight(true));
 
 connect();

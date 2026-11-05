@@ -29,7 +29,14 @@ to `http://127.0.0.1:4096`; override it with `ODON_DAEMON_URL`.
 - **Live stream** — `GET /api/events` through the proxy. Polling every 5 s is a safety net;
   reconnect resyncs the session list.
 
-The app is deliberately read-only. It never sends messages, approvals, or tool calls.
+- The app is deliberately read-only. It never sends messages, approvals, or tool calls.
+- Hovering a desk shows the live tooltip (title, room, model, last tool/approval, and the
+  reasoning/reply tails). The tooltip refreshes on a 600 ms tick while hovered.
+- Day/night toggle: hanging pendants, floor pools under each lamp, a darker star skyline,
+  warm point lights, and a "Night on" pill so the toggle state is always visible.
+- Director desk is hoverable and focusable; the side panel shows a director card with
+  Focus and Lights on actions. Snapshot renders one frame and offers a PNG download.
+- Room rows filter by title, id, room, or state; clicking a row focuses the desk.
 
 ## Notes
 

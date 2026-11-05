@@ -25,8 +25,12 @@ const DESK_SLOTS = [
 
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-export function createOffice({ canvas, onSelect }) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+export function createOffice({ canvas, onSelect, onHover }) {
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    preserveDrawingBuffer: true,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -40,7 +44,8 @@ export function createOffice({ canvas, onSelect }) {
   camera.position.set(24, 22, 26);
   camera.lookAt(0, 0, 0);
 
-  scene.add(new THREE.HemisphereLight('#fff8ee', '#8a7f6d', 1.25));
+  const hemi = new THREE.HemisphereLight('#fff8ee', '#8a7f6d', 1.25);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight('#fff2dd', 1.9);
   sun.position.set(16, 24, 12);
   sun.castShadow = true;
@@ -52,6 +57,108 @@ export function createOffice({ canvas, onSelect }) {
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 80;
   scene.add(sun);
+
+  // Ceiling pendants + pool dots so the standalone night mode reads at a
+  // glance, matching the desktop office.
+  const lamp = new THREE.Group();
+  const lampLights = [];
+  function makePoolTexture() {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    const ctx = c.getContext('2d');
+    if (ctx) {
+      const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+      g.addColorStop(0, 'rgba(255,225,160,0.52)');
+      g.addColorStop(0.45, 'rgba(255,215,140,0.24)');
+      g.addColorStop(1, 'rgba(255,210,130,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 256);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  const poolTexture = makePoolTexture();
+  const poolMaterial = new THREE.MeshBasicMaterial({
+    map: poolTexture,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  for (const [x, z] of [[-12, -8], [0, -8], [12, -8], [0, 0], [0, 8]]) {
+    const rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.35, 8),
+      new THREE.MeshStandardMaterial({ color: '#5d3d30', roughness: 0.7 }),
+    );
+    rod.position.set(x, 3.35, z);
+    lamp.add(rod);
+    const shade = new THREE.Mesh(
+      new THREE.ConeGeometry(0.26, 0.22, 16, 1, true),
+      new THREE.MeshStandardMaterial({ color: '#5d3d30', roughness: 0.7, side: THREE.DoubleSide }),
+    );
+    shade.position.set(x, 3.22, z);
+    lamp.add(shade);
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055, 10, 8),
+      new THREE.MeshBasicMaterial({ color: '#fff0c8' }),
+    );
+    bulb.position.set(x, 3.16, z);
+    lamp.add(bulb);
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 6.6), poolMaterial);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(x, 0.035, z);
+    pool.renderOrder = 2;
+    lamp.add(pool);
+    const light = new THREE.PointLight('#ffd9a0', 0, 15, 1.8);
+    light.position.set(x, 2.9, z);
+    lamp.add(light);
+    lampLights.push(light);
+  }
+  scene.add(lamp);
+
+  // Director desk at the back office (hoverable, focusable).
+  const directorGroup = new THREE.Group();
+  directorGroup.userData.sessionId = 'director';
+  const deskTop = new THREE.Mesh(
+    new THREE.BoxGeometry(2.3, 0.1, 1.25),
+    new THREE.MeshStandardMaterial({ color: '#e5dccd', roughness: 1 }),
+  );
+  deskTop.position.set(0, 0.74, 0);
+  deskTop.castShadow = true;
+  directorGroup.add(deskTop);
+  for (const x of [-1.05, 1.05]) for (const z of [-0.52, 0.52]) {
+    const leg = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.72, 0.08),
+      new THREE.MeshStandardMaterial({ color: '#5d3d30', roughness: 1 }),
+    );
+    leg.position.set(x, 0.36, z);
+    directorGroup.add(leg);
+  }
+  const directorLabelCanvas = document.createElement('canvas');
+  directorLabelCanvas.width = 512;
+  directorLabelCanvas.height = 96;
+  const dctx = directorLabelCanvas.getContext('2d');
+  if (dctx) {
+    dctx.fillStyle = 'rgba(255,250,242,0.94)';
+    dctx.fillRect(0, 0, 512, 96);
+    dctx.fillStyle = '#3a352e';
+    dctx.font = '600 40px system-ui, sans-serif';
+    dctx.textAlign = 'center';
+    dctx.textBaseline = 'middle';
+    dctx.fillText('YOU · DIRECTOR', 256, 50);
+  }
+  const dtex = new THREE.CanvasTexture(directorLabelCanvas);
+  dtex.colorSpace = THREE.SRGBColorSpace;
+  const dlabel = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: dtex, transparent: true, depthWrite: false }),
+  );
+  dlabel.scale.set(2.2, 0.42, 1);
+  dlabel.position.set(0, 1.68, 0.4);
+  directorGroup.add(dlabel);
+  directorGroup.position.set(0, 0.05, -13);
+  scene.add(directorGroup);
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(70, 70),
@@ -92,6 +199,9 @@ export function createOffice({ canvas, onSelect }) {
 
   const deskGroups = new Map();
   const rooms = new Map();
+  // Distinct room keys not in ROOM_ORDER get their own row so two unknown
+  // modes never stack their floors on ROOM_POSITIONS[7].
+  let fallbackRoomCount = 0;
   const wires = new THREE.Group();
   scene.add(wires);
   let selectedId = '';
@@ -99,7 +209,13 @@ export function createOffice({ canvas, onSelect }) {
   function ensureRoom(key) {
     if (rooms.has(key)) return rooms.get(key);
     const index = ROOM_ORDER.indexOf(key);
-    const position = ROOM_POSITIONS[index >= 0 ? index : 7];
+    let position;
+    if (index >= 0) {
+      position = ROOM_POSITIONS[index];
+    } else {
+      position = [ROOM_POSITIONS[7][0], ROOM_POSITIONS[7][1] + fallbackRoomCount * 8];
+      fallbackRoomCount += 1;
+    }
     const floor = new THREE.Mesh(
       new THREE.BoxGeometry(9, 0.24, 6),
       new THREE.MeshStandardMaterial({ color: '#e5dccd', roughness: 1 }),
@@ -216,18 +332,35 @@ export function createOffice({ canvas, onSelect }) {
     const usage = new Map();
     const roomOf = new Map();
     const seen = new Set();
+    const byId = new Map(desks.map((desk) => [desk.id, desk]));
+
+    // Resolve every desk's room first (recursively, with a cycle guard) so a
+    // delegated subagent whose parent appears later in the list still lands in
+    // its parent's room instead of falling back to its own mode room.
+    const resolveRoom = (id, depth) => {
+      if (roomOf.has(id)) return roomOf.get(id);
+      const desk = byId.get(id);
+      const parentId = desk && desk.parentId;
+      let roomKey;
+      if (parentId && byId.has(parentId) && depth < 8) {
+        roomKey = resolveRoom(parentId, depth + 1);
+      } else {
+        roomKey = roomFor(desk ? desk.mode : 'idle');
+      }
+      roomOf.set(id, roomKey);
+      return roomKey;
+    };
 
     for (const desk of desks) {
-      let roomKey = roomFor(desk.mode);
-      if (desk.parentId && roomOf.has(desk.parentId)) {
-        roomKey = roomOf.get(desk.parentId);
-      }
-      roomOf.set(desk.id, roomKey);
+      const roomKey = resolveRoom(desk.id, 0);
 
       const room = ensureRoom(roomKey);
       const slot = usage.get(roomKey) || 0;
       usage.set(roomKey, slot + 1);
       const offset = DESK_SLOTS[slot % DESK_SLOTS.length];
+      // Spill extra desks into a new row instead of stacking them exactly on
+      // top of the first six slots.
+      const row = Math.floor(slot / DESK_SLOTS.length);
 
       let group = deskGroups.get(desk.id);
       if (!group) {
@@ -235,7 +368,11 @@ export function createOffice({ canvas, onSelect }) {
         deskGroups.set(desk.id, group);
         scene.add(group);
       }
-      group.position.set(room.position[0] + offset[0], 0.25, room.position[1] + offset[1]);
+      group.position.set(
+        room.position[0] + offset[0],
+        0.25,
+        room.position[1] + offset[1] + row * 1.7,
+      );
       const color = stateColor(desk.state);
       group.userData.state = desk.state;
       group.userData.avatarMaterial.color.set(color);
@@ -273,7 +410,7 @@ export function createOffice({ canvas, onSelect }) {
     pointer.x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObjects([...deskGroups.values()], true);
+    const hits = raycaster.intersectObjects([...deskGroups.values(), directorGroup], true);
     for (const hit of hits) {
       let node = hit.object;
       while (node) {
@@ -292,7 +429,9 @@ export function createOffice({ canvas, onSelect }) {
     }
   };
   const onPointerMove = (event) => {
-    canvas.style.cursor = pick(event) ? 'pointer' : 'grab';
+    const id = pick(event);
+    canvas.style.cursor = id ? 'pointer' : 'grab';
+    onHover?.(id, event.clientX, event.clientY);
   };
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
@@ -314,12 +453,50 @@ export function createOffice({ canvas, onSelect }) {
   resizeObserver.observe(canvas.parentElement);
   resize();
 
+  function focus(id) {
+    let target = null;
+    if (id === 'director') {
+      target = directorGroup.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+    } else {
+      const group = deskGroups.get(id);
+      if (!group) return;
+      target = group.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+    }
+    camera.position.set(target.x + 8.5, target.y + 9.5, target.z + 10.5);
+    camera.zoom = Math.max(camera.zoom, 3.2);
+    camera.updateProjectionMatrix();
+  }
+
+  let nightForced = false;
+  let lastDaylight = -1;
+  let currentDarkness = 0;
+  function updateDaylight(now) {
+    const date = new Date();
+    const hour = date.getHours() + date.getMinutes() / 60;
+    const daylight = Math.min(1, Math.max(0.05, Math.sin(((hour - 6) / 12) * Math.PI)));
+    const targetDarkness = nightForced ? 1 : 1 - daylight;
+    if (Math.abs(targetDarkness - currentDarkness) < 0.002 && Math.abs(daylight - lastDaylight) < 0.005) return;
+    lastDaylight = daylight;
+    currentDarkness = targetDarkness;
+    const dark = currentDarkness;
+    const isNight = dark > 0.55;
+    hemi.intensity = isNight ? 0.18 : 0.3 + daylight * 0.75;
+    sun.intensity = isNight ? 0.08 : 0.25 + daylight * 1.75;
+    sun.color.set(daylight > 0.45 ? '#fff0d8' : '#a9bed6');
+    renderer.toneMappingExposure = isNight ? 0.9 : 0.84 + daylight * 0.24;
+    scene.background.setRGB(0.28 + daylight * 0.27, 0.32 + daylight * 0.21, 0.38 + daylight * 0.1);
+    const lampLevel = Math.min(1, Math.max(0, dark * 1.9));
+    for (const light of lampLights) light.intensity = lampLevel * 38;
+    poolMaterial.opacity = lampLevel * 0.85;
+  }
+
   let frameId = 0;
   let last = performance.now();
   function frame(now) {
     frameId = requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
+    updateDaylight(now);
 
     if (!reduceMotion) {
       brain.rotation.y += dt * 0.2;
@@ -339,12 +516,24 @@ export function createOffice({ canvas, onSelect }) {
   return {
     sync,
     select,
+    focus,
+    setNight(active) {
+      nightForced = active;
+      lastDaylight = -1;
+      return nightForced;
+    },
+    snapshot() {
+      renderer.render(scene, camera);
+      return canvas.toDataURL('image/png');
+    },
     roomLabel: (key) => MODE_ROOMS[key] || MODE_ROOMS.general,
     dispose() {
       cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
+      poolTexture.dispose();
+      poolMaterial.dispose();
       renderer.dispose();
     },
   };

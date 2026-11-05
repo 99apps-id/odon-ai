@@ -53,6 +53,12 @@ small settings card where the operator can paste a base URL and token. Do not fa
 - Clicking a desk selects it and shows title, model, state, last tool, pending approval and an
   "Open in ODON" link to `http://localhost:3000`. The office itself is read-only: do not send
   messages or approvals from the generated app.
+- Hovering a desk shows the live tooltip (title, room, model, last tool/approval, and the
+  reasoning/reply tails). The tooltip must stay in sync without recreating scene objects—update
+  its text on a 600 ms tick while hovered.
+- Keep the director parity: the back-office "YOU · DIRECTOR" desk is hoverable and focusable,
+  and the side panel shows a director card with Focus and Lights on actions. Do not add a
+  second principal.
 
 ## Project shape
 
@@ -77,5 +83,10 @@ Run it with `cd <dir>; node serve.mjs` and open `http://127.0.0.1:5173` in the B
   state from text deltas.
 - Keep the scene rebuild cheap: update transforms/materials on `sync`, do not recreate
   geometries per event.
+- Night mode is optional but should follow the desktop palette: hanging pendants, floor pools
+  directly under each pendant, a darker skyline and star field, warm point lights, and a
+  "Night on" pill so the toggle state is always visible.
+- Keep hover and snapshot cheap: hover only moves the tooltip element in JS; Snapshot renders
+  one frame and offers a PNG download. Never stream the canvas per token.
 - Bound every array: sessions, artifacts per desk, tool labels. A long-running install must
   not grow the scene without limit.

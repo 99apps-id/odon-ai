@@ -28,6 +28,28 @@ const FILES: &[(&str, &str)] = &[
     ("README.md", include_str!("../assets/office/README.md")),
 ];
 
+/// Keep a model-supplied title from breaking out of the generated page. The
+/// title is substituted into `<title>`/`<h1>` (HTML) and the README, so strip
+/// markup characters and template braces (which would otherwise cascade into
+/// the later `{{PORT}}`/`{{DIR}}` replacements).
+fn sanitize_title(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| match c {
+            '<' | '>' | '{' | '}' => ' ',
+            _ => c,
+        })
+        .take(80)
+        .collect();
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() {
+        "ODON Agents Office".to_string()
+    } else {
+        cleaned
+    }
+}
+
 fn normalize_directory(raw: &str) -> std::result::Result<String, OdonError> {
     let trimmed = raw.trim().replace('\\', "/");
     let trimmed = trimmed.trim_matches('/');
@@ -83,9 +105,8 @@ impl Tool for AgentsOfficeCreateTool {
         let title = args
             .get("title")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("ODON Agents Office");
+            .map(sanitize_title)
+            .unwrap_or_else(|| "ODON Agents Office".to_string());
         let port = args
             .get("port")
             .and_then(Value::as_u64)
@@ -95,7 +116,7 @@ impl Tool for AgentsOfficeCreateTool {
         let mut files: Vec<(String, String)> = Vec::new();
         for (relative, body) in FILES {
             let rendered = body
-                .replace("{{TITLE}}", title)
+                .replace("{{TITLE}}", &title)
                 .replace("{{PORT}}", &port.to_string())
                 .replace("{{DIR}}", &directory);
             files.push((format!("{directory}/{relative}"), rendered));

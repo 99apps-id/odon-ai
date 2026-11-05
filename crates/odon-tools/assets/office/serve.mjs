@@ -14,7 +14,17 @@ import { extname, join, normalize, sep } from 'node:path';
 
 const root = process.cwd();
 const port = Number(process.env.PORT || {{PORT}});
-const daemon = new URL(process.env.ODON_DAEMON_URL || 'http://127.0.0.1:4096');
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  console.error(`agents office: invalid PORT '${process.env.PORT}'`);
+  process.exit(1);
+}
+let daemon;
+try {
+  daemon = new URL(process.env.ODON_DAEMON_URL || 'http://127.0.0.1:4096');
+} catch {
+  console.error(`agents office: ODON_DAEMON_URL '${process.env.ODON_DAEMON_URL}' is not a valid URL`);
+  process.exit(1);
+}
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -39,11 +49,12 @@ function loopbackToken() {
   }
 }
 
+// The generated page calls this server on its own origin, so no CORS headers
+// are needed. `Access-Control-Allow-Origin: *` would let any website the
+// operator visits read daemon responses (and mutate state) through the
+// token-attaching proxy, so it is deliberately omitted.
 function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': '*',
     'Cache-Control': 'no-store',
   };
 }

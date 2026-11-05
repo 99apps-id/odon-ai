@@ -77,6 +77,127 @@ body {
   background: #faf6f2;
 }
 
+.pill.button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.pill.button:hover {
+  background: #f2ede4;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 30;
+  width: 320px;
+  border: 1px solid #d6cfc3;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 14px 40px rgba(34, 31, 28, 0.18);
+  padding: 12px;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.tooltip.hidden {
+  display: none;
+}
+
+.tooltip strong {
+  display: block;
+  font-size: 0.82rem;
+  margin-bottom: 2px;
+}
+
+.tooltip p {
+  margin: 2px 0 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: #4c463d;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tooltip b {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--neutral);
+}
+
+.tooltip .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.tooltip .chips span {
+  border: 1px solid var(--sand-2);
+  border-radius: 6px;
+  background: #faf8f5;
+  padding: 2px 6px;
+  font: 500 0.66rem/1 ui-monospace, monospace;
+}
+
+.filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--sand-2);
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+}
+
+.filter input {
+  border: 0;
+  outline: 0;
+  width: 100%;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.director {
+  margin-top: 18px;
+  border: 1px solid #d5b9a3;
+  border-radius: 12px;
+  background: #faf6f2;
+  padding: 10px;
+}
+
+.director h2 {
+  color: var(--clay);
+}
+
+.director.hidden {
+  display: none;
+}
+
+.director-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.director-actions button {
+  border: 1px solid #d5b9a3;
+  border-radius: 8px;
+  background: #fff;
+  color: #6f4632;
+  font-weight: 600;
+  font-size: 0.76rem;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.director-actions button:hover {
+  background: #fffaf2;
+}
+
 .workspace {
   display: flex;
   flex: 1;

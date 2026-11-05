@@ -23,8 +23,11 @@
       <div class="pills">
         <span id="status" class="pill">connecting…</span>
         <span id="counts" class="pill">0 desks</span>
+        <button id="night-toggle" class="pill button" type="button">☀ Day</button>
+        <button id="snapshot" class="pill button" type="button">Snapshot</button>
       </div>
     </header>
+    <div id="tooltip" class="tooltip hidden"></div>
 
     <main class="workspace">
       <div class="stage">
@@ -34,11 +37,23 @@
       <aside class="panel">
         <section>
           <h2>Rooms</h2>
+          <label class="filter" for="filter-input">
+            <span aria-hidden="true">⌕</span>
+            <input id="filter-input" type="search" placeholder="Filter desks…" />
+          </label>
           <div id="rooms" class="rooms"></div>
         </section>
         <section class="detail">
           <h2>Selected desk</h2>
           <div id="detail"><p class="muted">Click a desk in the office.</p></div>
+        </section>
+        <section id="director-card" class="director hidden">
+          <h2>Director's Office</h2>
+          <p class="muted">You are the director. The floor and wing are live sessions.</p>
+          <div class="director-actions">
+            <button id="focus-director" type="button">Focus</button>
+            <button id="lights-on" type="button">Lights on</button>
+          </div>
         </section>
       </aside>
     </main>

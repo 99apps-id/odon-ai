@@ -21,6 +21,8 @@ export const STATE_LABELS = {
   completed: 'completed',
   failed: 'failed',
   paused: 'paused',
+  sleeping: 'sleeping',
+  off_shift: 'off shift',
 };
 
 const STATE_COLORS = {
@@ -33,10 +35,16 @@ const STATE_COLORS = {
   completed: '#047857',
   failed: '#8d5f49',
   paused: '#b45309',
+  sleeping: '#8b93a1',
+  off_shift: '#b9b4ab',
 };
 
 export function stateColor(state) {
   return STATE_COLORS[state] || STATE_COLORS.idle;
+}
+
+export function stateFrom(raw) {
+  return raw in STATE_LABELS ? raw : 'idle';
 }
 
 export function roomFor(mode) {
