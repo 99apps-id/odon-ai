@@ -28,6 +28,7 @@ impl DesktopChannel {
                     session_id: Some(session_id.to_string()),
                     text: text.to_string(),
                     attachments: Vec::new(),
+                    agent_id: None,
                 })
                 .await;
         }

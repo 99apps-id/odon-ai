@@ -11,6 +11,10 @@ pub struct IncomingChannelMessage {
     pub text: String,
     #[serde(default)]
     pub attachments: Vec<MessageAttachment>,
+    /// The persisted agent whose bot received the message. `None` means the
+    /// shared/global relay (the operator's main chat).
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 #[async_trait]

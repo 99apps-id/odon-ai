@@ -620,6 +620,17 @@ impl ModelProvider for AntigravityProvider {
                     Some(Ok(ev)) => {
                         let Ok(val) = serde_json::from_str::<Value>(&ev.data) else { continue };
                         let root = val.get("response").unwrap_or(&val);
+                        // Gemini reports a cut answer through finishReason, not
+                        // an OpenAI-style finish_reason. Surface it so the
+                        // runtime's continuation logic can resume the answer.
+                        let finish_reason = root
+                            .get("candidates")
+                            .and_then(|c| c.get(0))
+                            .and_then(|c| c.get("finishReason"))
+                            .and_then(Value::as_str);
+                        if finish_reason == Some("MAX_TOKENS") {
+                            let _ = event_sender.send(StreamEvent::OutputTruncated).await;
+                        }
                         let parts = root
                             .get("candidates")
                             .and_then(|c| c.get(0))

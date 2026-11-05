@@ -26,6 +26,9 @@ pub struct TelegramRelay {
     is_online: Arc<AtomicBool>,
     allowed_users: Vec<String>,
     sessions: Arc<Mutex<HashMap<String, String>>>,
+    /// Set for a per-agent bot, so incoming messages can be routed to that
+    /// agent's own session.
+    agent_id: Option<String>,
 }
 
 fn value_to_id(value: &Value) -> String {
@@ -134,7 +137,16 @@ impl TelegramRelay {
             is_online: Arc::new(AtomicBool::new(false)),
             allowed_users,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            agent_id: None,
         }
+    }
+
+    /// Bind this bot to a persisted agent. Every message it receives is tagged
+    /// with that agent id so the daemon routes it to the agent's session.
+    pub fn with_agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        let agent_id = agent_id.into();
+        self.agent_id = Some(agent_id).filter(|value| !value.trim().is_empty());
+        self
     }
 
     pub fn online_flag(&self) -> Arc<AtomicBool> {
@@ -533,6 +545,7 @@ impl TelegramRelay {
                 session_id: Some(session_id),
                 text,
                 attachments,
+                agent_id: self.agent_id.clone(),
             })
             .await;
     }

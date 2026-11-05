@@ -555,6 +555,7 @@ impl WhatsAppChannel {
                         session_id: Some(format!("wa_{from}")),
                         text,
                         attachments,
+                        agent_id: None,
                     });
                 }
             }
