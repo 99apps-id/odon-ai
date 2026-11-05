@@ -87,7 +87,16 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
   useEffect(() => {
     if (!open) return;
     const next = agent || EMPTY_AGENT;
-    setDraft({ ...next, schedule: { ...next.schedule } });
+    // Spread over defaults: a daemon row that omits `schedule` would otherwise
+    // make `schedule.days` undefined and crash `.includes` on render.
+    setDraft({
+      ...next,
+      skills: next.skills || [],
+      schedule: {
+        ...EMPTY_AGENT.schedule,
+        ...next.schedule,
+      },
+    });
     const parts = (next.model || '').includes('::') ? next.model.split('::') : ['', next.model];
     setProviderId(parts[0] || '');
     setModelFilter('');
