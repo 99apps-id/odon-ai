@@ -504,8 +504,12 @@ impl ApprovalEngine {
             | "workspace_remove"
             | "browser_session_type"
             | "browser_session_select"
-            | "browser_session_screenshot" => RiskTier::Tier1WorkspaceMutating,
-            _ => RiskTier::Tier2SystemMutating, // shell_exec, bash_run, terminal_exec, fs_delete, git_push, git_pull, git_reset, git_reset_hard, git_clean, github_merge_pr, github_workflow_run, process_kill, exec_background, http_delete, ssh_exec
+            | "browser_session_screenshot"
+            | "sftp_write_file"
+            | "sftp_mkdir"
+            | "sftp_create"
+            | "sftp_rename" => RiskTier::Tier1WorkspaceMutating,
+            _ => RiskTier::Tier2SystemMutating, // shell_exec, bash_run, terminal_exec, fs_delete, sftp_delete, git_push, git_pull, git_reset, git_reset_hard, git_clean, github_merge_pr, github_workflow_run, process_kill, exec_background, http_delete, ssh_exec
         }
     }
 
