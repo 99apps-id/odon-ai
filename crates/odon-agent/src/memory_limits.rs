@@ -251,5 +251,4 @@ mod tests {
         assert!(render_memory_block(&[]).is_empty());
         assert!(render_lesson_block(&[]).is_empty());
     }
-
 }

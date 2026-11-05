@@ -388,14 +388,11 @@ impl AgentRuntime {
             let routes = self.model_routes.read().await;
             routes.get(model.trim()).cloned()
         };
-        let context = route
-            .as_ref()
-            .and_then(|route| route.context)
-            .or_else(|| {
-                route
-                    .as_ref()
-                    .and_then(|route| conservative_context_for_provider(&route.provider))
-            });
+        let context = route.as_ref().and_then(|route| route.context).or_else(|| {
+            route
+                .as_ref()
+                .and_then(|route| conservative_context_for_provider(&route.provider))
+        });
         budget_for_model_context(self.context_budget_tokens(), context)
     }
 
@@ -1308,12 +1305,6 @@ impl AgentRuntime {
                 // follow-up iteration; the turn budget is a safety cap for
                 // autonomous work, not permission to drop user guidance.
                 if pending_steer && !grace_call {
-                    self.persist_partial_assistant_step(
-                        session_id,
-                        &step_text,
-                        &step_thought,
-                        requested_model,
-                    );
                     continue;
                 }
                 // The step produced no prose and no tool call: a reasoning
@@ -1348,14 +1339,17 @@ impl AgentRuntime {
                 {
                     truncation_continuations += 1;
                     truncation_seam = Some(step_text.clone());
-                    self.persist_partial_assistant_step(
+                    // Include the cut text in the nudge: without it the model
+                    // has no idea where it stopped (the partial answer is not a
+                    // separate assistant row, to avoid duplicating it in the
+                    // final transcript) and restarts the answer instead.
+                    let nudge = Message::new_user(
                         session_id,
-                        &step_text,
-                        &step_thought,
-                        requested_model,
+                        Self::partial_resume_nudge(
+                            crate::continuation::OUTPUT_LIMIT_NUDGE,
+                            &step_text,
+                        ),
                     );
-                    let nudge =
-                        Message::new_user(session_id, crate::continuation::OUTPUT_LIMIT_NUDGE);
                     let _ = self.storage.save_message(&nudge);
                     let _ = self.event_tx.send(AgentEvent::StateChanged {
                         session_id: session_id.to_string(),
@@ -1375,12 +1369,6 @@ impl AgentRuntime {
                     && crate::continuation::promises_next_action(&step_text)
                 {
                     promised_continuations += 1;
-                    self.persist_partial_assistant_step(
-                        session_id,
-                        &step_text,
-                        &step_thought,
-                        requested_model,
-                    );
                     let mut tail: Vec<char> = step_text.trim().chars().collect();
                     let keep_from = tail.len().saturating_sub(280);
                     tail.drain(..keep_from);
@@ -1574,12 +1562,15 @@ impl AgentRuntime {
                             // inside a tool - a child process holding an inherited
                             // pipe, a wedged HTTP client - leaves the turn waiting
                             // with no error while the UI keeps spinning. Generous
-                            // by default, overridable for long builds.
+                            // by default, overridable for long builds. The default
+                            // must exceed shell_exec's own 900s ceiling, or a long
+                            // build is aborted by the outer timeout before the
+                            // tool's own deadline can fire.
                             let tool_timeout = std::time::Duration::from_secs(
                                 std::env::var("ODON_TOOL_TIMEOUT_SECS")
                                     .ok()
                                     .and_then(|value| value.trim().parse().ok())
-                                    .unwrap_or(600),
+                                    .unwrap_or(950),
                             );
                             let outcome = match tokio::time::timeout(
                                 tool_timeout,
@@ -2266,8 +2257,7 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
             {
                 report["error"] = serde_json::json!(error);
             } else if let Some(join_error) = join_errors.first() {
-                report["error"] =
-                    serde_json::json!(format!("subagent task failed: {join_error}"));
+                report["error"] = serde_json::json!(format!("subagent task failed: {join_error}"));
             }
             reports.push(report);
         }
@@ -2633,27 +2623,15 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
     // the same save here, `list_messages` replays `[user, nudge]` with no
     // assistant turn and the model restarts the answer from scratch instead of
     // resuming it, producing duplicated, incoherent prose.
-    fn persist_partial_assistant_step(
-        &self,
-        session_id: &str,
-        text: &str,
-        thought: &str,
-        model: &str,
-    ) {
-        if text.trim().is_empty() && thought.trim().is_empty() {
-            return;
-        }
-        let message = Message::new_assistant(
-            session_id,
-            text.to_string(),
-            if thought.trim().is_empty() {
-                None
-            } else {
-                Some(thought.to_string())
-            },
-            Some(model.to_string()),
-        );
-        let _ = self.storage.save_message(&message);
+    //
+    // It is intentionally NOT saved as its own assistant row: the final message
+    // already carries the accumulated text, so a separate row would duplicate
+    // the prose in the transcript. Callers instead include the partial text in
+    // the nudge, which is a user message and therefore not a second answer.
+    fn partial_resume_nudge(nudge: &str, partial: &str) -> String {
+        format!(
+            "{nudge}\n\n[Text you already produced; resume immediately after it and do not repeat it:\n{partial}\n]"
+        )
     }
 
     async fn finalize_child_workspace(child_session_id: &str, storage: Arc<StorageEngine>) {
@@ -3376,7 +3354,10 @@ mod tests {
         );
         assert!(budget >= 2_000);
         // A budget smaller than the reserve still leaves a usable transcript.
-        assert_eq!(history_budget_for_request(1_000, "system", &[], 8_192), 2_000);
+        assert_eq!(
+            history_budget_for_request(1_000, "system", &[], 8_192),
+            2_000
+        );
     }
 
     #[test]
@@ -3397,12 +3378,12 @@ mod tests {
     fn provider_defaults_keep_small_context_models_safe() {
         // A bare local model must not inherit the 120k global default.
         assert_eq!(conservative_context_for_provider("ollama"), Some(32_768));
-        assert_eq!(conservative_context_for_provider("anthropic"), Some(200_000));
         assert_eq!(
-            budget_for_model_context(
-                120_000,
-                conservative_context_for_provider("ollama")
-            ),
+            conservative_context_for_provider("anthropic"),
+            Some(200_000)
+        );
+        assert_eq!(
+            budget_for_model_context(120_000, conservative_context_for_provider("ollama")),
             28_672
         );
         // Custom gateways are assumed to serve 128k.
@@ -3426,11 +3407,7 @@ mod tests {
                 parameters: serde_json::json!({"type": "object"}),
             })
             .collect();
-        let active = initial_active_tools_with_cap(
-            &defs,
-            true,
-            inline_tool_cap_for_budget(32_000),
-        );
+        let active = initial_active_tools_with_cap(&defs, true, inline_tool_cap_for_budget(32_000));
         assert!(active.len() <= SMALL_CONTEXT_INLINE_TOOL_CAP);
         assert!(active.iter().any(|tool| tool.name == "find_tools"));
         assert!(active.iter().any(|tool| tool.name == "run_subagent"));
@@ -3639,8 +3616,7 @@ mod tests {
                 parameters: serde_json::json!({"type": "object"}),
             })
             .collect();
-        let active =
-            initial_active_tools_with_cap(&defs, true, MAX_INLINE_TOOL_SCHEMAS);
+        let active = initial_active_tools_with_cap(&defs, true, MAX_INLINE_TOOL_SCHEMAS);
         assert_eq!(active.len(), MAX_INLINE_TOOL_SCHEMAS);
         assert!(active.iter().any(|tool| tool.name == "find_tools"));
         assert!(active.iter().any(|tool| tool.name == "run_subagent"));
@@ -3655,8 +3631,7 @@ mod tests {
                 parameters: serde_json::json!({"type": "object"}),
             })
             .collect();
-        let active =
-            initial_active_tools_with_cap(&defs, false, MAX_INLINE_TOOL_SCHEMAS);
+        let active = initial_active_tools_with_cap(&defs, false, MAX_INLINE_TOOL_SCHEMAS);
         assert_eq!(active.len(), 20);
         assert!(!active.iter().any(|tool| tool.name == "find_tools"));
     }
@@ -3679,8 +3654,7 @@ mod tests {
                 parameters: serde_json::json!({"type": "object"}),
             });
         }
-        let active =
-            initial_active_tools_with_cap(&defs, true, MAX_INLINE_TOOL_SCHEMAS);
+        let active = initial_active_tools_with_cap(&defs, true, MAX_INLINE_TOOL_SCHEMAS);
         for name in ["web_search", "web_fetch"] {
             assert!(
                 active.iter().any(|tool| tool.name == name),
