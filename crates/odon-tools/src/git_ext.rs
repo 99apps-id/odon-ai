@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::github::github_repo_api;
 use crate::registry::{Tool, ToolContext};
 
 const GIT_EXT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -693,7 +694,7 @@ impl Tool for GitHubCreateReviewTool {
             .unwrap_or("COMMENT");
         let body = args.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{num}/reviews");
+        let url = format!("{}/pulls/{num}/reviews", github_repo_api(owner, repo));
         let resp = self
             .gh
             .client
@@ -707,10 +708,7 @@ impl Tool for GitHubCreateReviewTool {
                 message: e.to_string(),
             })?;
 
-        let data: Value = resp
-            .json()
-            .await
-            .unwrap_or(json!({ "status": "submitted" }));
+        let data = GitHubApiClient::response_json(self.name(), resp).await?;
         Ok(json!({ "pull_number": num, "review": data }))
     }
 }
@@ -762,7 +760,7 @@ impl Tool for GitHubListCommentsTool {
             .and_then(|n| n.as_u64())
             .unwrap_or(1);
 
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/issues/{num}/comments");
+        let url = format!("{}/issues/{num}/comments", github_repo_api(owner, repo));
         let resp = self
             .gh
             .client
@@ -774,7 +772,7 @@ impl Tool for GitHubListCommentsTool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
-        let comments: Value = resp.json().await.unwrap_or(json!([]));
+        let comments = GitHubApiClient::response_json(self.name(), resp).await?;
         Ok(json!({ "comments": comments }))
     }
 }
@@ -831,7 +829,7 @@ impl Tool for GitHubMergePrTool {
             .and_then(|m| m.as_str())
             .unwrap_or("squash");
 
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{num}/merge");
+        let url = format!("{}/pulls/{num}/merge", github_repo_api(owner, repo));
         let resp = self
             .gh
             .client
@@ -844,7 +842,10 @@ impl Tool for GitHubMergePrTool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
-        let data: Value = resp.json().await.unwrap_or(json!({ "merged": true }));
+        // A merge failure (conflict, branch protection, dead token) must not be
+        // reported as success: this is a Tier2 destructive action and the model
+        // would stop retrying on a false "merged".
+        let data = GitHubApiClient::response_json(self.name(), resp).await?;
         Ok(json!({ "pull_number": num, "result": data }))
     }
 }
@@ -899,9 +900,13 @@ impl Tool for GitHubWorkflowRunsTool {
         }
         let url = match args.get("workflow_id").and_then(|v| v.as_str()) {
             Some(workflow) if !workflow.is_empty() => format!(
-                "https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow}/runs?per_page={limit}"
+                "{}/actions/workflows/{workflow}/runs?per_page={limit}",
+                github_repo_api(owner, repo)
             ),
-            _ => format!("https://api.github.com/repos/{owner}/{repo}/actions/runs?per_page={limit}"),
+            _ => format!(
+                "{}/actions/runs?per_page={limit}",
+                github_repo_api(owner, repo)
+            ),
         };
         let response = self
             .gh
@@ -962,7 +967,10 @@ impl Tool for GitHubWorkflowJobsTool {
                 message: "owner, repo, and run_id are required".to_string(),
             });
         }
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs");
+        let url = format!(
+            "{}/actions/runs/{run_id}/jobs",
+            github_repo_api(owner, repo)
+        );
         let response = self
             .gh
             .client
@@ -1044,7 +1052,10 @@ impl Tool for GitHubWorkflowLogsTool {
         const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
         const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs");
+        let url = format!(
+            "{}/actions/runs/{run_id}/logs",
+            github_repo_api(owner, repo)
+        );
         let response = self
             .gh
             .client
@@ -1202,7 +1213,8 @@ impl Tool for GitHubPrFilesTool {
             });
         }
         let url = format!(
-            "https://api.github.com/repos/{owner}/{repo}/pulls/{number}/files?per_page=100"
+            "{}/pulls/{number}/files?per_page=100",
+            github_repo_api(owner, repo)
         );
         let response = self
             .gh
@@ -1282,7 +1294,7 @@ impl Tool for GitHubWorkflowListTool {
             .and_then(|r| r.as_str())
             .unwrap_or("odon-ai");
 
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/actions/workflows");
+        let url = format!("{}/actions/workflows", github_repo_api(owner, repo));
         let resp = self
             .gh
             .client
@@ -1294,7 +1306,7 @@ impl Tool for GitHubWorkflowListTool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
-        let data: Value = resp.json().await.unwrap_or(json!({ "workflows": [] }));
+        let data = GitHubApiClient::response_json(self.name(), resp).await?;
         Ok(data)
     }
 }
@@ -1349,7 +1361,8 @@ impl Tool for GitHubWorkflowRunTool {
         let r_ref = args.get("ref").and_then(|r| r.as_str()).unwrap_or("main");
 
         let url = format!(
-            "https://api.github.com/repos/{owner}/{repo}/actions/workflows/{w_id}/dispatches"
+            "{}/actions/workflows/{w_id}/dispatches",
+            github_repo_api(owner, repo)
         );
         let resp = self
             .gh
@@ -1363,8 +1376,18 @@ impl Tool for GitHubWorkflowRunTool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
+        // GitHub answers 204 on success. Reporting "dispatched" without
+        // checking made a rejected run (401/403/404/422) look successful.
+        let status = resp.status();
+        if !status.is_success() {
+            let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!("GitHub API returned HTTP {status}: {body}"),
+            });
+        }
         Ok(
-            json!({ "status": "dispatched", "workflow": w_id, "ref": r_ref, "code": resp.status().as_u16() }),
+            json!({ "status": "dispatched", "workflow": w_id, "ref": r_ref, "code": status.as_u16() }),
         )
     }
 }

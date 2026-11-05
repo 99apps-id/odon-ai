@@ -11,6 +11,18 @@ pub struct GitHubClient {
     token: Option<String>,
 }
 
+/// API root for one repository, with the owner/repo percent-encoded into the
+/// path. Both come from tool arguments (model- or query-controlled), and a
+/// raw `/`, `?`, `#` or `..` would rewrite the request path or smuggle extra
+/// query parameters against the user's authenticated token.
+pub(crate) fn github_repo_api(owner: &str, repo: &str) -> String {
+    format!(
+        "https://api.github.com/repos/{}/{}",
+        crate::web::urlencoding::encode(owner),
+        crate::web::urlencoding::encode(repo)
+    )
+}
+
 impl GitHubClient {
     pub fn new() -> Self {
         let token = std::env::var("GITHUB_TOKEN").ok();
@@ -107,7 +119,7 @@ impl Tool for GitHubGetRepoTool {
             .and_then(|r| r.as_str())
             .unwrap_or("odon-ai");
 
-        let url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+        let url = github_repo_api(owner, repo);
         let resp = self
             .gh
             .client
@@ -178,8 +190,9 @@ impl Tool for GitHubListIssuesTool {
         let state = args.get("state").and_then(|s| s.as_str()).unwrap_or("open");
 
         let url = format!(
-            "https://api.github.com/repos/{}/{}/issues?state={}&per_page=10",
-            owner, repo, state
+            "{}/issues?state={}&per_page=10",
+            github_repo_api(owner, repo),
+            state
         );
         let resp = self
             .gh
@@ -246,7 +259,7 @@ impl Tool for GitHubCreateIssueTool {
         let title = args.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let body_text = args.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
-        let url = format!("https://api.github.com/repos/{}/{}/issues", owner, repo);
+        let url = format!("{}/issues", github_repo_api(owner, repo));
         let resp = self
             .gh
             .client
@@ -309,10 +322,7 @@ impl Tool for GitHubListPullRequestsTool {
             .and_then(|r| r.as_str())
             .unwrap_or("odon-ai");
 
-        let url = format!(
-            "https://api.github.com/repos/{}/{}/pulls?per_page=10",
-            owner, repo
-        );
+        let url = format!("{}/pulls?per_page=10", github_repo_api(owner, repo));
         let resp = self
             .gh
             .client
