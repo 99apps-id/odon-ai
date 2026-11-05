@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
-use odon_core::{MessageRole, OdonError, Result};
+use odon_core::{Message, MessageRole, OdonError, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
@@ -68,6 +68,82 @@ fn openai_prefers_responses(model: &str) -> bool {
         || model.starts_with("gpt-5.5")
         || model.starts_with("gpt-5.4")
         || model.contains("codex")
+}
+
+/// Serialize a transcript for the Chat Completions wire format.
+///
+/// This is the last hop before the wire, so the transcript is repaired here
+/// rather than trusted: a strict endpoint (DeepSeek, and every gateway in front
+/// of it) rejects the entire array over a single `assistant` turn with neither
+/// content nor tool calls ("Invalid assistant message: content or toolcalls
+/// must be set"), and over a `tool` result no turn declared. Rows written by an
+/// older build, or by a different model in the same session, are exactly what
+/// "works on model A, 400s on model B" looks like.
+fn chat_messages_payload(
+    system_prompt: Option<&str>,
+    messages: Vec<Message>,
+) -> Vec<serde_json::Value> {
+    let mut messages_payload = Vec::with_capacity(messages.len() + 1);
+    if let Some(system) = system_prompt {
+        messages_payload.push(json!({ "role": "system", "content": system }));
+    }
+    for msg in odon_core::history::sanitize_history(messages) {
+        match msg.role {
+            MessageRole::User => {
+                messages_payload.push(json!({
+                    "role": "user",
+                    "content": multimodal::openai_content(&msg.content),
+                }));
+            }
+            MessageRole::System => {
+                messages_payload.push(json!({
+                    "role": "system",
+                    "content": msg.content.text,
+                }));
+            }
+            MessageRole::Assistant => {
+                let mut obj = json!({
+                    "role": "assistant",
+                    "content": msg.content.text,
+                });
+                if !msg.content.tool_calls.is_empty() {
+                    let calls: Vec<_> = msg
+                        .content
+                        .tool_calls
+                        .iter()
+                        .map(|call| {
+                            json!({
+                                "id": call.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.tool_name,
+                                    "arguments": call.arguments.to_string(),
+                                }
+                            })
+                        })
+                        .collect();
+                    obj["tool_calls"] = json!(calls);
+                }
+                messages_payload.push(obj);
+            }
+            MessageRole::Tool => {
+                // The result must reference the id the assistant declared;
+                // `Message::new_tool` stores it in `tool_calls[0].call_id`.
+                let call_id = msg
+                    .content
+                    .tool_calls
+                    .first()
+                    .map(|call| call.call_id.clone())
+                    .unwrap_or_else(|| msg.id.clone());
+                messages_payload.push(json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": msg.content.text,
+                }));
+            }
+        }
+    }
+    messages_payload
 }
 
 impl OpenAiCompatibleProvider {
@@ -336,64 +412,10 @@ impl OpenAiCompatibleProvider {
         cancellation: CancellationToken,
     ) -> Result<()> {
         let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let mut messages_payload = Vec::new();
-        if let Some(system) = &request.system_prompt {
-            messages_payload.push(json!({ "role": "system", "content": system }));
-        }
-        for msg in &request.messages {
-            match msg.role {
-                MessageRole::User => {
-                    messages_payload.push(json!({
-                        "role": "user",
-                        "content": multimodal::openai_content(&msg.content),
-                    }));
-                }
-                MessageRole::System => {
-                    messages_payload.push(json!({
-                        "role": "system",
-                        "content": msg.content.text,
-                    }));
-                }
-                MessageRole::Assistant => {
-                    let mut obj = json!({
-                        "role": "assistant",
-                        "content": if msg.content.text.is_empty() { serde_json::Value::Null } else { json!(msg.content.text) },
-                    });
-                    if !msg.content.tool_calls.is_empty() {
-                        let calls: Vec<_> = msg
-                            .content
-                            .tool_calls
-                            .iter()
-                            .map(|call| {
-                                json!({
-                                    "id": call.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": call.tool_name,
-                                        "arguments": call.arguments.to_string(),
-                                    }
-                                })
-                            })
-                            .collect();
-                        obj["tool_calls"] = json!(calls);
-                    }
-                    messages_payload.push(obj);
-                }
-                MessageRole::Tool => {
-                    let call_id = msg
-                        .content
-                        .tool_calls
-                        .first()
-                        .map(|call| call.call_id.clone())
-                        .unwrap_or_else(|| msg.id.clone());
-                    messages_payload.push(json!({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": msg.content.text,
-                    }));
-                }
-            }
-        }
+        let messages_payload = chat_messages_payload(
+            request.system_prompt.as_deref(),
+            request.messages.clone(),
+        );
 
         let mut body = json!({
             "model": model,
@@ -522,7 +544,9 @@ impl OpenAiCompatibleProvider {
         cancellation: CancellationToken,
     ) -> Result<()> {
         let mut input_items = Vec::new();
-        for msg in &request.messages {
+        // Same guard as the Chat Completions path: repair the transcript before
+        // it reaches the wire, so a poisoned session cannot fail the switch.
+        for msg in odon_core::history::sanitize_history(request.messages.clone()) {
             match msg.role {
                 MessageRole::Tool => {
                     let call_id = msg
@@ -753,7 +777,7 @@ impl ModelProvider for OpenAiCompatibleProvider {
 
     async fn stream_chat(
         &self,
-        request: ChatRequest,
+        mut request: ChatRequest,
         event_sender: Sender<StreamEvent>,
         cancellation: CancellationToken,
     ) -> Result<()> {
@@ -802,71 +826,12 @@ impl ModelProvider for OpenAiCompatibleProvider {
             );
         }
 
-        // Format messages
-        let mut messages_payload = Vec::new();
-        if let Some(sys) = request.system_prompt {
-            messages_payload.push(json!({
-                "role": "system",
-                "content": sys,
-            }));
-        }
-
-        for msg in request.messages {
-            match msg.role {
-                MessageRole::User => {
-                    messages_payload.push(json!({
-                        "role": "user",
-                        "content": multimodal::openai_content(&msg.content),
-                    }));
-                }
-                MessageRole::System => {
-                    messages_payload.push(json!({
-                        "role": "system",
-                        "content": msg.content.text,
-                    }));
-                }
-                MessageRole::Assistant => {
-                    let mut obj = json!({
-                        "role": "assistant",
-                        "content": if msg.content.text.is_empty() { serde_json::Value::Null } else { json!(msg.content.text) },
-                    });
-                    if !msg.content.tool_calls.is_empty() {
-                        let tcs: Vec<_> = msg
-                            .content
-                            .tool_calls
-                            .iter()
-                            .map(|tc| {
-                                json!({
-                                    "id": tc.call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.tool_name,
-                                        "arguments": tc.arguments.to_string(),
-                                    }
-                                })
-                            })
-                            .collect();
-                        obj["tool_calls"] = json!(tcs);
-                    }
-                    messages_payload.push(obj);
-                }
-                MessageRole::Tool => {
-                    // The tool result must reference the assistant's tool_call id,
-                    // which Message::new_tool stores in tool_calls[0].call_id.
-                    let call_id = msg
-                        .content
-                        .tool_calls
-                        .first()
-                        .map(|t| t.call_id.clone())
-                        .unwrap_or_else(|| msg.id.clone());
-                    messages_payload.push(json!({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": msg.content.text,
-                    }));
-                }
-            }
-        }
+        // Serialize the transcript through the single guarded builder, so the
+        // array is repaired at the last hop before the wire.
+        let messages_payload = chat_messages_payload(
+            request.system_prompt.as_deref(),
+            std::mem::take(&mut request.messages),
+        );
 
         let model_str = if request.model == "odon-auto"
             || request.model == "auto"
@@ -1141,5 +1106,114 @@ mod tests {
         assert_eq!(value("x-initiator"), "user");
         assert!(!value("session_id").is_empty());
         assert!(value("x-request-id").starts_with("copilot-"));
+    }
+
+    /// The exact complaint a strict endpoint raises, reproduced against the
+    /// payload the provider actually sends.
+    fn assert_wire_format(messages: &[serde_json::Value]) {
+        let mut declared: Vec<String> = Vec::new();
+        for message in messages {
+            match message["role"].as_str().unwrap_or_default() {
+                "assistant" => {
+                    declared = message["tool_calls"]
+                        .as_array()
+                        .map(|calls| {
+                            calls
+                                .iter()
+                                .map(|call| call["id"].as_str().unwrap_or_default().to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let text = message["content"].as_str().unwrap_or_default().trim();
+                    assert!(
+                        !text.is_empty() || !declared.is_empty(),
+                        "assistant turn with neither content nor tool_calls: {message}"
+                    );
+                }
+                "tool" => {
+                    let id = message["tool_call_id"].as_str().unwrap_or_default();
+                    assert!(
+                        declared.iter().any(|call| call == id),
+                        "tool result {id} does not follow its declaration: {message}"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn empty_assistant_turn_never_reaches_the_wire() {
+        let history = vec![
+            Message::new_user("s1", "hello"),
+            Message::new_assistant("s1", "", None, Some("deepseek-flash".to_string())),
+            Message::new_assistant("s1", "hi back", None, None),
+        ];
+        let payload = chat_messages_payload(None, history);
+        assert_wire_format(&payload);
+        assert_eq!(payload.len(), 2);
+        assert_eq!(payload[1]["content"], "hi back");
+    }
+
+    #[test]
+    fn tool_result_without_a_declaration_never_reaches_the_wire() {
+        let history = vec![
+            Message::new_user("s1", "hello"),
+            Message::new_tool("s1", "ghost", "{}"),
+            Message::new_assistant("s1", "answer", None, None),
+        ];
+        let payload = chat_messages_payload(None, history);
+        assert_wire_format(&payload);
+        assert_eq!(payload.len(), 2);
+    }
+
+    #[test]
+    fn an_unanswered_declaration_is_answered_before_the_wire() {
+        let mut assistant = Message::new_assistant("s1", "", None, None);
+        assistant.content.tool_calls = vec![odon_core::ToolCallInfo {
+            call_id: "c1".to_string(),
+            tool_name: "fs_read".to_string(),
+            arguments: json!({ "path": "a.rs" }),
+            output: None,
+            is_error: false,
+            requires_approval: false,
+            is_approved: None,
+        }];
+        let history = vec![Message::new_user("s1", "read it"), assistant];
+        let payload = chat_messages_payload(Some("system"), history);
+        assert_wire_format(&payload);
+        let roles: Vec<&str> = payload
+            .iter()
+            .map(|message| message["role"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(roles, vec!["system", "user", "assistant", "tool"]);
+        assert_eq!(payload[3]["tool_call_id"], "c1");
+        assert!(!payload[3]["content"].as_str().unwrap_or_default().is_empty());
+    }
+
+    #[test]
+    fn a_healthy_tool_exchange_is_preserved_verbatim() {
+        let mut assistant = Message::new_assistant("s1", "reading", None, None);
+        assistant.content.tool_calls = vec![odon_core::ToolCallInfo {
+            call_id: "c1".to_string(),
+            tool_name: "fs_read".to_string(),
+            arguments: json!({ "path": "a.rs" }),
+            output: None,
+            is_error: false,
+            requires_approval: false,
+            is_approved: None,
+        }];
+        let history = vec![
+            Message::new_user("s1", "read it"),
+            assistant,
+            Message::new_tool("s1", "c1", "file contents"),
+        ];
+        let payload = chat_messages_payload(None, history);
+        assert_wire_format(&payload);
+        assert_eq!(payload.len(), 3);
+        assert_eq!(payload[1]["content"], "reading");
+        assert_eq!(payload[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(payload[1]["tool_calls"][0]["function"]["name"], "fs_read");
+        assert_eq!(payload[2]["content"], "file contents");
     }
 }

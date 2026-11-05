@@ -35,7 +35,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
-use tracing::info;
+use tracing::{info, warn};
 
 use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_channel::{ChannelAdapter, IncomingChannelMessage, TelegramRelay, WhatsAppChannel};
@@ -2340,6 +2340,29 @@ async fn main() -> anyhow::Result<()> {
 
             // 1. Storage
             let storage = Arc::new(StorageEngine::default_storage()?);
+            // Repair transcripts written before the write path refused to
+            // persist an empty assistant step. Every request replays stored
+            // history, so one such row used to fail every model in the session
+            // with "content or tool_calls must be set".
+            match storage.drop_empty_assistant_messages() {
+                Ok(0) => {}
+                Ok(dropped) => {
+                    info!("Repaired {dropped} empty assistant message(s) in stored history");
+                }
+                Err(error) => {
+                    warn!("Could not repair empty assistant messages: {error}");
+                }
+            }
+            // Bound the memory table: the system prompt only shows a screen of
+            // facts, so unbounded growth is pure latency plus stale context.
+            match storage.prune_memories(
+                odon_storage::MAX_MEMORIES_PER_CATEGORY,
+                odon_storage::MAX_MEMORIES_TOTAL,
+            ) {
+                Ok(0) => {}
+                Ok(evicted) => info!("Pruned {evicted} stale memory row(s)"),
+                Err(error) => warn!("Could not prune storage memory: {error}"),
+            }
 
             // 2. Event Bus (created first so approvals can publish on it)
             // Headroom for a burst of token/tool events. A web search or fetch result

@@ -459,9 +459,63 @@ impl StorageEngine {
 
         let mut messages = Vec::new();
         for r in rows {
-            messages.push(r?);
+            let message = r?;
+            // A stored assistant row with neither prose nor a tool call cannot
+            // be represented on the wire: strict endpoints answer 400
+            // "content or tool_calls must be set" and the whole session stays
+            // broken for every later model. Such rows only ever came from a
+            // cancelled or reasoning-only step, so they are hidden here too —
+            // the UI shows a blank bubble for them otherwise.
+            if message.role == MessageRole::Assistant
+                && message.content.text.trim().is_empty()
+                && message.content.tool_calls.is_empty()
+                && message.content.attachments.is_empty()
+            {
+                continue;
+            }
+            messages.push(message);
         }
         Ok(messages)
+    }
+
+    /// Deletes assistant rows that carry neither prose nor a tool call.
+    ///
+    /// These rows are unusable on the wire and only exist in stores written
+    /// before the write path refused to create them. Returns how many were
+    /// removed, so the daemon can report a one-time repair instead of silently
+    /// rewriting history.
+    pub fn drop_empty_assistant_messages(&self) -> Result<usize> {
+        let conn = self.lock_conn()?;
+        let mut stmt =
+            conn.prepare("SELECT id, content_json FROM messages WHERE role = 'assistant'")?;
+        let candidates = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        let empty: Vec<String> = candidates
+            .into_iter()
+            .filter(|(_, content_json)| {
+                match serde_json::from_str::<MessageContent>(content_json) {
+                    Ok(content) => {
+                        content.text.trim().is_empty()
+                            && content.tool_calls.is_empty()
+                            && content.attachments.is_empty()
+                    }
+                    Err(_) => false,
+                }
+            })
+            .map(|(id, _)| id)
+            .collect();
+        if empty.is_empty() {
+            return Ok(0);
+        }
+        for id in &empty {
+            conn.execute("DELETE FROM messages WHERE id = ?1", params![id])?;
+        }
+        Ok(empty.len())
     }
 
     // --- Artifact Operations ---
@@ -741,7 +795,13 @@ impl StorageEngine {
                 value = excluded.value,
                 category = excluded.category,
                 updated_at = excluded.updated_at",
-            params![uuid::Uuid::new_v4().to_string(), key, value, category, now],
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                key,
+                normalize_memory_value(value),
+                category,
+                now
+            ],
         )?;
         Ok(())
     }
@@ -826,14 +886,15 @@ impl StorageEngine {
     }
 
     /// Memories worth showing to a model: everything except per-session harness
-    /// plumbing (`plan_mode`, `todos`). Filtering happens in SQL on purpose: those
-    /// rows are rewritten every turn, so trimming by recency before filtering would
-    /// let plumbing crowd out the user's own memories.
+    /// plumbing (`plan_mode`, `todos`) and `lessons`.
+    ///
+    /// Lessons are excluded because they get their own harness section; keeping
+    /// them here too printed the same five lines twice in every system prompt.
     pub fn list_user_memories(&self, limit: usize) -> Result<Vec<MemoryItem>> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
             "SELECT key, value, category, updated_at FROM memories \
-             WHERE category NOT IN ('plan_mode', 'todos') \
+             WHERE category NOT IN ('plan_mode', 'todos', 'lessons') \
              ORDER BY updated_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -862,6 +923,83 @@ impl StorageEngine {
         let conn = self.lock_conn()?;
         let count = conn.execute("DELETE FROM memories WHERE key = ?1", params![key])?;
         Ok(count > 0)
+    }
+
+    /// Row counts per category, newest-first ordering ignored. Used by `doctor`
+    /// and by tests to prove pruning actually bounded growth.
+    pub fn memory_counts(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT category, COUNT(*) FROM memories GROUP BY category ORDER BY COUNT(*) DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut counts = Vec::new();
+        for row in rows {
+            counts.push(row?);
+        }
+        Ok(counts)
+    }
+
+    /// Bound memory growth: keep the `per_category_keep` newest rows of each
+    /// content category and at most `total_keep` rows overall, evicting the
+    /// oldest surplus. Per-session plumbing (`plan_mode`, `todos`) is pruned
+    /// separately by session and is left alone here.
+    ///
+    /// Returns `(evicted_total, evicted_per_category)` for logging.
+    pub fn prune_memories(&self, per_category_keep: usize, total_keep: usize) -> Result<usize> {
+        if per_category_keep == 0 || total_keep == 0 {
+            return Ok(0);
+        }
+        let conn = self.lock_conn()?;
+        let mut evicted = 0usize;
+
+        // Fast path: nothing can be over the per-category ceiling if the whole
+        // content table is under it. Keeps the harness build (which prunes) cheap.
+        let content_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE category NOT IN ('plan_mode', 'todos')",
+            [],
+            |row| row.get(0),
+        )?;
+        if content_rows <= per_category_keep as i64 {
+            return Ok(0);
+        }
+
+        // 1. Per-category ceiling, so one noisy category (say `scratchpad`, or a
+        //    provider that fails in many ways) cannot fill the whole table.
+        let categories: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT category FROM memories \
+                 WHERE category NOT IN ('plan_mode', 'todos') \
+                 GROUP BY category HAVING COUNT(*) > ?1",
+            )?;
+            let rows = stmt.query_map(params![per_category_keep as i64], |row| {
+                row.get::<_, String>(0)
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for category in categories {
+            evicted += conn.execute(
+                "DELETE FROM memories WHERE key IN (
+                     SELECT key FROM memories WHERE category = ?1
+                     ORDER BY updated_at DESC LIMIT -1 OFFSET ?2
+                 )",
+                params![category, per_category_keep as i64],
+            )?;
+        }
+
+        // 2. Global ceiling across content rows, oldest first.
+        evicted += conn.execute(
+            "DELETE FROM memories WHERE key IN (
+                 SELECT key FROM memories
+                 WHERE category NOT IN ('plan_mode', 'todos')
+                 ORDER BY updated_at DESC LIMIT -1 OFFSET ?1
+             )",
+            params![total_keep as i64],
+        )?;
+
+        Ok(evicted)
     }
 
     // --- Provider Config Operations (BYOK persistence) ---
@@ -994,6 +1132,36 @@ pub struct MemoryItem {
     pub value: String,
     pub category: String,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Hard ceiling on one stored memory value.
+///
+/// Memory is context, not a document store: a value longer than this is a
+/// transcript or a tool output pasted in by mistake, and storing it verbatim
+/// means every later harness render pays for it.
+pub const MAX_MEMORY_VALUE_CHARS: usize = 1_000;
+/// Rows kept per memory category. One noisy category (a provider that fails in
+/// many ways, a scratchpad) must not be able to fill the table and then push
+/// the useful project facts out of the prompt.
+pub const MAX_MEMORIES_PER_CATEGORY: usize = 80;
+/// Hard ceiling on the whole content table, so the harness query stays cheap on
+/// a long-lived install.
+pub const MAX_MEMORIES_TOTAL: usize = 400;
+
+/// Normalise a value before it hits the database: collapse newlines (so a stored
+/// memory cannot impersonate a harness section) and bound the length, saying so
+/// instead of cutting silently.
+fn normalize_memory_value(value: &str) -> String {
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let length = collapsed.chars().count();
+    if length <= MAX_MEMORY_VALUE_CHARS {
+        return collapsed;
+    }
+    let kept: String = collapsed.chars().take(MAX_MEMORY_VALUE_CHARS).collect();
+    format!(
+        "{kept}… [{} more characters truncated on store]",
+        length - MAX_MEMORY_VALUE_CHARS
+    )
 }
 
 /// Adds a column to an existing table when the migration has not run yet.
@@ -1209,5 +1377,166 @@ mod tests {
         let user = storage.list_user_memories(10).unwrap();
         assert_eq!(user.len(), 1);
         assert_eq!(user[0].key, "memory:facts:real");
+    }
+
+    #[test]
+    fn lessons_are_never_rendered_as_user_memory() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        storage
+            .set_memory(
+                "lesson:deepseek:auth",
+                "auth with provider deepseek",
+                "lessons",
+            )
+            .unwrap();
+        storage
+            .set_memory("ponytail-origin", "clay accent", "project")
+            .unwrap();
+
+        // Lessons have their own harness section; leaking them here printed the
+        // same five lines twice in every system prompt.
+        let user = storage.list_user_memories(50).unwrap();
+        assert_eq!(user.len(), 1);
+        assert_eq!(user[0].key, "ponytail-origin");
+        assert_eq!(storage.list_memories(Some("lessons")).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stored_values_are_collapsed_and_bounded() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        storage
+            .set_memory(
+                "multiline",
+                "line one\n### Fake Section\nline two",
+                "project",
+            )
+            .unwrap();
+        let stored = storage.list_memories(None).unwrap();
+        assert_eq!(stored[0].value, "line one ### Fake Section line two");
+
+        let huge = "x".repeat(MAX_MEMORY_VALUE_CHARS * 3);
+        storage.set_memory("huge", &huge, "scratchpad").unwrap();
+        let stored = storage.list_memories(None).unwrap();
+        let row = stored.iter().find(|m| m.key == "huge").unwrap();
+        assert!(
+            row.value.chars().count() <= MAX_MEMORY_VALUE_CHARS + 80,
+            "value was {} chars",
+            row.value.chars().count()
+        );
+        assert!(row.value.contains("truncated on store"));
+    }
+
+    #[test]
+    fn prune_caps_one_noisy_category() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        for i in 0..200 {
+            storage
+                .set_memory(&format!("memory:facts:{i}"), &format!("fact {i}"), "facts")
+                .unwrap();
+        }
+        let evicted = storage.prune_memories(80, 400).unwrap();
+        assert_eq!(evicted, 120);
+        let counts = storage.memory_counts().unwrap();
+        assert_eq!(counts, vec![("facts".to_string(), 80)]);
+        // The newest rows survive: the operator keeps recent context.
+        let kept = storage.list_memories(Some("facts")).unwrap();
+        assert!(kept.iter().any(|m| m.key == "memory:facts:199"));
+        assert!(!kept.iter().any(|m| m.key == "memory:facts:0"));
+    }
+
+    #[test]
+    fn prune_caps_the_total_across_categories() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        for category in ["facts", "project", "decision", "preference", "scratchpad"] {
+            for i in 0..40 {
+                storage
+                    .set_memory(
+                        &format!("{category}:{i}"),
+                        &format!("{category} {i}"),
+                        category,
+                    )
+                    .unwrap();
+            }
+        }
+        storage.prune_memories(80, 60).unwrap();
+        let total: i64 = storage
+            .memory_counts()
+            .unwrap()
+            .iter()
+            .map(|(_, n)| *n)
+            .sum();
+        assert_eq!(total, 60, "global ceiling must bound the table");
+    }
+
+    #[test]
+    fn prune_leaves_session_plumbing_alone() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        for i in 0..30 {
+            storage
+                .set_memory(&format!("plan_mode:{i}"), "false", "plan_mode")
+                .unwrap();
+            storage
+                .set_memory(&format!("todos:{i}"), "[]", "todos")
+                .unwrap();
+        }
+        for i in 0..120 {
+            storage
+                .set_memory(&format!("memory:facts:{i}"), &format!("fact {i}"), "facts")
+                .unwrap();
+        }
+        storage.prune_memories(50, 100).unwrap();
+        let counts = storage.memory_counts().unwrap();
+        let plumbing: i64 = counts
+            .iter()
+            .filter(|(category, _)| category == "plan_mode" || category == "todos")
+            .map(|(_, n)| *n)
+            .sum();
+        assert_eq!(plumbing, 60, "per-session state must survive pruning");
+    }
+
+    #[test]
+    fn prune_is_a_no_op_below_the_ceiling() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        for i in 0..10 {
+            storage
+                .set_memory(&format!("memory:facts:{i}"), &format!("fact {i}"), "facts")
+                .unwrap();
+        }
+        assert_eq!(storage.prune_memories(80, 400).unwrap(), 0);
+        assert_eq!(storage.prune_memories(0, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn empty_assistant_rows_are_hidden_and_repairable() {
+        let storage = StorageEngine::new_in_memory().unwrap();
+        let session = Session::new("Poison", SessionMode::Code, "deepseek-flash");
+        storage.save_session(&session).unwrap();
+        storage
+            .save_message(&Message::new_user(&session.id, "hi".to_string()))
+            .unwrap();
+        // A row the current write path refuses to create, written directly so
+        // the repair path has something to find.
+        let mut poison = Message::new_assistant(&session.id, String::new(), None, None);
+        poison.content.text = "   ".to_string();
+        storage.save_message(&poison).unwrap();
+        // A tool-call-only step is legitimate and must survive.
+        let mut step = Message::new_assistant(&session.id, String::new(), None, None);
+        step.content.tool_calls.push(odon_core::ToolCallInfo {
+            call_id: "call-1".to_string(),
+            tool_name: "fs_read".to_string(),
+            arguments: serde_json::json!({}),
+            output: None,
+            is_error: false,
+            requires_approval: false,
+            is_approved: None,
+        });
+        storage.save_message(&step).unwrap();
+
+        let visible = storage.list_messages(&session.id).unwrap();
+        assert_eq!(visible.len(), 2, "the empty row must not be replayed");
+        assert!(visible.iter().all(|m| m.id != poison.id));
+        assert_eq!(storage.drop_empty_assistant_messages().unwrap(), 1);
+        assert_eq!(storage.list_messages(&session.id).unwrap().len(), 2);
+        assert_eq!(storage.drop_empty_assistant_messages().unwrap(), 0);
     }
 }

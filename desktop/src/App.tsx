@@ -1614,13 +1614,25 @@ export default function App() {
       } catch (err: any) {
         console.error('Daemon message send error:', err);
         const detail = err.message || 'An error occurred while processing the response.';
-        const hint = /502|503|504/.test(detail)
-          ? 'The upstream gateway/model is currently unavailable. Check the Model ID, Base URL, and gateway status in **Settings → Providers**, then use **Test Connection**.'
-          : /401|403/.test(detail)
-            ? 'The API key was rejected. Verify the provider credentials in **Settings → Providers**.'
-            : /404/.test(detail)
-              ? 'The model or endpoint was not found. Check the Model ID and Base URL in **Settings → Providers**.'
-              : 'Check the API key, Base URL, and provider account connection in **Settings**.';
+        // Order matters: a 400 that names the transcript shape is the app's
+        // fault, not the operator's credentials, and blaming Settings sends
+        // them chasing a key that works. The daemon now repairs the transcript
+        // on the way out, so this states what happened and asks for a retry.
+        const hint = /invalid assistant message|content or tool_?calls must be set|tool message must follow/i.test(detail)
+          ? 'The stored transcript contained a turn the provider rejects (an empty assistant step or an orphaned tool result). The history is repaired on the next send, so **retry this turn**. If it keeps happening, start a new session so the poisoned rows stay behind.'
+          : /\b429\b|rate limit/i.test(detail)
+            ? 'The provider is rate limiting this key. Wait a moment, then retry; check the plan limits in **Settings → Providers**.'
+            : /402|quota|insufficient/i.test(detail)
+              ? 'The provider account has no remaining quota or credit. Check the billing state in **Settings → Providers**.'
+              : /context length|too long|maximum context/i.test(detail)
+                ? 'The request exceeded the model context window. Shorten the message or start a fresh session; the history is compacted automatically from there.'
+                : /502|503|504/.test(detail)
+                  ? 'The upstream gateway/model is currently unavailable. Check the Model ID, Base URL, and gateway status in **Settings → Providers**, then use **Test Connection**.'
+                  : /401|403/.test(detail)
+                    ? 'The API key was rejected. Verify the provider credentials in **Settings → Providers**.'
+                    : /404/.test(detail)
+                      ? 'The model or endpoint was not found. Check the Model ID and Base URL in **Settings → Providers**.'
+                      : 'Check the API key, Base URL, and provider account connection in **Settings**.';
         const errorMsg: ChatMessage = {
           id: `ast_err_${Date.now()}`,
           role: 'assistant',

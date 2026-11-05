@@ -16,6 +16,16 @@ const MAX_INDEXED_FILES: usize = 20_000;
 const CHUNK_LINES: usize = 40;
 const CHUNK_OVERLAP: usize = 5;
 
+/// Maximum characters of one chunk snippet handed back per hit.
+///
+/// Retrieval is ranked, so breadth beats depth: ten hits of 1 200 characters
+/// tell the model far more than two hits of 6 000, and the whole result set has
+/// to stay inside the request budget of the turn that asked for it.
+const MAX_SNIPPET_CHARS: usize = 1_200;
+/// Upper bound on OR terms derived from one query, so a pasted paragraph cannot
+/// become a thousand-clause FTS expression.
+const MAX_QUERY_TERMS: usize = 12;
+
 #[derive(Debug)]
 struct IndexedFile {
     path: String,
@@ -48,6 +58,8 @@ struct SearchResult {
     score: f64,
     scope: Option<String>,
     snippet: String,
+    /// True when the hit came from the file name rather than its body.
+    path_match: bool,
 }
 
 pub struct CodeIndexTool;
@@ -126,7 +138,7 @@ impl Tool for CodeSearchTool {
         "code_search"
     }
     fn description(&self) -> &str {
-        "Search the persistent code index using BM25 lexical ranking with exact-text and path boosts"
+        "Search the persistent code index: file-name hits first, then BM25-ranked chunk matches. Call code_index first if no index exists."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -181,12 +193,37 @@ impl Tool for CodeSearchTool {
             self.name(),
         )?;
 
+        let match_count = results.len();
+        let index_age_secs = index_age_secs(&connection);
+        // An hour is the point where a snapshot stops resembling the tree the
+        // operator is editing in this session; the number itself is always
+        // reported, so the model can judge instead of trusting the flag.
+        const STALE_AFTER_SECS: u64 = 3600;
+        let stale = index_age_secs.is_some_and(|age| age > STALE_AFTER_SECS);
+        let note = if match_count == 0 {
+            Some(format!(
+                "no indexed chunk matched '{query}' across {indexed_files} indexed file(s); \
+the query may be wrong, or the index stale. Re-run code_index, or verify with fs_find/fs_read \
+before concluding the code does not exist."
+            ))
+        } else if stale {
+            Some(format!(
+                "these hits come from an index {} second(s) old. Re-run code_index before \
+reporting this as the current state of the file, and prefer fs_read when the line matters.",
+                index_age_secs.unwrap_or_default()
+            ))
+        } else {
+            None
+        };
         Ok(json!({
             "query": query,
             "index_root": index_root,
             "indexed_files": indexed_files,
-            "matches": results.len(),
-            "results": results
+            "index_age_secs": index_age_secs,
+            "stale": stale,
+            "matches": match_count,
+            "results": results,
+            "note": note
         }))
     }
 }
@@ -221,6 +258,31 @@ fn index_path(workspace: &Path) -> PathBuf {
         .join(".odon")
         .join("cache")
         .join("code-index.sqlite3")
+}
+
+/// Age of the snapshot in seconds, when the index recorded one.
+///
+/// A stale index is more dangerous than a missing one: it answers confidently
+/// with text the operator already edited away, and nothing in the result says
+/// so. Reporting the age lets the model decide whether to re-index instead of
+/// asserting yesterday's code as today's.
+fn index_age_secs(connection: &Connection) -> Option<u64> {
+    let indexed_at = connection
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'indexed_at'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()?
+        .parse::<u64>()
+        .ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(indexed_at);
+    Some(now.saturating_sub(indexed_at))
 }
 
 fn database_error(tool: &str, error: rusqlite::Error) -> OdonError {
@@ -386,10 +448,14 @@ fn update_index(
             removed_files += 1;
         }
     }
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default();
     transaction
         .execute(
-            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('version', ?1), ('root', ?2)",
-            params![INDEX_VERSION.to_string(), root_name],
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('version', ?1), ('root', ?2), ('indexed_at', ?3)",
+            params![INDEX_VERSION.to_string(), root_name, now_unix.to_string()],
         )
         .map_err(|error| database_error(tool, error))?;
     let indexed_files = transaction
@@ -416,9 +482,19 @@ fn update_index(
 fn fts_query(query: &str) -> String {
     unique_terms(query)
         .into_iter()
+        .take(MAX_QUERY_TERMS)
         .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" OR ")
+}
+
+/// Trim a chunk to the per-hit budget, saying so rather than silently cutting.
+fn cap_snippet(snippet: &str) -> String {
+    if snippet.chars().count() <= MAX_SNIPPET_CHARS {
+        return snippet.to_string();
+    }
+    let kept: String = snippet.chars().take(MAX_SNIPPET_CHARS).collect();
+    format!("{kept}\n... [chunk clipped here; open the file at this range for the rest]")
 }
 
 fn search_index(
@@ -451,31 +527,115 @@ fn search_index(
         .map_err(|error| database_error(tool, error))? as usize;
     let filter = path_filter.unwrap_or("").to_lowercase();
     let pattern = format!("%{filter}%");
-    let mut statement = connection
-        .prepare(
-            "SELECT path, start_line, end_line, scope, snippet,
-                    -bm25(code_chunks, 0.0, 0.0, 0.0, 0.8, 1.0) AS score
-             FROM code_chunks
-             WHERE code_chunks MATCH ?1
-               AND (?2 = '' OR lower(path) LIKE ?3)
-             ORDER BY bm25(code_chunks, 0.0, 0.0, 0.0, 0.8, 1.0)
-             LIMIT ?4",
-        )
-        .map_err(|error| database_error(tool, error))?;
-    let results = statement
-        .query_map(params![match_query, filter, pattern, limit as i64], |row| {
-            Ok(SearchResult {
-                path: row.get(0)?,
-                start_line: row.get::<_, i64>(1)? as usize,
-                end_line: row.get::<_, i64>(2)? as usize,
-                scope: row.get(3)?,
-                snippet: row.get(4)?,
-                score: row.get(5)?,
+    let terms = unique_terms(query);
+
+    // Pass 1: file-name hits. `path` is UNINDEXED in the FTS table, so a query
+    // that names a file or module ("runtime.rs", "session pool") would otherwise
+    // only find chunks whose *body* repeats the words. Top half of the budget
+    // goes to these, because naming a file is the strongest relevance signal a
+    // query can carry.
+    let mut results: Vec<SearchResult> = Vec::new();
+    let mut seen: HashSet<(String, usize)> = HashSet::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    let path_budget = limit.div_ceil(2);
+    {
+        let mut statement = connection
+            .prepare(
+                "SELECT path, start_line, end_line, scope, snippet
+                 FROM code_chunks
+                 WHERE (?1 = '' OR lower(path) LIKE ?2)
+                 ORDER BY path, start_line
+                 LIMIT 4000",
+            )
+            .map_err(|error| database_error(tool, error))?;
+        let rows = statement
+            .query_map(params![filter, pattern], |row| {
+                Ok(SearchResult {
+                    path: row.get(0)?,
+                    start_line: row.get::<_, i64>(1)? as usize,
+                    end_line: row.get::<_, i64>(2)? as usize,
+                    score: 0.0,
+                    scope: row.get(3)?,
+                    snippet: row.get(4)?,
+                    path_match: true,
+                })
             })
-        })
-        .map_err(|error| database_error(tool, error))?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|error| database_error(tool, error))?;
+            .map_err(|error| database_error(tool, error))?;
+        for row in rows {
+            let mut hit = row.map_err(|error| database_error(tool, error))?;
+            let lower_path = hit.path.to_lowercase();
+            if !terms.iter().any(|term| lower_path.contains(term)) {
+                continue;
+            }
+            // One chunk per file keeps the list about files, not about the
+            // forty chunks a large file happens to have.
+            if !seen_paths.insert(hit.path.clone()) {
+                continue;
+            }
+            hit.snippet = cap_snippet(&hit.snippet);
+            seen.insert((hit.path.clone(), hit.start_line));
+            results.push(hit);
+            if results.len() >= path_budget {
+                break;
+            }
+        }
+    }
+
+    // Pass 2: ranked body matches, which is what BM25 is actually for.
+    if results.len() < limit {
+        let match_query = fts_query(query);
+        if match_query.is_empty() && results.is_empty() {
+            return tool_error(tool, "query has no searchable terms".to_string());
+        }
+        if !match_query.is_empty() {
+            let remaining = limit - results.len();
+            let mut statement = connection
+                .prepare(
+                    "SELECT path, start_line, end_line, scope, snippet,
+                            -bm25(code_chunks, 0.0, 0.0, 0.0, 0.8, 1.0) AS score
+                     FROM code_chunks
+                     WHERE code_chunks MATCH ?1
+                       AND (?2 = '' OR lower(path) LIKE ?3)
+                     ORDER BY bm25(code_chunks, 0.0, 0.0, 0.0, 0.8, 1.0)
+                     LIMIT ?4",
+                )
+                .map_err(|error| database_error(tool, error))?;
+            // Over-fetch a little: the dedupe against pass 1 may drop rows.
+            let rows = statement
+                .query_map(
+                    params![match_query, filter, pattern, (remaining * 2) as i64],
+                    |row| {
+                        Ok(SearchResult {
+                            path: row.get(0)?,
+                            start_line: row.get::<_, i64>(1)? as usize,
+                            end_line: row.get::<_, i64>(2)? as usize,
+                            scope: row.get(3)?,
+                            snippet: row.get(4)?,
+                            score: row.get(5)?,
+                            path_match: false,
+                        })
+                    },
+                )
+                .map_err(|error| database_error(tool, error))?;
+            for row in rows {
+                let mut hit = row.map_err(|error| database_error(tool, error))?;
+                if !seen.insert((hit.path.clone(), hit.start_line)) {
+                    continue;
+                }
+                hit.snippet = cap_snippet(&hit.snippet);
+                results.push(hit);
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+
+    // An empty result is a valid answer, not a failure: `code_search` reports
+    // `matches: 0` plus the index coverage, so the model can distinguish "the
+    // index has nothing for this query" from "the search did not run". Turning
+    // it into a tool error invited the model to conclude the workspace was
+    // empty and to invent an answer instead.
     Ok((index_root, indexed_files, results))
 }
 
@@ -710,6 +870,9 @@ mod tests {
 
         let first = update_index(&mut connection, &root, &root, ".", vec![source.clone()]).unwrap();
         assert_eq!(first.changed_files, 1);
+        // A freshly written index reports its own age, so `code_search` can say
+        // how old the snapshot is instead of presenting it as live state.
+        assert_eq!(index_age_secs(&connection), Some(0));
         let (_, _, matches) = search_index(&connection, "spawn child", None, 10, "test").unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].path, "session_pool.rs");

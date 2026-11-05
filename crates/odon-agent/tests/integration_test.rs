@@ -1522,3 +1522,134 @@ async fn test_output_truncation_continues_the_turn_and_dedupes_the_seam() {
         "the repeated seam must appear once, got {combined:?}"
     );
 }
+
+/// A provider that validates the transcript the way DeepSeek does: every
+/// assistant turn must carry content or tool_calls, and every `tool` result must
+/// answer a call the preceding assistant turn declared. Anything else is the
+/// exact `HTTP 400 Invalid assistant message` the operator reported after
+/// switching model inside one session.
+struct WireFormatEnforcingProvider {
+    seen_poison: Arc<AtomicUsize>,
+    seen_orphan_tool: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ModelProvider for WireFormatEnforcingProvider {
+    fn provider_name(&self) -> &str {
+        "strict-wire-format"
+    }
+
+    async fn stream_chat(
+        &self,
+        request: ChatRequest,
+        event_sender: Sender<StreamEvent>,
+        _cancellation: CancellationToken,
+    ) -> Result<()> {
+        let mut declared: Vec<String> = Vec::new();
+        for message in &request.messages {
+            match message.role {
+                odon_core::MessageRole::Assistant => {
+                    declared = message
+                        .content
+                        .tool_calls
+                        .iter()
+                        .map(|call| call.call_id.clone())
+                        .collect();
+                    if message.content.text.trim().is_empty() && declared.is_empty() {
+                        self.seen_poison.fetch_add(1, Ordering::SeqCst);
+                        return Err(odon_core::OdonError::Provider {
+                            provider: self.provider_name().to_string(),
+                            message: "Invalid assistant message: content or tool_calls must be set"
+                                .to_string(),
+                        });
+                    }
+                }
+                odon_core::MessageRole::Tool => {
+                    let tool_call_id = message.content.text.clone();
+                    let _ = tool_call_id;
+                    if declared.is_empty() {
+                        self.seen_orphan_tool.fetch_add(1, Ordering::SeqCst);
+                        return Err(odon_core::OdonError::Provider {
+                            provider: self.provider_name().to_string(),
+                            message: "tool message must follow a tool_calls message".to_string(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let _ = event_sender
+            .send(StreamEvent::TextDelta(
+                "history is valid, answering normally".to_string(),
+            ))
+            .await;
+        let _ = event_sender.send(StreamEvent::Done).await;
+        Ok(())
+    }
+}
+
+/// Regression for "works on model A, 400s on model B in the same session":
+/// a transcript poisoned by rows an earlier build wrote must be repaired on the
+/// way out, not replayed.
+#[tokio::test]
+async fn poisoned_transcript_is_repaired_before_a_strict_provider_sees_it() {
+    let storage = Arc::new(StorageEngine::new_in_memory().unwrap());
+    let (event_tx, _rx) = create_event_bus(64);
+    let temp_dir = tempfile::tempdir().unwrap();
+    let seen_poison = Arc::new(AtomicUsize::new(0));
+    let seen_orphan_tool = Arc::new(AtomicUsize::new(0));
+
+    let runtime = AgentRuntime::new(
+        storage.clone(),
+        Arc::new(odon_tools::build_full_tool_registry()),
+        auto_approve(SecurityPolicy::default()),
+        Arc::new(AuditLogger::new()),
+        event_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    runtime
+        .register_provider(
+            "default",
+            Arc::new(WireFormatEnforcingProvider {
+                seen_poison: seen_poison.clone(),
+                seen_orphan_tool: seen_orphan_tool.clone(),
+            }),
+            true,
+        )
+        .await;
+
+    let session = Session::new("Poisoned", SessionMode::General, "odon-auto");
+    storage.save_session(&session).unwrap();
+    storage
+        .save_message(&odon_core::Message::new_user(
+            &session.id,
+            "perbaiki build".to_string(),
+        ))
+        .unwrap();
+    // 1. An assistant row with neither prose nor tool calls (a cancelled step).
+    let mut empty_step = odon_core::Message::new_assistant(&session.id, String::new(), None, None);
+    empty_step.content.text = "  ".to_string();
+    storage.save_message(&empty_step).unwrap();
+    // 2. A tool result that no assistant turn ever declared.
+    let mut orphan_tool = odon_core::Message::new_tool(&session.id, String::new(), "call-ghost");
+    orphan_tool.content.text = "stale output".to_string();
+    storage.save_message(&orphan_tool).unwrap();
+
+    let result = runtime
+        .execute_turn(&session.id, "lanjut", None, CancellationToken::new())
+        .await
+        .expect("a repaired transcript must let the turn succeed");
+
+    assert_eq!(
+        seen_poison.load(Ordering::SeqCst),
+        0,
+        "the empty assistant row must never reach the provider"
+    );
+    assert_eq!(
+        seen_orphan_tool.load(Ordering::SeqCst),
+        0,
+        "the orphan tool result must never reach the provider"
+    );
+    assert!(result.content.text.contains("answering normally"));
+}

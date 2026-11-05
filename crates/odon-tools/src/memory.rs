@@ -166,37 +166,62 @@ impl Tool for MemorySearchTool {
                 message: format!("Failed to read memories: {e}"),
             })?;
 
-            let mut scored_matches: Vec<(u32, odon_storage::MemoryItem)> = Vec::new();
+            // Retrieval is term based, not substring based: a two word query
+            // ("postgres connection") must still find a fact stored as
+            // "connection: postgres", and a single shared token should not rank
+            // as highly as a fact that covers every term. Scoring per term keeps
+            // recall useful without pretending to be a semantic index.
+            let terms = search_terms(&q);
+            let mut scored_matches: Vec<(f32, usize, odon_storage::MemoryItem)> = Vec::new();
             for item in items {
                 let key_lower = item.key.to_lowercase();
                 let val_lower = item.value.to_lowercase();
-                let mut score = 0u32;
+                let mut score = 0.0f32;
 
+                // Whole-query hits outrank scattered term hits.
                 if key_lower == q {
-                    score += 100;
-                } else if key_lower.contains(&q) {
-                    score += 50;
+                    score += 100.0;
+                } else if !q.is_empty() && key_lower.contains(&q) {
+                    score += 45.0;
+                }
+                if !q.is_empty() && val_lower.contains(&q) {
+                    score += 25.0;
                 }
 
-                if val_lower.contains(&q) {
-                    score += 25;
+                let mut matched = 0usize;
+                for term in &terms {
+                    if key_lower.contains(term.as_str()) {
+                        matched += 1;
+                        score += 12.0;
+                    } else if val_lower.contains(term.as_str()) {
+                        matched += 1;
+                        score += 6.0;
+                    }
                 }
 
-                if score > 0 {
-                    scored_matches.push((score, item));
+                if matched > 0 || score > 0.0 {
+                    scored_matches.push((score, matched, item));
                 }
             }
 
-            scored_matches.sort_by_key(|item| std::cmp::Reverse(item.0));
+            // Coverage first, then weight: a fact that answers more of the query
+            // is more useful than one with a single lucky token.
+            scored_matches.sort_by(|a, b| {
+                b.1.cmp(&a.1)
+                    .then(b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal))
+            });
+            scored_matches.truncate(MAX_MEMORY_MATCHES);
 
+            let result_count = scored_matches.len();
             let results: Vec<Value> = scored_matches
                 .into_iter()
-                .map(|(score, item)| {
+                .map(|(score, matched, item)| {
                     json!({
                         "key": item.key,
                         "value": item.value,
                         "category": item.category,
-                        "score": score,
+                        "score": score.round() as i64,
+                        "terms_matched": matched,
                         "updated_at": item.updated_at.to_rfc3339()
                     })
                 })
@@ -205,8 +230,18 @@ impl Tool for MemorySearchTool {
             return Ok(json!({
                 "query": q,
                 "category": cat,
-                "count": results.len(),
-                "matches": results
+                "count": result_count,
+                "matches": results,
+                // Zero matches is an answer, not an error: say plainly that the
+                // fact is not stored instead of letting the model fill the gap.
+                "note": if result_count == 0 {
+                    Some(format!(
+                        "no stored memory matched {terms:?}; the fact may never have been stored. \
+            Say you do not have it, or ask the operator, instead of inventing a value."
+                    ))
+                } else {
+                    None
+                }
             }));
         }
 
@@ -252,5 +287,61 @@ impl Tool for MemoryForgetTool {
             message: format!("Failed to delete memory: {e}"),
         })?;
         Ok(json!({ "key": key, "forgotten": deleted }))
+    }
+}
+
+/// How many memory rows a search returns at most.
+///
+/// The model pays for every row it reads, and a keyword that matches forty
+/// facts is a keyword that needs narrowing, not a longer answer.
+const MAX_MEMORY_MATCHES: usize = 25;
+
+/// Split a query into the terms retrieval actually scores.
+///
+/// Lowercased, punctuation treated as a separator (so `postgres.connection` and
+/// `postgres connection` behave the same), tokens shorter than two characters
+/// dropped because single letters match nearly everything, and duplicates
+/// removed so a repeated word cannot outweigh the rest of the query.
+fn search_terms(query: &str) -> Vec<String> {
+    let mut terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-' && c != '/')
+        .map(|term| term.trim_matches('-').to_lowercase())
+        .filter(|term| term.chars().count() >= 2)
+        .collect();
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terms_drop_punctuation_short_words_and_duplicates() {
+        assert_eq!(
+            search_terms("Postgres.connection, the of postgres"),
+            vec![
+                "connection".to_string(),
+                "of".to_string(),
+                "postgres".to_string(),
+                "the".to_string()
+            ]
+        );
+        assert!(search_terms("a b").is_empty());
+    }
+
+    #[test]
+    fn multi_word_query_survives_word_order() {
+        // The stored fact reads "connection: postgres"; the query is reversed.
+        // Substring matching used to score zero here, which is exactly the case
+        // where the model then claimed it had no memory of the setup.
+        let terms = search_terms("postgres connection");
+        let haystack = "connection: postgres on port 5432".to_lowercase();
+        let matched = terms
+            .iter()
+            .filter(|term| haystack.contains(term.as_str()))
+            .count();
+        assert_eq!(matched, 2);
     }
 }

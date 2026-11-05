@@ -2,6 +2,7 @@ pub mod artifact;
 pub mod daemon;
 pub mod error;
 pub mod events;
+pub mod history;
 pub mod message;
 pub mod provider;
 pub mod session;
@@ -12,6 +13,7 @@ pub use events::{
     current_session_id, AgentEvent, AgentEventEnvelope, AgentState, EventReceiver, EventSender,
     ACTIVE_SESSION_ID,
 };
+pub use history::{sanitize_history, UNANSWERED_TOOL_RESULT};
 pub use message::{
     Message, MessageAttachment, MessageContent, MessageRole, OutputActionChip, ToolCallInfo,
 };
