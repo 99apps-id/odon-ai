@@ -98,6 +98,9 @@ impl Tool for ShellExecTool {
         };
 
         cmd.current_dir(&cwd);
+        // If the enclosing future is dropped (an outer runtime timeout), kill
+        // the process instead of orphaning it with its inherited pipes open.
+        cmd.kill_on_drop(true);
 
         let started = std::time::Instant::now();
         let mut child = cmd

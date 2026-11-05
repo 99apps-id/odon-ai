@@ -114,6 +114,22 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_blocked_ip(IpAddr::V4(v4));
             }
+            // Deprecated IPv4-compatible (`::a.b.c.d`) and NAT64 (`64:ff9b::/96`)
+            // embed an IPv4 address too; classify it the same way so a target
+            // cannot dodge the guard by wrapping a private v4.
+            let segments = v6.segments();
+            let compatible = segments[0..6] == [0, 0, 0, 0, 0, 0];
+            let nat64 =
+                segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0];
+            if compatible || nat64 {
+                let embedded = std::net::Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    (segments[6] & 0xff) as u8,
+                    (segments[7] >> 8) as u8,
+                    (segments[7] & 0xff) as u8,
+                );
+                return is_blocked_ip(IpAddr::V4(embedded));
+            }
             false
         }
     }
@@ -132,15 +148,24 @@ fn is_blocked_hostname(host: &str) -> bool {
     {
         return true;
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    if let Ok(ip) = unbracket(&host).parse::<IpAddr>() {
         return is_blocked_ip(ip);
     }
     false
 }
 
+/// `Url::host_str` wraps an IPv6 literal in brackets (`[::1]`), which
+/// `str::parse::<IpAddr>()` rejects. Strip them so the address is classified by
+/// the IP rules instead of falling through to a hostname lookup that fails.
+fn unbracket(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 /// True for `localhost` and loopback literals.
 fn is_loopback_host(host: &str) -> bool {
-    match host.parse::<IpAddr>() {
+    match unbracket(host).parse::<IpAddr>() {
         Ok(ip) => ip.is_loopback(),
         Err(_) => host.trim_end_matches('.').eq_ignore_ascii_case("localhost"),
     }
@@ -393,8 +418,9 @@ async fn validate_url_inner(raw: &str, allow_loopback: bool) -> Result<Validated
 
     let port = url.port_or_known_default().unwrap_or(443);
     // An IP literal needs no resolver: the URL already names the destination,
-    // so there is no answer to pin and no window to rebind.
-    let (addrs, pinned) = match host.parse::<IpAddr>() {
+    // so there is no answer to pin and no window to rebind. `host` is the
+    // bracketed `host_str` for IPv6, so parse the unbracketed form.
+    let (addrs, pinned) = match unbracket(&host).parse::<IpAddr>() {
         Ok(ip) => (vec![SocketAddr::new(ip, port)], false),
         Err(_) => {
             let addrs = lookup_host(&host, port).await?;
@@ -601,9 +627,7 @@ mod tests {
             .await
             .expect("example.com must validate");
         let client = target
-            .client(
-                reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)),
-            )
+            .client(reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)))
             .expect("client");
         let response = client
             .get(target.as_str())

@@ -85,23 +85,23 @@ fn stderr_text(output: &std::process::Output) -> String {
 }
 
 async fn run_binary(tool: &str, binary: &str, args: &[String]) -> Result<std::process::Output> {
-    tokio::process::Command::new(binary)
-        .args(args)
-        .output()
-        .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                tool_error(
-                    tool,
-                    format!(
-                        "{binary} is not installed or not on PATH. Install ffmpeg first \
+    let mut command = tokio::process::Command::new(binary);
+    // A dropped future (an outer runtime timeout) must not leave ffmpeg running
+    // in the background writing to the output file.
+    command.kill_on_drop(true);
+    command.args(args).output().await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            tool_error(
+                tool,
+                format!(
+                    "{binary} is not installed or not on PATH. Install ffmpeg first \
                          (Windows: `winget install Gyan.FFmpeg`), then retry."
-                    ),
-                )
-            } else {
-                tool_error(tool, format!("could not start {binary}: {error}"))
-            }
-        })
+                ),
+            )
+        } else {
+            tool_error(tool, format!("could not start {binary}: {error}"))
+        }
+    })
 }
 
 fn ensure_output_parent(output: &Path, tool: &str) -> Result<()> {
@@ -136,6 +136,12 @@ impl Tool for VideoProbeTool {
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier0ReadOnly
+    }
+    fn requirements(&self) -> crate::registry::ToolRequirements {
+        crate::registry::ToolRequirements {
+            binaries: vec!["ffprobe".to_string()],
+            ..Default::default()
+        }
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let raw = required_str(self.name(), &args, "path")?;
@@ -204,6 +210,12 @@ impl Tool for VideoTrimTool {
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
+    }
+    fn requirements(&self) -> crate::registry::ToolRequirements {
+        crate::registry::ToolRequirements {
+            binaries: vec!["ffmpeg".to_string()],
+            ..Default::default()
+        }
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let input_raw = required_str(self.name(), &args, "input")?;
@@ -329,6 +341,12 @@ impl Tool for VideoMergeTool {
     }
     fn risk_tier(&self) -> RiskTier {
         RiskTier::Tier1WorkspaceMutating
+    }
+    fn requirements(&self) -> crate::registry::ToolRequirements {
+        crate::registry::ToolRequirements {
+            binaries: vec!["ffmpeg".to_string()],
+            ..Default::default()
+        }
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let raw_inputs = args

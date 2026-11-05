@@ -480,7 +480,21 @@ mod tests {
 
         let diagnostics = reg.diagnostics();
         assert_eq!(diagnostics.len(), all_schemas.len());
-        assert_eq!(diagnostics.iter().filter(|item| item.ready).count(), 247);
+        // Readiness depends on the host (installed binaries and environment
+        // variables), so a fixed count only holds on one machine shape. Assert
+        // the host-independent invariant the diagnostic computes instead.
+        for item in &diagnostics {
+            assert_eq!(
+                item.ready,
+                item.issues.is_empty(),
+                "tool {} readiness disagrees with its issues",
+                item.name
+            );
+        }
+        assert!(
+            diagnostics.iter().any(|item| item.ready),
+            "at least the pure tools must report ready"
+        );
     }
 
     #[test]
@@ -495,12 +509,9 @@ mod tests {
             serde_json::from_str(&manifest).expect("manifest must be valid JSON");
         let reg = build_full_tool_registry();
         let schemas = reg.all_schemas();
-        let diagnostics = reg.diagnostics();
 
         let by_name: std::collections::HashMap<_, _> =
             schemas.iter().map(|s| (s.name.as_str(), s)).collect();
-        let diagnostic_by_name: std::collections::HashMap<_, _> =
-            diagnostics.iter().map(|d| (d.name.as_str(), d)).collect();
 
         assert_eq!(
             manifest_items.len(),
@@ -514,9 +525,6 @@ mod tests {
                 .and_then(|v| v.as_str())
                 .expect("manifest item must have name");
             let schema = by_name.get(name).expect("manifest references unknown tool");
-            let diagnostic = diagnostic_by_name
-                .get(name)
-                .expect("manifest references tool without diagnostic");
 
             assert_eq!(
                 schema.availability.label(),
@@ -526,11 +534,9 @@ mod tests {
                     .unwrap(),
                 "availability mismatch for {name}"
             );
-            assert_eq!(
-                diagnostic.ready,
-                item.get("ready").and_then(|v| v.as_bool()).unwrap(),
-                "readiness mismatch for {name}"
-            );
+            // `ready` is intentionally not compared: it depends on the host's
+            // installed binaries and environment variables, so the committed
+            // manifest could only ever match one machine shape.
         }
     }
 }

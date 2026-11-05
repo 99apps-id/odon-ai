@@ -7,7 +7,7 @@
 
 use crate::browser_session::{
     browser, cdp, create_session, err, evaluate_js, find_persisted_meta, live,
-    load_persisted_sessions, save_meta, validate_session_id,
+    load_persisted_sessions, persisted, save_meta, validate_session_id,
 };
 use odon_core::error::Result;
 use serde_json::{json, Value};
@@ -15,19 +15,42 @@ use serde_json::{json, Value};
 /// One row per known session, live or merely persisted on disk.
 pub async fn list_sessions(workspace_root: &str) -> Result<Value> {
     load_persisted_sessions(workspace_root).await;
-    let live_map = live().lock().await;
     let mut sessions: Vec<Value> = Vec::new();
-    for (id, handle) in live_map.iter() {
-        let live = handle.lock().await;
+    {
+        let live_map = live().lock().await;
+        for (id, handle) in live_map.iter() {
+            let live = handle.lock().await;
+            sessions.push(json!({
+                "session_id": id,
+                "url": live.meta.url,
+                "port": live.meta.port,
+                "pid": live.meta.pid,
+                "created_at": live.meta.created_at,
+                "live": true
+            }));
+        }
+    }
+    // Sessions from a previous daemon lifetime only exist on disk. Without this
+    // the panel cannot see or resume them even though `browser_session_list`
+    // (the tool) can.
+    let persisted_map = persisted().lock().await;
+    for (id, meta) in persisted_map.iter() {
+        if sessions
+            .iter()
+            .any(|session| session["session_id"].as_str() == Some(id.as_str()))
+        {
+            continue;
+        }
         sessions.push(json!({
             "session_id": id,
-            "url": live.meta.url,
-            "port": live.meta.port,
-            "pid": live.meta.pid,
-            "created_at": live.meta.created_at,
-            "live": true
+            "url": meta.url,
+            "port": meta.port,
+            "pid": meta.pid,
+            "created_at": meta.created_at,
+            "live": false
         }));
     }
+    drop(persisted_map);
     sessions.sort_by(|a, b| {
         b["created_at"]
             .as_str()

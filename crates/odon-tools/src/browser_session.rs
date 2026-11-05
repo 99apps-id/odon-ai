@@ -116,7 +116,15 @@ pub(crate) fn err(msg: impl Into<String>) -> OdonError {
 }
 
 pub(crate) fn sid() -> String {
-    format!("session_{}", chrono::Utc::now().timestamp_millis())
+    // Timestamp-only ids collided when two sessions were created in the same
+    // millisecond; the second `insert` replaced the first, dropping its child
+    // without killing it and sharing one `--user-data-dir`. Add randomness.
+    let unique = uuid::Uuid::new_v4().simple().to_string();
+    format!(
+        "session_{}_{}",
+        chrono::Utc::now().timestamp_millis(),
+        &unique[..8]
+    )
 }
 
 pub(crate) fn validate_session_id(id: &str) -> Result<&str> {
@@ -387,6 +395,8 @@ pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(
             }
         }
         c.arg(url);
+        // A dropped `Child` (timeout, error) must not leave Chromium running.
+        c.kill_on_drop(true);
         let mut child = match c.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -400,10 +410,17 @@ pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(
                 last = format!("browser exited during startup (port {p})");
                 break;
             }
-            if reqwest::get(format!("http://127.0.0.1:{p}/json/version"))
-                .await
-                .is_ok()
-            {
+            // A DevTools endpoint that accepts the socket but never answers
+            // would otherwise hang startup forever, so the deadline below could
+            // never fire. Bound each probe.
+            let reachable = tokio::time::timeout(
+                Duration::from_secs(2),
+                reqwest::get(format!("http://127.0.0.1:{p}/json/version")),
+            )
+            .await
+            .map(|result| result.is_ok())
+            .unwrap_or(false);
+            if reachable {
                 return Ok((child, p));
             }
             if tokio::time::Instant::now() >= deadline {
@@ -425,7 +442,7 @@ pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Me
     let id = sid();
     let root = session_dir(workspace_root, &id);
     std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
-    let (child, p) = spawn_browser(&root, url).await?;
+    let (mut child, p) = spawn_browser(&root, url).await?;
     let now = chrono::Utc::now().to_rfc3339();
     let m = Meta {
         session_id: id.clone(),
@@ -436,15 +453,25 @@ pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Me
         created_at: now.clone(),
         last_used_at: now,
     };
-    // Persist metadata so the session survives a process restart.
-    save_meta(workspace_root, &m)?;
-    live().lock().await.insert(
+    // Persist metadata so the session survives a process restart. If this
+    // fails, kill the browser we just spawned instead of leaking it.
+    if let Err(error) = save_meta(workspace_root, &m) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    let replaced = live().lock().await.insert(
         id.clone(),
         Arc::new(Mutex::new(Live {
             meta: m.clone(),
             child,
         })),
     );
+    // On the (now unlikely) id collision, terminate the displaced browser so it
+    // does not keep running unseen.
+    if let Some(old) = replaced {
+        let mut old = old.lock().await;
+        let _ = old.child.kill().await;
+    }
     Ok(m)
 }
 

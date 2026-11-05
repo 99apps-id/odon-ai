@@ -126,7 +126,10 @@ fn transform_hint(part: &Part, hint: Vec3) -> Vec3 {
 
 fn parse_color(raw: &str) -> Option<[f32; 4]> {
     let hex = raw.trim().trim_start_matches('#');
-    if hex.len() != 6 {
+    // `len()` counts bytes: a 6-byte string can still contain multi-byte
+    // characters, and slicing it below at byte offsets would panic. Only ASCII
+    // hex digits are valid, so reject anything else up front.
+    if hex.len() != 6 || !hex.is_ascii() {
         return None;
     }
     let channel = |range: std::ops::Range<usize>| -> Option<f32> {

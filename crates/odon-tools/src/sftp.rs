@@ -115,6 +115,69 @@ fn validate_ssh_field(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn expand_home(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed
+        .strip_prefix("~/")
+        .or_else(|| trimmed.strip_prefix("~\\"))
+    {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    if trimmed == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    PathBuf::from(trimmed)
+}
+
+fn ssh_key_roots() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut roots = vec![home.join(".ssh")];
+    let state_home = std::env::var_os("ODON_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.clone());
+    roots.push(state_home.join(".odon").join("ssh-keys"));
+    if let Ok(extra) = std::env::var("ODON_SSH_KEY_DIRS") {
+        for item in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            roots.push(expand_home(item));
+        }
+    }
+    roots
+}
+
+/// SSH `-i` arguments may only reference keys inside the dedicated key folders.
+/// Without this, a profile (hand-edited, or imported before the daemon's ACL
+/// hardening) could point `-i` at an arbitrary local file such as
+/// `~/.aws/credentials` and have it offered as an identity.
+fn validate_ssh_key_path(raw: &str) -> Result<()> {
+    let expanded = expand_home(raw);
+    let canonical = std::fs::canonicalize(&expanded).map_err(|e| OdonError::Tool {
+        tool: "sftp".to_string(),
+        message: format!("SSH key not found or not accessible: {e}"),
+    })?;
+    if !canonical.is_file() {
+        return Err(OdonError::Tool {
+            tool: "sftp".to_string(),
+            message: format!("SSH key is not a file: {}", expanded.display()),
+        });
+    }
+    let allowed = ssh_key_roots()
+        .into_iter()
+        .filter_map(|root| std::fs::canonicalize(root).ok())
+        .any(|root| canonical.starts_with(&root));
+    if !allowed {
+        return Err(OdonError::Tool {
+            tool: "sftp".to_string(),
+            message: "SSH key must live in ~/.ssh, ~/.odon/ssh-keys, or ODON_SSH_KEY_DIRS"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn load_ssh_target(profile_id: &str) -> Result<SshTarget> {
     let profiles_path = dirs::home_dir()
         .ok_or_else(|| OdonError::Tool {
@@ -151,6 +214,9 @@ fn load_ssh_target(profile_id: &str) -> Result<SshTarget> {
                 message: "Invalid SSH key path".to_string(),
             });
         }
+        // Re-validate at use time, not only when the profile was saved, so an
+        // older or hand-edited profile cannot point `-i` anywhere on disk.
+        validate_ssh_key_path(key)?;
     }
 
     Ok(SshTarget {

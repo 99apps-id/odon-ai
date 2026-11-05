@@ -1020,18 +1020,21 @@ impl Tool for BrowserClickTool {
             cmd.arg(format!("--host-resolver-rules={rules}"));
         }
         cmd.arg(url_str);
+        // A dropped future (the 45s timeout) must not orphan headless Chrome.
+        cmd.kill_on_drop(true);
         let mut child = cmd.spawn().map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("Failed to launch browser: {e}"),
         })?;
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(45), async move {
-            let cdp_ws = wait_for_cdp_websocket(port)
-                .await
-                .map_err(|e| OdonError::Tool {
-                    tool: "browser_click".to_string(),
-                    message: format!("CDP not ready: {e}"),
-                })?;
+            let cdp_ws =
+                wait_for_cdp_websocket(port, url_str)
+                    .await
+                    .map_err(|e| OdonError::Tool {
+                        tool: "browser_click".to_string(),
+                        message: format!("CDP not ready: {e}"),
+                    })?;
 
             let result = click_via_cdp(cdp_ws, selector.to_string()).await;
 
@@ -1077,7 +1080,7 @@ async fn find_free_port() -> Result<u16> {
     Ok(port.port())
 }
 
-async fn wait_for_cdp_websocket(port: u16) -> Result<url::Url> {
+async fn wait_for_cdp_websocket(port: u16, target_url: &str) -> Result<url::Url> {
     let base = format!("http://127.0.0.1:{}", port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(500))
@@ -1100,34 +1103,92 @@ async fn wait_for_cdp_websocket(port: u16) -> Result<url::Url> {
         tokio::time::sleep(std::time::Duration::from_millis(125)).await;
     }
 
-    let targets_url = format!("{}/json/new?{}", base, urlencoding::encode("about:blank"));
-    let body = client
-        .get(&targets_url)
-        .send()
-        .await
-        .map_err(|e| OdonError::Tool {
-            tool: "browser_click".to_string(),
-            message: format!("Failed to create CDP target: {e}"),
-        })?;
-    let target: serde_json::Value = body.json().await.map_err(|e| OdonError::Tool {
+    // Attach to the page target Chromium opened for `target_url`. The previous
+    // implementation created a brand-new `about:blank` tab (`/json/new`), so
+    // every click/evaluate ran in a blank document and could never find the
+    // selector; modern Chrome also rejects a GET on `/json/new`.
+    let mut last: Option<String> = None;
+    for _ in 0..40 {
+        match client.get(format!("{base}/json")).send().await {
+            Ok(response) => match response.json::<serde_json::Value>().await {
+                Ok(targets) => {
+                    if let Some(list) = targets.as_array() {
+                        let page = list
+                            .iter()
+                            .find(|target| {
+                                target.get("type").and_then(|v| v.as_str()) == Some("page")
+                                    && target.get("url").and_then(|v| v.as_str())
+                                        == Some(target_url)
+                                    && target.get("webSocketDebuggerUrl").is_some()
+                            })
+                            .or_else(|| {
+                                list.iter().find(|target| {
+                                    target.get("type").and_then(|v| v.as_str()) == Some("page")
+                                        && target.get("url").and_then(|v| v.as_str())
+                                            != Some("about:blank")
+                                        && target.get("webSocketDebuggerUrl").is_some()
+                                })
+                            })
+                            .or_else(|| {
+                                list.iter().find(|target| {
+                                    target.get("type").and_then(|v| v.as_str()) == Some("page")
+                                        && target.get("webSocketDebuggerUrl").is_some()
+                                })
+                            });
+                        if let Some(page) = page {
+                            if let Some(ws) =
+                                page.get("webSocketDebuggerUrl").and_then(|v| v.as_str())
+                            {
+                                return url::Url::parse(ws).map_err(|e| OdonError::Tool {
+                                    tool: "browser_click".to_string(),
+                                    message: format!("Invalid CDP WebSocket URL: {e}"),
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(e) => last = Some(format!("invalid CDP target response: {e}")),
+            },
+            Err(e) => last = Some(format!("CDP target request failed: {e}")),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(125)).await;
+    }
+    Err(OdonError::Tool {
         tool: "browser_click".to_string(),
-        message: format!("Invalid CDP target response: {e}"),
-    })?;
-    let ws_url = target
-        .get("webSocketDebuggerUrl")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| OdonError::Tool {
-            tool: "browser_click".to_string(),
-            message: "CDP target did not expose a WebSocket URL".to_string(),
-        })?;
-    url::Url::parse(ws_url).map_err(|e| OdonError::Tool {
-        tool: "browser_click".to_string(),
-        message: format!("Invalid CDP WebSocket URL: {e}"),
+        message: last.unwrap_or_else(|| "CDP did not expose a page target".to_string()),
     })
 }
 
+/// Wait for the reply to CDP command `id`, skipping unsolicited events that
+/// Chromium interleaves on the same socket. Returns `None` on timeout/close.
+async fn await_cdp_reply<S>(ws: &mut S, id: u64) -> Option<serde_json::Value>
+where
+    S: futures_util::Stream<
+            Item = std::result::Result<
+                tokio_tungstenite::tungstenite::protocol::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    use futures_util::StreamExt;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let item = match tokio::time::timeout_at(deadline, ws.next()).await {
+            Ok(Some(Ok(message))) => message,
+            _ => return None,
+        };
+        let Ok(text) = item.to_text() else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+            continue;
+        };
+        if value.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            return Some(value);
+        }
+    }
+}
+
 async fn click_via_cdp(ws_url: url::Url, selector: String) -> Result<Value> {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::SinkExt;
     use tokio_tungstenite::tungstenite::protocol::Message;
 
     let (mut ws, _) = tokio_tungstenite::connect_async(ws_url.as_str())
@@ -1160,29 +1221,19 @@ async fn click_via_cdp(ws_url: url::Url, selector: String) -> Result<Value> {
             message: format!("Failed to send CDP command: {e}"),
         })?;
 
-    let msg = tokio::time::timeout(std::time::Duration::from_secs(20), ws.next())
+    let response = await_cdp_reply(&mut ws, 1)
         .await
-        .map_err(|_| OdonError::Tool {
-            tool: "browser_click".to_string(),
-            message: "CDP response timed out".to_string(),
-        })?
         .ok_or_else(|| OdonError::Tool {
             tool: "browser_click".to_string(),
-            message: "CDP connection closed without response".to_string(),
-        })?
-        .map_err(|e| OdonError::Tool {
-            tool: "browser_click".to_string(),
-            message: format!("CDP message error: {e}"),
+            message: "CDP did not answer the evaluate command".to_string(),
         })?;
 
-    let text = msg.to_text().map_err(|e| OdonError::Tool {
-        tool: "browser_click".to_string(),
-        message: format!("Invalid CDP message: {e}"),
-    })?;
-    let response: serde_json::Value = serde_json::from_str(text).map_err(|e| OdonError::Tool {
-        tool: "browser_click".to_string(),
-        message: format!("Invalid CDP response: {e}"),
-    })?;
+    if let Some(error) = response.get("error") {
+        return Err(OdonError::Tool {
+            tool: "browser_click".to_string(),
+            message: format!("CDP evaluate failed: {error}"),
+        });
+    }
 
     Ok(json!({
         "selector": selector,
@@ -1227,7 +1278,7 @@ impl Tool for BrowserDownloadTool {
         let validated = net_guard::validate_url(url_str).await?;
         let url_str = validated.as_str();
 
-        use futures_util::{SinkExt, StreamExt};
+        use futures_util::SinkExt;
         use tokio_tungstenite::tungstenite::protocol::Message;
 
         let selector = args
@@ -1272,19 +1323,32 @@ impl Tool for BrowserDownloadTool {
             cmd.arg(format!("--host-resolver-rules={rules}"));
         }
         cmd.arg(url_str);
+        // A dropped future (the 45s timeout) must not orphan headless Chrome.
+        cmd.kill_on_drop(true);
         let mut child = cmd.spawn().map_err(|e| OdonError::Tool {
             tool: self.name().to_string(),
             message: format!("Failed to launch browser: {e}"),
         })?;
 
+        // Snapshot the shared download folder so an earlier run's file is not
+        // mistaken for this run's result.
+        let preexisting: std::collections::HashSet<std::path::PathBuf> =
+            std::fs::read_dir(&download_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path())
+                .collect();
+
         let download_dir_for_browser = download_dir.clone();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(45), async move {
-            let cdp_ws = wait_for_cdp_websocket(port)
-                .await
-                .map_err(|e| OdonError::Tool {
-                    tool: "browser_download".to_string(),
-                    message: format!("CDP not ready: {e}"),
-                })?;
+            let cdp_ws =
+                wait_for_cdp_websocket(port, url_str)
+                    .await
+                    .map_err(|e| OdonError::Tool {
+                        tool: "browser_download".to_string(),
+                        message: format!("CDP not ready: {e}"),
+                    })?;
 
             let set_behavior = serde_json::json!({
                 "id": 1,
@@ -1309,7 +1373,8 @@ impl Tool for BrowserDownloadTool {
                     message: format!("Failed to set download behavior: {e}"),
                 })?;
 
-            let _ = ws.next().await;
+            // Wait for the reply to id 1, skipping unsolicited CDP events.
+            let _ = await_cdp_reply(&mut ws, 1).await;
 
             let js = format!(
                 "(() => {{ \
@@ -1334,7 +1399,7 @@ impl Tool for BrowserDownloadTool {
                     message: format!("Failed to send CDP command: {e}"),
                 })?;
 
-            let _ = ws.next().await;
+            let _ = await_cdp_reply(&mut ws, 2).await;
 
             drop(ws);
             let _ = child.kill().await;
@@ -1360,6 +1425,9 @@ impl Tool for BrowserDownloadTool {
                     message: format!("Failed to read download entry: {e}"),
                 })?;
                 let path = entry.path();
+                if preexisting.contains(&path) {
+                    continue;
+                }
                 if path.extension().map(|e| e == "crdownload").unwrap_or(false) {
                     continue;
                 }

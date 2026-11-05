@@ -302,21 +302,27 @@ impl Tool for TodoUpdateTool {
             .as_ref()
             .ok_or_else(|| tool_err(self.name(), "Storage engine unavailable"))?;
         let id = args.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if id.trim().is_empty() {
+            return Err(tool_err(self.name(), "Missing 'id' parameter"));
+        }
         let new_status = args
             .get("status")
             .and_then(|s| s.as_str())
             .unwrap_or("completed");
 
-        let key = format!("todos:{}", ctx.session_id);
-        let existing = storage.get_memory(&key).ok().flatten();
-        let mut list: Vec<Value> = if let Some(mem) = existing {
-            serde_json::from_str(&mem.value).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        // Read the same store `todo_write`/`todo_read` use. This used to read a
+        // `todos:{session_id}` memory key that `todo_write` never wrote, so
+        // every update failed and any success would have been invisible to
+        // `todo_read`.
+        let mut list = storage
+            .get_todos(&ctx.session_id)
+            .map_err(|e| tool_err(self.name(), format!("Failed to read plan: {e}")))?;
+        let items = list
+            .as_array_mut()
+            .ok_or_else(|| tool_err(self.name(), "stored todo list is not an array"))?;
 
-        let mut updated: Vec<Value> = Vec::new();
-        for item in list.iter_mut() {
+        let mut updated: Option<Value> = None;
+        for item in items.iter_mut() {
             let item_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
             let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
             if item_id == id || item_title == id {
@@ -324,27 +330,31 @@ impl Tool for TodoUpdateTool {
                 if let Some(t) = args.get("title").and_then(|t| t.as_str()) {
                     item["title"] = json!(t);
                 }
-                updated.push(item.clone());
+                updated = Some(item.clone());
                 break;
             }
         }
 
-        if updated.is_empty() {
-            return Err(tool_err(
-                self.name(),
-                format!("todo item '{id}' was not found; use todo_read first"),
-            ));
-        }
+        let updated = match updated {
+            Some(updated) => updated,
+            None => {
+                return Err(tool_err(
+                    self.name(),
+                    format!("todo item '{id}' was not found; use todo_read first"),
+                ))
+            }
+        };
 
         // Reuse the same validation/invariants as todo_write: bounded list,
         // valid status, and exactly one in_progress item.
-        let validated = normalize_todos(self.name(), &json!(list))?;
-        let serialized = serde_json::to_string(&validated).unwrap_or_default();
-        let _ = storage.set_memory(&key, &serialized, "todos");
+        let validated = normalize_todos(self.name(), &list)?;
+        storage
+            .set_todos(&ctx.session_id, &validated)
+            .map_err(|e| tool_err(self.name(), format!("Failed to save plan: {e}")))?;
 
         Ok(json!({
-            "updated_id": updated[0]["id"],
-            "status": updated[0]["status"],
+            "updated_id": updated["id"],
+            "status": updated["status"],
             "count": validated.as_array().map(|items| items.len()).unwrap_or(0),
             "todos": validated
         }))
