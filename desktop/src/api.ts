@@ -170,9 +170,10 @@ export interface GitHubUser {
 
 export interface GitHubStatusResponse {
   authenticated: boolean;
-  auth_source?: string;
-  user?: GitHubUser;
-  workspace_repo?: { owner: string; repo: string };
+  // The daemon emits explicit nulls in the unauthenticated path.
+  auth_source?: string | null;
+  user?: GitHubUser | null;
+  workspace_repo?: { owner: string; repo: string } | null;
 }
 
 export interface GitHubRepoItem {

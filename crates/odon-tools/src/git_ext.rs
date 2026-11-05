@@ -143,14 +143,30 @@ impl GitHubApiClient {
 
     async fn response_json(tool: &str, response: reqwest::Response) -> Result<Value> {
         let status = response.status();
-        let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+        let text = response.text().await.map_err(|e| OdonError::Tool {
+            tool: tool.to_string(),
+            message: format!("Failed to read GitHub response: {e}"),
+        })?;
         if !status.is_success() {
+            // Prefer GitHub's short `message` and cap the raw fallback so a
+            // huge upstream body cannot flood the agent context or the logs.
+            let detail = serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|body| {
+                    body.get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| text.chars().take(300).collect());
             return Err(OdonError::Tool {
                 tool: tool.to_string(),
-                message: format!("GitHub API returned HTTP {status}: {body}"),
+                message: format!("GitHub API returned HTTP {status}: {detail}"),
             });
         }
-        Ok(body)
+        serde_json::from_str(&text).map_err(|e| OdonError::Tool {
+            tool: tool.to_string(),
+            message: format!("Failed to parse GitHub response: {e}"),
+        })
     }
 }
 

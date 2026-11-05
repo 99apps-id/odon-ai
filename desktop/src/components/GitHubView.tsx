@@ -28,8 +28,8 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
   const [activeTab, setActiveTab] = useState<'prs' | 'issues'>('prs');
   const [authStatus, setAuthStatus] = useState<{
     authenticated: boolean;
-    user?: GitHubUser;
-    workspace_repo?: { owner: string; repo: string };
+    user?: GitHubUser | null;
+    workspace_repo?: { owner: string; repo: string } | null;
   }>({ authenticated: false });
 
   const [userRepos, setUserRepos] = useState<GitHubRepoItem[]>([]);
