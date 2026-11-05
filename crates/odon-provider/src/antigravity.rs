@@ -604,7 +604,10 @@ impl ModelProvider for AntigravityProvider {
             let err_body = resp.text().await.unwrap_or_default();
             return Err(OdonError::Provider {
                 provider: "antigravity".into(),
-                message: format!("Antigravity HTTP {status}: {err_body}"),
+                message: format!(
+                    "Antigravity HTTP {status}: {}",
+                    crate::truncate_str_boundary(&err_body, 2000)
+                ),
             });
         }
 

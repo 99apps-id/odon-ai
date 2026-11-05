@@ -223,10 +223,15 @@ impl ModelProvider for OpenAiCodexProvider {
         .await?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
             let err_body = resp.text().await.unwrap_or_default();
             return Err(OdonError::Provider {
                 provider: "openai-codex".to_string(),
-                message: format!("Codex HTTP status error: {}", err_body),
+                message: format!(
+                    "Codex HTTP status error {}: {}",
+                    status,
+                    crate::truncate_str_boundary(&err_body, 2000)
+                ),
             });
         }
 
@@ -289,7 +294,28 @@ impl ModelProvider for OpenAiCodexProvider {
                                     let _ = event_sender.send(StreamEvent::Error(msg.to_string())).await;
                                     break;
                                 }
+                                // The Responses API reports a budget-cut reply as
+                                // an `incomplete` response instead of a normal
+                                // one. Without surfacing it the runtime persists
+                                // a mid-sentence answer as final and never runs
+                                // the bounded continuation.
+                                "response.incomplete" => {
+                                    let _ = event_sender.send(StreamEvent::OutputTruncated).await;
+                                    let _ = event_sender.send(StreamEvent::Done).await;
+                                    break;
+                                }
                                 "response.completed" => {
+                                    let status = val
+                                        .pointer("/response/status")
+                                        .and_then(|s| s.as_str());
+                                    let reason = val
+                                        .pointer("/response/incomplete_details/reason")
+                                        .and_then(|s| s.as_str());
+                                    if status == Some("incomplete")
+                                        || matches!(reason, Some("max_output_tokens" | "max_tokens" | "length"))
+                                    {
+                                        let _ = event_sender.send(StreamEvent::OutputTruncated).await;
+                                    }
                                     let _ = event_sender.send(StreamEvent::Done).await;
                                     break;
                                 }

@@ -412,10 +412,8 @@ impl OpenAiCompatibleProvider {
         cancellation: CancellationToken,
     ) -> Result<()> {
         let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let messages_payload = chat_messages_payload(
-            request.system_prompt.as_deref(),
-            request.messages.clone(),
-        );
+        let messages_payload =
+            chat_messages_payload(request.system_prompt.as_deref(), request.messages.clone());
 
         let mut body = json!({
             "model": model,
@@ -1188,7 +1186,10 @@ mod tests {
             .collect();
         assert_eq!(roles, vec!["system", "user", "assistant", "tool"]);
         assert_eq!(payload[3]["tool_call_id"], "c1");
-        assert!(!payload[3]["content"].as_str().unwrap_or_default().is_empty());
+        assert!(!payload[3]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]
