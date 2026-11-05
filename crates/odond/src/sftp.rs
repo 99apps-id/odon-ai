@@ -202,6 +202,9 @@ pub async fn list(client: &Client, path: &str) -> Result<Vec<Entry>> {
 
 /// Read a text file for the editor, refusing oversized payloads.
 pub async fn read_text(client: &Client, path: &str) -> Result<(String, bool)> {
+    use russh_sftp::protocol::OpenFlags;
+    use tokio::io::AsyncReadExt;
+
     let file = normalize_remote(path)?;
     let meta = client
         .session
@@ -215,18 +218,22 @@ pub async fn read_text(client: &Client, path: &str) -> Result<(String, bool)> {
     if size > MAX_EDIT_BYTES {
         bail!("{file} is {size} bytes; the editor opens files up to {MAX_EDIT_BYTES} bytes");
     }
-    let bytes = client
+    // The advertised size can be absent or wrong, so cap the bytes actually
+    // read instead of trusting metadata and slurping an arbitrarily large file.
+    let mut handle = client
         .session
-        .read(file.clone())
+        .open_with_flags(file.clone(), OpenFlags::READ)
+        .await
+        .with_context(|| format!("open {file}"))?;
+    let mut buffer = Vec::new();
+    (&mut handle)
+        .take(MAX_EDIT_BYTES + 1)
+        .read_to_end(&mut buffer)
         .await
         .with_context(|| format!("read {file}"))?;
-    let truncated = bytes.len() as u64 > MAX_EDIT_BYTES;
-    let slice = if truncated {
-        &bytes[..MAX_EDIT_BYTES as usize]
-    } else {
-        &bytes[..]
-    };
-    Ok((String::from_utf8_lossy(slice).to_string(), truncated))
+    let truncated = buffer.len() as u64 > MAX_EDIT_BYTES;
+    buffer.truncate(MAX_EDIT_BYTES as usize);
+    Ok((String::from_utf8_lossy(&buffer).to_string(), truncated))
 }
 
 pub async fn write_text(client: &Client, path: &str, content: &str) -> Result<()> {

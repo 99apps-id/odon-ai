@@ -41,7 +41,9 @@ use odon_agent::{AgentRuntime, SteerMessage, SteerQueue};
 use odon_channel::{ChannelAdapter, IncomingChannelMessage, TelegramRelay, WhatsAppChannel};
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
-use odon_core::{Agent, AgentEvent, AgentSchedule, ArtifactPayload, EventSender, Message, OdonError};
+use odon_core::{
+    Agent, AgentEvent, AgentSchedule, ArtifactPayload, EventSender, Message, OdonError,
+};
 use odon_provider::{
     anthropic::AnthropicProvider,
     host_creds::{discover_antigravity, discover_github_copilot},
@@ -2038,8 +2040,9 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                     effective_model.as_deref().unwrap_or("odon-auto"),
                 );
                 session.agent_id = agent.as_ref().map(|agent| agent.id.clone());
-                session.workspace_root =
-                    agent.as_ref().and_then(|agent| agent.workspace_root.clone());
+                session.workspace_root = agent
+                    .as_ref()
+                    .and_then(|agent| agent.workspace_root.clone());
                 session.metadata = Some(serde_json::json!({
                     "channel": message.channel.clone(),
                     "peer": message.sender_id.clone(),
@@ -2678,10 +2681,7 @@ async fn main() -> anyhow::Result<()> {
                     );
                     match relay.start(relay_tx.clone()).await {
                         Ok(()) => {
-                            telegram_agents_handle
-                                .write()
-                                .await
-                                .insert(agent_id, relay);
+                            telegram_agents_handle.write().await.insert(agent_id, relay);
                         }
                         Err(e) => {
                             tracing::error!("Telegram bot for agent {agent_id} failed: {e}")
@@ -4044,7 +4044,11 @@ async fn save_agent(
     State(state): State<AppState>,
     Json(input): Json<AgentInput>,
 ) -> impl IntoResponse {
-    let mut agent = match input.id.as_deref().and_then(|id| state.storage.get_agent(id).ok()) {
+    let mut agent = match input
+        .id
+        .as_deref()
+        .and_then(|id| state.storage.get_agent(id).ok())
+    {
         Some(existing) => existing,
         None => {
             let name = input
@@ -4111,7 +4115,10 @@ async fn delete_agent(Path(id): Path<String>, State(state): State<AppState>) -> 
         }
     }
     match state.storage.delete_agent(&id) {
-        Ok(deleted) => (StatusCode::OK, Json(json!({ "id": id, "deleted": deleted }))),
+        Ok(deleted) => (
+            StatusCode::OK,
+            Json(json!({ "id": id, "deleted": deleted })),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
@@ -4274,9 +4281,12 @@ async fn save_agent_webhook(
     let token = generate_webhook_token();
     {
         let mut config = state.relay_config.write().await;
-        config
-            .agent_webhooks
-            .insert(agent_id.clone(), AgentWebhookConfig { token: token.clone() });
+        config.agent_webhooks.insert(
+            agent_id.clone(),
+            AgentWebhookConfig {
+                token: token.clone(),
+            },
+        );
         save_relay_config(&config);
     }
     (
@@ -4514,13 +4524,16 @@ async fn create_agent_session(
             )
         }
     };
-    let title = req.title.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
-        format!(
-            "{} · {}",
-            agent.name,
-            chrono::Local::now().format("%d %b %H:%M")
-        )
-    });
+    let title = req
+        .title
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "{} · {}",
+                agent.name,
+                chrono::Local::now().format("%d %b %H:%M")
+            )
+        });
     let model = if agent.model.trim().is_empty() {
         "odon-auto".to_string()
     } else {
@@ -4528,7 +4541,8 @@ async fn create_agent_session(
     };
     let mut session = Session::new(title, SessionMode::General, model);
     session.agent_id = Some(agent.id.clone());
-    session.workspace_root = resolve_allowed_workspace(&state, agent.workspace_root.as_deref()).await;
+    session.workspace_root =
+        resolve_allowed_workspace(&state, agent.workspace_root.as_deref()).await;
     match state.storage.save_session(&session) {
         Ok(_) => (StatusCode::CREATED, Json(json!(session))),
         Err(e) => (
@@ -4559,10 +4573,18 @@ async fn update_session(
             )
         }
     };
-    if let Some(title) = req.title.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+    if let Some(title) = req
+        .title
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
         session.title = title;
     }
-    if let Some(model) = req.model.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+    if let Some(model) = req
+        .model
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
         session.active_model = model;
     }
     if let Some(agent_id) = req.agent_id {
@@ -4642,9 +4664,11 @@ async fn create_session(
         })
         .unwrap_or_else(|| "odon-auto".to_string());
 
-    let requested_workspace = req
-        .workspace_root
-        .or_else(|| agent.as_ref().and_then(|agent| agent.workspace_root.clone()));
+    let requested_workspace = req.workspace_root.or_else(|| {
+        agent
+            .as_ref()
+            .and_then(|agent| agent.workspace_root.clone())
+    });
     let workspace_root = match requested_workspace.filter(|p| !p.trim().is_empty()) {
         Some(raw) => match canonical_workspace(&raw) {
             Ok(path) => {
@@ -5084,7 +5108,9 @@ async fn send_message(
     let effective_model = pick_effective_model(
         req.model.as_deref(),
         agent.as_ref().map(|agent| agent.model.as_str()),
-        session.as_ref().map(|session| session.active_model.as_str()),
+        session
+            .as_ref()
+            .map(|session| session.active_model.as_str()),
     );
     let agent_instruction = agent
         .as_ref()
@@ -9571,6 +9597,7 @@ async fn save_ssh_profile(Json(profile): Json<SshProfile>) -> impl IntoResponse 
         }
     }
 
+    let profile_id = profile.id.clone();
     let mut profiles = load_ssh_profiles();
     if let Some(idx) = profiles.iter().position(|p| p.id == profile.id) {
         profiles[idx] = profile;
@@ -9578,6 +9605,10 @@ async fn save_ssh_profile(Json(profile): Json<SshProfile>) -> impl IntoResponse 
         profiles.push(profile);
     }
     save_ssh_profiles_to_disk(&profiles);
+    // Drop any cached authenticated SFTP session for this profile: after an
+    // edit (host/user/key) the panel must handshake again instead of reusing
+    // the old server's session for up to the idle TTL.
+    crate::sftp::forget(&profile_id).await;
     (
         StatusCode::OK,
         Json(json!({ "success": true, "profiles": profiles })),
@@ -9603,6 +9634,11 @@ fn sftp_profile_options(profile_id: &str) -> Result<crate::ssh_session::ConnectO
         .iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("unknown SSH profile: {profile_id}"))?;
+    // Re-validate the key path at use time: a profile imported or hand-edited
+    // before the ACL hardening could otherwise point `-i` at an arbitrary file.
+    if let Some(key) = profile.key_path.as_deref() {
+        validate_ssh_key_path(key)?;
+    }
     crate::ssh_session::ConnectOptions::for_profile(
         &profile.host,
         &profile.user,
@@ -9697,7 +9733,23 @@ struct SftpWritePayload {
     content: String,
 }
 
-async fn sftp_write_file(Json(payload): Json<SftpWritePayload>) -> impl IntoResponse {
+async fn sftp_write_file(
+    State(state): State<AppState>,
+    Json(payload): Json<SftpWritePayload>,
+) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "sftp_write_file",
+        &json!({ "path": payload.path }),
+        &format!("Write remote file {}", payload.path),
+    )
+    .await
+    {
+        return sftp_error(
+            StatusCode::FORBIDDEN,
+            error["error"].as_str().unwrap_or("denied").to_string(),
+        );
+    }
     let client = match sftp_client(&payload.profile_id).await {
         Ok(c) => c,
         Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
@@ -9717,7 +9769,23 @@ struct SftpMkdirPayload {
     path: String,
 }
 
-async fn sftp_mkdir(Json(payload): Json<SftpMkdirPayload>) -> impl IntoResponse {
+async fn sftp_mkdir(
+    State(state): State<AppState>,
+    Json(payload): Json<SftpMkdirPayload>,
+) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "sftp_mkdir",
+        &json!({ "path": payload.path }),
+        &format!("Create remote directory {}", payload.path),
+    )
+    .await
+    {
+        return sftp_error(
+            StatusCode::FORBIDDEN,
+            error["error"].as_str().unwrap_or("denied").to_string(),
+        );
+    }
     let client = match sftp_client(&payload.profile_id).await {
         Ok(c) => c,
         Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
@@ -9738,7 +9806,23 @@ struct SftpRenamePayload {
     to: String,
 }
 
-async fn sftp_rename(Json(payload): Json<SftpRenamePayload>) -> impl IntoResponse {
+async fn sftp_rename(
+    State(state): State<AppState>,
+    Json(payload): Json<SftpRenamePayload>,
+) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "sftp_rename",
+        &json!({ "from": payload.from, "to": payload.to }),
+        &format!("Rename remote {} -> {}", payload.from, payload.to),
+    )
+    .await
+    {
+        return sftp_error(
+            StatusCode::FORBIDDEN,
+            error["error"].as_str().unwrap_or("denied").to_string(),
+        );
+    }
     let client = match sftp_client(&payload.profile_id).await {
         Ok(c) => c,
         Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
@@ -9760,7 +9844,23 @@ struct SftpDeletePayload {
     dir: bool,
 }
 
-async fn sftp_delete(Json(payload): Json<SftpDeletePayload>) -> impl IntoResponse {
+async fn sftp_delete(
+    State(state): State<AppState>,
+    Json(payload): Json<SftpDeletePayload>,
+) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "sftp_delete",
+        &json!({ "path": payload.path, "dir": payload.dir }),
+        &format!("Delete remote {}", payload.path),
+    )
+    .await
+    {
+        return sftp_error(
+            StatusCode::FORBIDDEN,
+            error["error"].as_str().unwrap_or("denied").to_string(),
+        );
+    }
     let client = match sftp_client(&payload.profile_id).await {
         Ok(c) => c,
         Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),
@@ -9784,7 +9884,23 @@ struct SftpCreatePayload {
     kind: Option<String>,
 }
 
-async fn sftp_create(Json(payload): Json<SftpCreatePayload>) -> impl IntoResponse {
+async fn sftp_create(
+    State(state): State<AppState>,
+    Json(payload): Json<SftpCreatePayload>,
+) -> impl IntoResponse {
+    if let Err(error) = evaluate_http_action(
+        &state,
+        "sftp_create",
+        &json!({ "dir": payload.dir, "name": payload.name, "kind": payload.kind }),
+        &format!("Create remote {}/{}", payload.dir, payload.name),
+    )
+    .await
+    {
+        return sftp_error(
+            StatusCode::FORBIDDEN,
+            error["error"].as_str().unwrap_or("denied").to_string(),
+        );
+    }
     let client = match sftp_client(&payload.profile_id).await {
         Ok(c) => c,
         Err(e) => return sftp_error(StatusCode::BAD_GATEWAY, e),

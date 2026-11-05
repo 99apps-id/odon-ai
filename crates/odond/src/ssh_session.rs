@@ -226,13 +226,26 @@ pub async fn authenticate(opts: &ConnectOptions) -> Result<Authenticated> {
             opts.key_path.display()
         )
     })?;
-    let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
-    let auth = handle
-        .authenticate_publickey(
-            opts.user.clone(),
-            PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
+    // The connect timeout above only bounds TCP+KEX. A server that stalls the
+    // authentication phase would otherwise hang the terminal tab forever.
+    let auth = tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
+        handle
+            .authenticate_publickey(
+                opts.user.clone(),
+                PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
+            )
+            .await
+    })
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "timed out after {}s authenticating to {}:{}",
+            CONNECT_TIMEOUT.as_secs(),
+            opts.host,
+            opts.port
         )
-        .await?;
+    })??;
     if !auth.success() {
         let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
         bail!(
@@ -290,7 +303,11 @@ fn save_known_host(path: &Path, store_key: &str, fingerprint: &str) -> Result<()
         std::fs::create_dir_all(parent).ok();
     }
     let raw = serde_json::to_string_pretty(&known)?;
-    std::fs::write(path, raw)?;
+    // Write to a temp file and rename, so a crash mid-write cannot leave a
+    // half-written store (which reads as empty and would re-TOFU the host).
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, raw)?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
