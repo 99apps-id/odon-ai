@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod artifact;
 pub mod daemon;
 pub mod error;
@@ -7,6 +8,7 @@ pub mod message;
 pub mod provider;
 pub mod session;
 
+pub use agent::{Agent, AgentSchedule};
 pub use artifact::{Artifact, ArtifactFile, ArtifactKind, ArtifactPayload};
 pub use error::{OdonError, Result};
 pub use events::{

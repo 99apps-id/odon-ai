@@ -31,6 +31,10 @@ pub struct Session {
     pub status: SessionStatus,
     pub active_model: String,
     pub workspace_root: Option<String>,
+    /// The persisted agent this conversation belongs to, when it was started
+    /// from an agent desk rather than the composer.
+    #[serde(default)]
+    pub agent_id: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -50,6 +54,7 @@ impl Session {
             status: SessionStatus::Active,
             active_model: active_model.into(),
             workspace_root: None,
+            agent_id: None,
             metadata: None,
             created_at: now,
             updated_at: now,
