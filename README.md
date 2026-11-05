@@ -235,6 +235,19 @@ Open the desktop app and go to **Settings → Relays**:
 
 Environment variables still work as a fallback (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, `WHATSAPP_*`). For the optional WhatsApp Cloud API transport, expose the daemon through HTTPS and set the Meta webhook URL to `https://<your-domain>/api/relays/whatsapp`, subscribing to the `messages` field. Telegram and WhatsApp Web require no public URL.
 
+### 5. Set Up a Persisted Agent (bot, shift, webhook)
+1. Open **Agents Office → + Agent**, fill in a name, specialization, desk color, system prompt, and model (`provider::model`, or `odon-auto` to follow the composer). Pick skills as chips from the catalogue.
+2. Set **working hours**: start/end, weekdays, and an IANA **timezone** (e.g. `Asia/Jakarta`). Outside the shift the desk reads *off shift*, and inbound messages are parked.
+3. In the same editor, add a **Telegram connector**: paste the bot token from @BotFather and the allowed user IDs/usernames (an empty allowlist rejects everyone). One bot per agent; the operator's main relay is untouched.
+4. Optionally click **Generate webhook URL** for an inbound trigger:
+   ```bash
+   curl -X POST "<webhook-url>" -H "Content-Type: application/json" \
+        -d '{"text":"summarize today","session_id":"n8n-run-42"}'
+   ```
+   The reply comes back in the same request; reuse `session_id` to keep one conversation.
+5. **Off-shift behavior**: Telegram messages sent outside the shift get an away reply with their queue position and are released automatically when the shift starts (disable with `ODON_OFF_SHIFT_QUEUE=0`). Webhook callers, which wait synchronously, receive `{"ok": false, "off_shift": true}` with the shift window instead.
+6. Ask another agent to delegate work with `run_subagent` and `"agent": "<id|name>"` — the child inherits that agent's persona and model and reports back to the parent turn.
+
 ---
 
 ## 📄 License & Attribution
