@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Terminal as TerminalIcon,
   RotateCcw,
@@ -59,6 +59,11 @@ const SHELL_OPTIONS: ShellOption[] = IS_WINDOWS
       { id: 'sh', name: 'POSIX sh', hint: 'sh' },
     ];
 
+// Module-level so a command is consumed exactly once even though the main and
+// right-panel TerminalView instances mount/unmount independently. Without this
+// a command re-ran every time the terminal view was reopened.
+let lastConsumedCommandId: number | null = null;
+
 export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAgent, initialCommand }) => {
   const [tabs, setTabs] = useState<TerminalTab[]>([
     {
@@ -71,14 +76,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAge
     `tab-${SHELL_OPTIONS[0].id}-1`,
   );
   const [isAddMenuOpen, setIsAddMenuOpen] = useState<boolean>(false);
-  const lastCommandIdRef = useRef<number | null>(null);
 
   // A command from another panel opens its own tab so it never fights an
   // interactive session the operator already has open.
   useEffect(() => {
     if (!initialCommand || !initialCommand.text) return;
-    if (lastCommandIdRef.current === initialCommand.id) return;
-    lastCommandIdRef.current = initialCommand.id;
+    if (lastConsumedCommandId === initialCommand.id) return;
+    lastConsumedCommandId = initialCommand.id;
     const newId = `tab-cmd-${initialCommand.id}`;
     setTabs((prev) => [
       ...prev,
