@@ -268,7 +268,18 @@ impl Tool for FsEditTool {
         }
 
         let occurrences = content.matches(target).count();
-        let new_content = content.replace(target, replacement);
+        // The tool is documented as a surgical edit. `str::replace` would
+        // rewrite every occurrence, silently widening the edit; refuse an
+        // ambiguous target instead so the model supplies a unique one.
+        if occurrences > 1 {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "Target sequence appears {occurrences} times in {path_str}; provide a longer unique target"
+                ),
+            });
+        }
+        let new_content = content.replacen(target, replacement, 1);
 
         tokio::fs::write(&full_path, new_content.clone())
             .await
@@ -291,7 +302,7 @@ impl Tool for FsEditTool {
 
         Ok(json!({
             "path": path_str,
-            "replacements": occurrences,
+            "replacements": 1,
             "status": "success",
             "artifact": artifact
         }))

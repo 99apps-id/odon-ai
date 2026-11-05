@@ -874,6 +874,34 @@ impl Tool for FsZipTool {
                 message: "archive_path must end with .zip".to_string(),
             });
         }
+        // The archive must not live inside the tree being zipped: the writer
+        // would walk its own partially-written output and produce a corrupt,
+        // self-including archive.
+        if src_full.is_dir() {
+            let src_canonical = fs::canonicalize(&src_full).map_err(|e| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: e.to_string(),
+            })?;
+            // The immediate parent may not exist yet, so walk up to the nearest
+            // existing ancestor; if that is inside the source, the archive will
+            // be created inside it.
+            let mut probe = arc_full.parent().unwrap_or(&arc_full);
+            let inside = loop {
+                if let Ok(canonical) = fs::canonicalize(probe) {
+                    break canonical.starts_with(&src_canonical);
+                }
+                match probe.parent() {
+                    Some(parent) => probe = parent,
+                    None => break false,
+                }
+            };
+            if inside {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!("archive_path must be outside the source directory: {arc}"),
+                });
+            }
+        }
         if let Some(parent) = arc_full.parent() {
             fs::create_dir_all(parent).map_err(|e| OdonError::Tool {
                 tool: self.name().to_string(),
@@ -957,6 +985,14 @@ impl Tool for FsUnzipTool {
         const MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
         let mut extracted = 0usize;
         let mut total_bytes = 0u64;
+        // Declared sizes are a separate early-rejection counter: charging them
+        // into the same budget as the decompressed bytes made an honest archive
+        // cost twice its real size and abort at roughly half the limit.
+        let mut declared_bytes = 0u64;
+        let dst_canonical = fs::canonicalize(&dst_full).map_err(|e| OdonError::Tool {
+            tool: self.name().to_string(),
+            message: format!("Cannot resolve destination: {e}"),
+        })?;
         for index in 0..archive.len() {
             if index >= MAX_ENTRIES {
                 return Err(OdonError::Tool {
@@ -971,7 +1007,8 @@ impl Tool for FsUnzipTool {
             // `entry.size()` is the size the central directory *declares*; it is a
             // cheap early rejection, not the authoritative accounting. The real
             // budget is enforced against bytes actually decompressed below.
-            if !charge_extraction_budget(&mut total_bytes, entry.size(), MAX_TOTAL_BYTES) {
+            declared_bytes = declared_bytes.saturating_add(entry.size());
+            if declared_bytes > MAX_TOTAL_BYTES {
                 return Err(OdonError::Tool {
                     tool: self.name().to_string(),
                     message: format!(
@@ -983,18 +1020,55 @@ impl Tool for FsUnzipTool {
             let Some(relative) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
                 continue;
             };
-            let out_path = dst_full.join(relative);
+            let out_path = dst_full.join(&relative);
             if entry.is_dir() {
                 fs::create_dir_all(&out_path).map_err(|e| OdonError::Tool {
                     tool: self.name().to_string(),
                     message: e.to_string(),
                 })?;
+                // A pre-existing symlinked component (e.g. `sub -> /etc` planted
+                // earlier in the workspace) would otherwise carry the extraction
+                // outside the destination.
+                let canonical = fs::canonicalize(&out_path).map_err(|e| OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: e.to_string(),
+                })?;
+                if !canonical.starts_with(&dst_canonical) {
+                    return Err(OdonError::Tool {
+                        tool: self.name().to_string(),
+                        message: format!(
+                            "Refusing to extract through a symlink outside the destination: {}",
+                            relative.display()
+                        ),
+                    });
+                }
             } else {
                 if let Some(parent) = out_path.parent() {
                     fs::create_dir_all(parent).map_err(|e| OdonError::Tool {
                         tool: self.name().to_string(),
                         message: e.to_string(),
                     })?;
+                    let parent_canonical =
+                        fs::canonicalize(parent).map_err(|e| OdonError::Tool {
+                            tool: self.name().to_string(),
+                            message: e.to_string(),
+                        })?;
+                    if !parent_canonical.starts_with(&dst_canonical) {
+                        return Err(OdonError::Tool {
+                            tool: self.name().to_string(),
+                            message: format!(
+                                "Refusing to extract through a symlink outside the destination: {}",
+                                relative.display()
+                            ),
+                        });
+                    }
+                }
+                // A pre-existing symlink at the target path must not be followed
+                // by `File::create`.
+                if let Ok(meta) = fs::symlink_metadata(&out_path) {
+                    if meta.file_type().is_symlink() {
+                        let _ = fs::remove_file(&out_path);
+                    }
                 }
                 let mut out_file = fs::File::create(&out_path).map_err(|e| OdonError::Tool {
                     tool: self.name().to_string(),
