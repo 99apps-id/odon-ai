@@ -271,8 +271,8 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
               key={`pipes-${i}`}
               className={
                 dense
-                  ? "text-[11px] leading-snug text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
-                  : "text-[13.5px] leading-[1.6] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
+                  ? "text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
+                  : "text-[15px] leading-[1.7] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
               }
               dangerouslySetInnerHTML={{ __html: formatInline(tableLines.join(' '), triggerOpenBrowser, dense) }}
             />
@@ -315,8 +315,8 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
             key={`quote-${i}`}
             className={
               dense
-                ? "border-l-2 border-neutral-300 dark:border-neutral-600 pl-2.5 py-0.5 my-1 bg-neutral-100/40 dark:bg-neutral-800/30 rounded-r-lg italic text-[10.5px] text-neutral-600 dark:text-neutral-400 leading-snug"
-                : "border-l-3 border-neutral-300 dark:border-neutral-600 pl-3.5 py-1 my-2 bg-neutral-50/70 dark:bg-neutral-800/40 rounded-r-xl italic text-[13px] text-neutral-700 dark:text-neutral-300 leading-relaxed"
+                ? "border-l-2 border-neutral-300 dark:border-neutral-600 pl-2.5 py-0.5 my-1 bg-neutral-100/40 dark:bg-neutral-800/30 rounded-r-lg italic text-[12px] text-neutral-600 dark:text-neutral-400 leading-relaxed"
+                : "border-l-3 border-neutral-300 dark:border-neutral-600 pl-3.5 py-1 my-2 bg-neutral-50/70 dark:bg-neutral-800/40 rounded-r-xl italic text-[14.5px] text-neutral-700 dark:text-neutral-300 leading-relaxed"
             }
           >
             <span dangerouslySetInnerHTML={{ __html: formatInline(quoteLines.join(' '), triggerOpenBrowser, dense) }} />
@@ -333,25 +333,25 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
           const textContent = hMatch[2];
           if (level === 1) {
             elements.push(
-              <h1 key={`h1-${i}`} className={dense ? "text-[12px] font-semibold text-neutral-800 dark:text-neutral-200 mt-2 mb-1 tracking-tight" : "text-[15.5px] font-semibold text-neutral-900 dark:text-neutral-100 mt-3.5 mb-1.5 tracking-tight border-b border-neutral-100 pb-1"}>
+              <h1 key={`h1-${i}`} className={dense ? "text-[13px] font-semibold text-neutral-800 dark:text-neutral-200 mt-2 mb-1 tracking-tight" : "text-[17px] font-semibold text-neutral-900 dark:text-neutral-100 mt-3.5 mb-1.5 tracking-tight border-b border-neutral-100 pb-1"}>
                 <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser, dense) }} />
               </h1>
             );
           } else if (level === 2) {
             elements.push(
-              <h2 key={`h2-${i}`} className={dense ? "text-[11.5px] font-semibold text-neutral-800 dark:text-neutral-200 mt-1.5 mb-0.5 tracking-tight" : "text-[14.5px] font-semibold text-neutral-900 dark:text-neutral-100 mt-3 mb-1 tracking-tight"}>
+              <h2 key={`h2-${i}`} className={dense ? "text-[12.5px] font-semibold text-neutral-800 dark:text-neutral-200 mt-1.5 mb-0.5 tracking-tight" : "text-[16px] font-semibold text-neutral-900 dark:text-neutral-100 mt-3 mb-1 tracking-tight"}>
                 <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser, dense) }} />
               </h2>
             );
           } else if (level === 3) {
             elements.push(
-              <h3 key={`h3-${i}`} className={dense ? "text-[11px] font-semibold text-neutral-700 dark:text-neutral-300 mt-1 mb-0.5 tracking-tight" : "text-[13.5px] font-semibold text-neutral-900 dark:text-neutral-100 mt-2.5 mb-1 tracking-tight"}>
+              <h3 key={`h3-${i}`} className={dense ? "text-[12px] font-semibold text-neutral-700 dark:text-neutral-300 mt-1 mb-0.5 tracking-tight" : "text-[15px] font-semibold text-neutral-900 dark:text-neutral-100 mt-2.5 mb-1 tracking-tight"}>
                 <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser, dense) }} />
               </h3>
             );
           } else {
             elements.push(
-              <h4 key={`h4-${i}`} className={dense ? "text-[10.5px] font-medium text-neutral-700 dark:text-neutral-300 mt-1 mb-0.5 tracking-tight" : "text-[13px] font-semibold text-neutral-800 dark:text-neutral-200 mt-2 mb-0.5 tracking-tight"}>
+              <h4 key={`h4-${i}`} className={dense ? "text-[11.5px] font-medium text-neutral-700 dark:text-neutral-300 mt-1 mb-0.5 tracking-tight" : "text-[14.5px] font-semibold text-neutral-800 dark:text-neutral-200 mt-2 mb-0.5 tracking-tight"}>
                 <span dangerouslySetInnerHTML={{ __html: formatInline(textContent, triggerOpenBrowser, dense) }} />
               </h4>
             );
@@ -385,7 +385,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
 
         if (isOrdered) {
           elements.push(
-            <ol key={`ol-${i}`} className={dense ? "my-1 space-y-0.5 list-decimal pl-4 text-[11px] leading-snug text-neutral-600 dark:text-neutral-400" : "my-2 space-y-1.5 list-decimal pl-5 text-[13.5px] leading-relaxed text-neutral-800 dark:text-neutral-200"}>
+            <ol key={`ol-${i}`} className={dense ? "my-1 space-y-0.5 list-decimal pl-4 text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400" : "my-2 space-y-1.5 list-decimal pl-5 text-[15px] leading-relaxed text-neutral-800 dark:text-neutral-200"}>
               {listItems.map((item, idx) => (
                 <li key={idx} dangerouslySetInnerHTML={{ __html: formatInline(item.text, triggerOpenBrowser, dense) }} />
               ))}
@@ -393,7 +393,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
           );
         } else {
           elements.push(
-            <ul key={`ul-${i}`} className={dense ? "my-1 space-y-0.5 list-disc pl-4 text-[11px] leading-snug text-neutral-600 dark:text-neutral-400" : "my-2 space-y-1.5 list-disc pl-5 text-[13.5px] leading-relaxed text-neutral-800 dark:text-neutral-200"}>
+            <ul key={`ul-${i}`} className={dense ? "my-1 space-y-0.5 list-disc pl-4 text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400" : "my-2 space-y-1.5 list-disc pl-5 text-[15px] leading-relaxed text-neutral-800 dark:text-neutral-200"}>
               {listItems.map((item, idx) => (
                 <li key={idx} className={item.isTask ? (dense ? 'list-none -ml-3 flex items-start gap-1.5 my-0.5' : 'list-none -ml-4 flex items-start gap-2.5 my-1') : ''}>
                   {item.isTask && (
@@ -442,8 +442,8 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
             key={`p-${i}`}
             className={
               dense
-                ? "text-[11px] leading-snug text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
-                : "text-[13.5px] leading-[1.6] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
+                ? "text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
+                : "text-[15px] leading-[1.7] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
             }
             dangerouslySetInnerHTML={{ __html: formatInline(paragraphLines.join(preserveLineBreaks ? '\n' : ' '), triggerOpenBrowser, dense) }}
           />
@@ -456,8 +456,8 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
             key={`raw-${i}`}
             className={
               dense
-                ? "text-[11px] leading-snug text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
-                : "text-[13.5px] leading-[1.6] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
+                ? "text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400 my-1 select-text font-normal"
+                : "text-[15px] leading-[1.7] text-neutral-800 dark:text-neutral-200 my-2 select-text font-normal"
             }
           >
             {line}
@@ -561,6 +561,10 @@ function CodeBlock({
     if (onOpenBrowser) {
       const dataUri = `data:text/html;charset=utf-8,${encodeURIComponent(code)}`;
       onOpenBrowser(dataUri);
+    } else {
+      // The Browser panel rejects the data: scheme, but it renders raw HTML
+      // in a sandboxed srcdoc iframe. Send the document, not a URL.
+      window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { html: code } }));
     }
   };
 
@@ -615,7 +619,7 @@ function CodeBlock({
         </div>
       </div>
       <div className="bg-white">
-        <pre className={`${dense ? 'p-2.5 text-[11px] leading-snug' : 'p-3.5 text-[12.5px] leading-relaxed'} font-mono overflow-x-auto scrollbar-thin max-w-full whitespace-pre-wrap break-words`}>
+        <pre className={`${dense ? 'p-2.5 text-[12px] leading-relaxed' : 'p-3.5 text-[13px] leading-relaxed'} font-mono overflow-x-auto scrollbar-thin max-w-full whitespace-pre-wrap break-words`}>
           <code>
             {tokens.map((line, i) => (
               <div key={i} className="flex gap-3">
@@ -666,11 +670,11 @@ function TableBlock({ lines, dense = false, onOpenBrowser }: { lines: string[]; 
 
   return (
     <div className={`${dense ? "my-1.5" : "my-3"} overflow-x-auto max-w-full min-w-0 rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-2xs`}>
-      <table className="w-full text-xs text-left border-collapse font-sans">
+      <table className="w-full text-[13.5px] text-left border-collapse font-sans">
         <thead className="bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-semibold border-b border-neutral-200 dark:border-neutral-700">
           <tr>
             {headerCells.map((h, idx) => (
-              <th key={idx} className={`${dense ? "px-2.5 py-1.5 text-[11px]" : "px-3.5 py-2 text-xs"} border-r last:border-r-0 border-neutral-200 dark:border-neutral-700`}>
+              <th key={idx} className={`${dense ? "px-2.5 py-1.5 text-[12px]" : "px-3.5 py-2 text-[13px]"} border-r last:border-r-0 border-neutral-200 dark:border-neutral-700`}>
                 <span dangerouslySetInnerHTML={{ __html: formatInline(h, onOpenBrowser) }} />
               </th>
             ))}
@@ -680,7 +684,7 @@ function TableBlock({ lines, dense = false, onOpenBrowser }: { lines: string[]; 
           {bodyRows.map((row, rIdx) => (
             <tr key={rIdx} className="even:bg-neutral-50/60 dark:even:bg-neutral-900/40 hover:bg-neutral-100/40 transition-colors">
               {row.map((cell, cIdx) => (
-                <td key={cIdx} className={`${dense ? "px-2.5 py-1.5 text-[11px] leading-snug" : "px-3.5 py-1.5 text-xs"} border-r last:border-r-0 border-neutral-200/60 dark:border-neutral-700`}>
+                <td key={cIdx} className={`${dense ? "px-2.5 py-1.5 text-[12px] leading-relaxed" : "px-3.5 py-1.5 text-[13px]"} border-r last:border-r-0 border-neutral-200/60 dark:border-neutral-700`}>
                   <span dangerouslySetInnerHTML={{ __html: formatInline(cell, onOpenBrowser) }} />
                 </td>
               ))}
@@ -758,7 +762,7 @@ function AlertBlock({
         <span>{conf.title}</span>
       </div>
       <div
-        className={`${dense ? 'text-[11px] leading-snug' : 'text-[13px] leading-relaxed'} ${conf.textColor}`}
+        className={`${dense ? 'text-[12px] leading-relaxed' : 'text-[14px] leading-relaxed'} ${conf.textColor}`}
         dangerouslySetInnerHTML={{ __html: formatInline(content, onOpenBrowser, dense) }}
       />
     </div>

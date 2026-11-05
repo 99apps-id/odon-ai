@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Circle, Loader2, X } from 'lucide-react';
 import type { TodoItem } from '../api';
 
@@ -20,13 +20,26 @@ const STATUS_LABEL: Record<TodoItem['status'], string> = {
  */
 export function TodoPanel({ items, live = false, onHide }: TodoPanelProps) {
   const [open, setOpen] = useState(true);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  const done = items?.filter((i) => i.status === 'completed').length ?? 0;
+  const total = items?.length ?? 0;
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  const active = items?.find((i) => i.status === 'in_progress');
+
+  // Anchor the running task at the top of the list. Completed steps stay above
+  // it — still reachable by scrolling — so the active row gets the visible
+  // space instead of the panel growing with the whole history.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !open) return;
+    const target = list.querySelector<HTMLElement>('[data-current="true"]');
+    if (!target) return;
+    list.scrollTop +=
+      target.getBoundingClientRect().top - list.getBoundingClientRect().top;
+  }, [items, open]);
 
   if (!items || items.length === 0) return null;
-
-  const done = items.filter((i) => i.status === 'completed').length;
-  const total = items.length;
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  const active = items.find((i) => i.status === 'in_progress');
 
   return (
     <div className="my-2 max-w-full min-w-0">
@@ -81,13 +94,18 @@ export function TodoPanel({ items, live = false, onHide }: TodoPanelProps) {
         </div>
 
         {open && (
-          <ul className="py-1">
+          <ul ref={listRef} className="max-h-28 overflow-y-auto scrollbar-thin py-1">
             {items.map((item) => {
               const isDone = item.status === 'completed';
               const isActive = item.status === 'in_progress';
+              // With no in-progress item, the first pending one is the next
+              // task worth keeping in view.
+              const isCurrent =
+                isActive || (!active && item.status === 'pending');
               return (
                 <li
                   key={item.id}
+                  data-current={isCurrent || undefined}
                   className="flex items-start gap-2 px-3 py-1.5 text-[11.5px] leading-snug"
                 >
                   <span className="mt-[2px] shrink-0">

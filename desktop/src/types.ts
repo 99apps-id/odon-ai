@@ -71,8 +71,57 @@ export interface Session {
   status: 'active' | 'archived' | 'completed';
   active_model: string;
   workspace_root?: string;
+  /** Persisted agent this conversation belongs to, when opened from a desk. */
+  agent_id?: string | null;
+  /** Present on delegated child sessions; written by the agent runtime. */
+  metadata?: {
+    parent_session?: string;
+    parent_model?: string;
+    child_index?: number;
+    child_count?: number;
+  } | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AgentSchedule {
+  start: string;
+  end: string;
+  /** ISO weekday numbers, 1 = Monday … 7 = Sunday. Empty means every day. */
+  days: number[];
+  timezone?: string | null;
+}
+
+/** A persisted, named agent with its own specialization and working hours. */
+export interface Agent {
+  id: string;
+  name: string;
+  role: string;
+  color: string;
+  system_prompt: string;
+  model: string;
+  workspace_root?: string | null;
+  skills: string[];
+  enabled: boolean;
+  sort_order: number;
+  schedule: AgentSchedule;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Per-agent Telegram connector state. The raw token is never returned. */
+export interface AgentTelegramStatus {
+  configured: boolean;
+  online: boolean;
+  token_masked: string;
+  allowed_users: string[];
+}
+
+/** Per-agent inbound webhook (N8N / Zapier / custom service). */
+export interface AgentWebhookStatus {
+  configured: boolean;
+  url: string;
+  method: string;
 }
 
 export interface ToolSchema {

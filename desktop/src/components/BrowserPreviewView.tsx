@@ -32,6 +32,10 @@ export interface BrowserSeed {
   markdown?: string;
   /** Display name for an artifact-backed page (its title or file path). */
   title?: string;
+  /** Live Chromium session the agent is driving: attach the live viewport to it. */
+  sessionId?: string;
+  /** Wait for the agent to register its session, then attach to it. */
+  live?: boolean;
 }
 
 interface BrowserPreviewViewProps {
@@ -69,15 +73,34 @@ export function BrowserPreviewView({
   const [liveError, setLiveError] = useState<string>('');
   const [liveBusy, setLiveBusy] = useState<boolean>(false);
   const liveTimerRef = useRef<number | undefined>(undefined);
+  // A refresh takes one screenshot plus one page-state round-trip. Without this
+  // guard a slow CDP response lets ticks pile up and the frames arrive out of order.
+  const liveInFlightRef = useRef<boolean>(false);
+  // An action that finished while a refresh was running still needs its frame.
+  const liveRefreshQueuedRef = useRef<boolean>(false);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Listen for global custom events to open URL, HTML, or Markdown in the panel.
+  // Listen for global custom events to open URL, HTML, Markdown, or the live
+  // session the agent is driving.
   useEffect(() => {
     const handleOpenBrowser = (e: Event) => {
       const customEvent = e as CustomEvent<BrowserSeed>;
       const detail = customEvent.detail;
       if (!detail) return;
+      // A live session seed must not be proxied through /api/browser/read: the
+      // agent's Chromium tab is the source of truth, and only it shows form
+      // fills, clicks, and navigation the agent performed.
+      if (detail.sessionId) {
+        setLiveSessionId(detail.sessionId);
+        if (detail.url) setLiveUrl(detail.url);
+        setMode('live');
+        return;
+      }
+      if (detail.live) {
+        setMode('live');
+        return;
+      }
       if (detail.markdown) {
         setMarkdownContent(detail.markdown);
         setMode('markdown');
@@ -101,6 +124,16 @@ export function BrowserPreviewView({
   useEffect(() => {
     if (!seed) return;
     if (seed.title) setSeedTitle(seed.title);
+    if (seed.sessionId) {
+      setLiveSessionId(seed.sessionId);
+      if (seed.url) setLiveUrl(seed.url);
+      setMode('live');
+      return;
+    }
+    if (seed.live) {
+      setMode('live');
+      return;
+    }
     if (seed.markdown) {
       setMarkdownContent(seed.markdown);
       setMode('markdown');
@@ -235,6 +268,11 @@ export function BrowserPreviewView({
   };
 
   const refreshLive = async (id: string) => {
+    if (liveInFlightRef.current) {
+      liveRefreshQueuedRef.current = true;
+      return;
+    }
+    liveInFlightRef.current = true;
     try {
       const png = await api.browserScreenshot(id);
       if (png) setLivePng(png);
@@ -247,6 +285,12 @@ export function BrowserPreviewView({
       setLiveTitle(state?.title || '');
     } catch (e: any) {
       setLiveError(e?.message || 'Live view unavailable');
+    } finally {
+      liveInFlightRef.current = false;
+      if (liveRefreshQueuedRef.current) {
+        liveRefreshQueuedRef.current = false;
+        void refreshLive(id);
+      }
     }
   };
 
@@ -269,6 +313,56 @@ export function BrowserPreviewView({
     }
   };
 
+  // True while the agent is starting a session and the panel is waiting to
+  // attach to it. Creating a browser of our own in that window would leave the
+  // panel showing a second, unrelated page.
+  const waitingForAgentSession = mode === 'live' && !liveSessionId && Boolean(seed?.live);
+
+  useEffect(() => {
+    if (mode !== 'live' || !waitingForAgentSession) return;
+    let cancelled = false;
+    const attach = async () => {
+      try {
+        const list = await api.browserSessions();
+        const live = (list.sessions || []).find((s) => s.live !== false);
+        if (!cancelled && live?.session_id) {
+          setLiveError('');
+          setLiveSessionId(live.session_id);
+        }
+      } catch {
+        // The daemon may still be spawning Chromium; the next tick retries.
+      }
+    };
+    void attach();
+    const timer = window.setInterval(attach, 700);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [mode, waitingForAgentSession]);
+
+  useEffect(() => {
+    const handleRefresh = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId?: string }>).detail;
+      const id = detail?.sessionId || liveSessionId;
+      if (id) void refreshLive(id);
+    };
+    const handleDetach = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId?: string }>).detail;
+      if (detail?.sessionId && liveSessionId && detail.sessionId !== liveSessionId) return;
+      setLiveSessionId(null);
+      setLivePng('');
+      setLiveTitle('');
+      setLiveError('');
+    };
+    window.addEventListener('odon:browser-refresh', handleRefresh);
+    window.addEventListener('odon:browser-detach', handleDetach);
+    return () => {
+      window.removeEventListener('odon:browser-refresh', handleRefresh);
+      window.removeEventListener('odon:browser-detach', handleDetach);
+    };
+  }, [liveSessionId]);
+
   useEffect(() => {
     if (liveTimerRef.current !== undefined) {
       window.clearInterval(liveTimerRef.current);
@@ -276,28 +370,37 @@ export function BrowserPreviewView({
     }
     if (mode !== 'live') return;
     if (!liveSessionId) {
-      void ensureLive();
+      if (!waitingForAgentSession) void ensureLive();
       return;
     }
     void refreshLive(liveSessionId);
     liveTimerRef.current = window.setInterval(() => {
       void refreshLive(liveSessionId);
-    }, 900);
+    }, 700);
     return () => {
       if (liveTimerRef.current !== undefined) {
         window.clearInterval(liveTimerRef.current);
         liveTimerRef.current = undefined;
       }
     };
-  }, [mode, liveSessionId]);
+  }, [mode, liveSessionId, waitingForAgentSession]);
 
   const handleLiveClick = async (e: React.MouseEvent<HTMLImageElement>) => {
     if (!liveSessionId) return;
     const img = e.currentTarget;
     const rect = img.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    const x = ((e.clientX - rect.left) / rect.width) * (img.naturalWidth || rect.width);
-    const y = ((e.clientY - rect.top) / rect.height) * (img.naturalHeight || rect.height);
+    const natW = img.naturalWidth || 0;
+    const natH = img.naturalHeight || 0;
+    if (rect.width === 0 || rect.height === 0 || natW === 0 || natH === 0) return;
+    // The frame is drawn with `object-contain`, so the bitmap is letterboxed
+    // inside the element. Mapping against the element box alone sends the agent's
+    // clicks to the wrong pixel whenever the aspect ratios differ.
+    const scale = Math.min(rect.width / natW, rect.height / natH);
+    const offsetX = rect.left + (rect.width - natW * scale) / 2;
+    const offsetY = rect.top + (rect.height - natH * scale) / 2;
+    const x = (e.clientX - offsetX) / scale;
+    const y = (e.clientY - offsetY) / scale;
+    if (x < 0 || y < 0 || x > natW || y > natH) return;
     try {
       await api.browserAct(liveSessionId, { action: 'click', x, y });
       await refreshLive(liveSessionId);
@@ -559,7 +662,9 @@ export function BrowserPreviewView({
                       ? liveError
                       : liveBusy
                         ? 'Starting a Chromium session…'
-                        : 'No live session. Press Attach to open one the agent can drive too.'}
+                        : waitingForAgentSession
+                          ? 'Waiting for the agent to start its browser session…'
+                          : 'No live session. Press Attach to open one the agent can drive too.'}
                   </span>
                 </div>
               )}

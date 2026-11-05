@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Copy, Check, FileCode, Play } from 'lucide-react';
+import { Copy, Check, FileCode, Play, Save } from 'lucide-react';
 import { DiffView } from './DiffView';
-import { TOKEN_CLASS, languageFamily, tokenizeLine } from '../lib/highlight';
+import { CodeEditor } from './CodeEditor';
+import { api } from '../api';
 
 interface CodeFile {
   name: string;
@@ -23,7 +24,15 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
   const fileList = files && files.length > 0 ? files : [];
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  // Edited buffers survive tab switches and are written back to the workspace
+  // on save; until then the artifact's own content stays the baseline.
+  const [buffers, setBuffers] = useState<Record<string, string>>({});
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveError, setSaveError] = useState('');
   const currentFile = fileList[activeFileIndex] || fileList[0];
+  const currentContent = currentFile
+    ? buffers[currentFile.path] ?? currentFile.content
+    : '';
 
   if (diff && diff.trim()) {
     return (
@@ -51,12 +60,27 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
 
   const handleCopy = () => {
     if (!currentFile) return;
-    navigator.clipboard.writeText(currentFile.content);
+    navigator.clipboard.writeText(currentContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const lines = currentFile ? currentFile.content.split('\n') : [];
+  const handleSave = async () => {
+    if (!currentFile) return;
+    setSaveState('saving');
+    setSaveError('');
+    try {
+      const result = await api.fsWrite(currentFile.path, currentContent);
+      if (!result.success) {
+        throw new Error(result.error || 'The daemon did not confirm the write.');
+      }
+      setSaveState('saved');
+      setTimeout(() => setSaveState('idle'), 2000);
+    } catch (error: any) {
+      setSaveState('error');
+      setSaveError(error?.message || 'Failed to save file');
+    }
+  };
 
   if (!currentFile) {
     return (
@@ -70,6 +94,8 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
     );
   }
 
+  const language = currentFile.path.split('.').pop() || currentFile.language;
+
   return (
     <div className="h-full flex flex-col bg-slate-50/70 text-slate-800 rounded-xl overflow-hidden border border-slate-200 font-mono text-[13px] select-text">
       {/* File Tabs & Actions */}
@@ -77,6 +103,7 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
         <div className="flex items-center overflow-x-auto scrollbar-none">
           {fileList.map((file, idx) => {
             const isActive = idx === activeFileIndex;
+            const isDirty = (buffers[file.path] ?? file.content) !== file.content;
             return (
               <button
                 key={file.path}
@@ -89,6 +116,7 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
               >
                 <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
                 {file.name}
+                {isDirty && <span className="text-amber-500" title="Unsaved changes">●</span>}
               </button>
             );
           })}
@@ -117,8 +145,20 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
           )}
 
           <button
+            onClick={handleSave}
+            disabled={saveState === 'saving'}
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-sans font-medium transition-colors cursor-pointer"
+            title="Save file to the workspace (Ctrl+S)"
+          >
+            {saveState === 'saved' ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+            <span>
+              {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save'}
+            </span>
+          </button>
+
+          <button
             onClick={handleCopy}
-            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-slate-100 text-slate-600 text-xs font-sans transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 rounded hover:bg-slate-100 text-slate-600 text-xs font-sans transition-colors cursor-pointer"
             title="Copy code"
           >
             {copied ? (
@@ -136,46 +176,32 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
         </div>
       </div>
 
-      {/* Code Area */}
-      <div className="flex-1 overflow-auto bg-slate-50/50 p-3 leading-relaxed">
-        <table className="w-full border-collapse">
-          <tbody>
-            {lines.map((line, i) => (
-              <tr key={i} className="hover:bg-blue-50/40">
-                <td className="w-9 text-right pr-4 select-none text-slate-400 text-xs align-top">
-                  {i + 1}
-                </td>
-                <td className="whitespace-pre overflow-x-visible align-top font-mono">
-                  {renderSyntaxLine(line, currentFile.language)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Editable, syntax-highlighted code area */}
+      <div className="flex-1 min-h-0">
+        <CodeEditor
+          value={currentContent}
+          onChange={(next) =>
+            setBuffers((previous) => ({ ...previous, [currentFile.path]: next }))
+          }
+          language={language}
+          onSave={handleSave}
+        />
       </div>
 
       {/* Editor Footer */}
       <div className="h-6 bg-white border-t border-slate-200 px-3 flex items-center justify-between text-[11px] text-slate-500 shrink-0 font-sans">
         <span className="truncate">{currentFile.path}</span>
         <div className="flex items-center gap-3">
-          <span className="uppercase">{currentFile.language}</span>
-          <span>UTF-8</span>
+          <span className="uppercase">{language}</span>
+          {saveState === 'error' ? (
+            <span className="text-red-600 truncate max-w-[260px]" title={saveError}>
+              {saveError}
+            </span>
+          ) : (
+            <span>UTF-8</span>
+          )}
         </div>
       </div>
     </div>
-  );
-}
-
-function renderSyntaxLine(line: string, language: string) {
-  if (!line) return null;
-  const tokens = tokenizeLine(line, languageFamily(language));
-  return (
-    <span>
-      {tokens.map((token, idx) => (
-        <span key={idx} className={TOKEN_CLASS[token.kind]}>
-          {token.text}
-        </span>
-      ))}
-    </span>
   );
 }

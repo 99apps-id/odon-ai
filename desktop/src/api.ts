@@ -1,4 +1,7 @@
 import {
+  Agent,
+  AgentTelegramStatus,
+  AgentWebhookStatus,
   ProviderItem,
   Session,
   Message,
@@ -154,6 +157,8 @@ export interface SkillItemInfo {
   description: string;
   path: string;
   content: string;
+  /** "user" = markdown on disk, "builtin" = compiled into ODON. */
+  source?: 'user' | 'builtin';
 }
 
 export interface GitHubUser {
@@ -467,8 +472,9 @@ export const api = {
     return res.ok;
   },
 
-  async listSessions(): Promise<Session[]> {
-    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions`);
+  async listSessions(options?: { includeSubagents?: boolean }): Promise<Session[]> {
+    const query = options?.includeSubagents ? '?include_subagents=true' : '';
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions${query}`);
     if (!res.ok) throw new Error(`Failed to list sessions: ${res.statusText}`);
     const rows = await res.json();
     // Normalise at the boundary: a legacy row without active_model used to
@@ -492,17 +498,165 @@ export const api = {
     mode: string = 'general',
     model: string = 'odon-auto',
     workspaceRoot?: string,
+    agentId?: string,
   ): Promise<Session> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, mode, model, workspace_root: workspaceRoot }),
+      body: JSON.stringify({
+        title,
+        mode,
+        model,
+        workspace_root: workspaceRoot,
+        agent_id: agentId,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Failed to create session: ${res.statusText}`);
     }
     return res.json();
+  },
+
+  // ── Persisted agent roster (the office desks) ──────────────────────────
+  async listAgents(): Promise<Agent[]> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/agents`);
+    if (!res.ok) throw new Error(`Failed to list agents: ${res.statusText}`);
+    const rows = await res.json();
+    return Array.isArray(rows) ? rows : [];
+  },
+
+  async saveAgent(input: Partial<Agent> & { id?: string }): Promise<Agent> {
+    const res = await this.fetchApi(`${this.getBaseUrl()}/api/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to save agent: ${res.statusText}`);
+    return data;
+  },
+
+  async updateAgent(id: string, input: Partial<Agent>): Promise<Agent> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to update agent: ${res.statusText}`);
+    return data;
+  },
+
+  async deleteAgent(id: string): Promise<boolean> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    );
+    return res.ok;
+  },
+
+  async listAgentSessions(agentId: string): Promise<Session[]> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/sessions`,
+    );
+    if (!res.ok) return [];
+    const rows = await res.json();
+    return Array.isArray(rows) ? rows : [];
+  },
+
+  async getAgentTelegram(agentId: string): Promise<AgentTelegramStatus> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/telegram`,
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to load Telegram status: ${res.statusText}`);
+    return data;
+  },
+
+  async saveAgentTelegram(
+    agentId: string,
+    token: string,
+    allowedUsers: string[],
+  ): Promise<AgentTelegramStatus> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/telegram`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, allowed_users: allowedUsers }),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to save Telegram bot: ${res.statusText}`);
+    return data;
+  },
+
+  async deleteAgentTelegram(agentId: string): Promise<void> {
+    await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/telegram`,
+      { method: 'DELETE' },
+    );
+  },
+
+  async getAgentWebhook(agentId: string): Promise<AgentWebhookStatus> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/webhook`,
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to load webhook: ${res.statusText}`);
+    return data;
+  },
+
+  async saveAgentWebhook(agentId: string): Promise<AgentWebhookStatus> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/webhook`,
+      { method: 'PUT' },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to create webhook: ${res.statusText}`);
+    return data;
+  },
+
+  async deleteAgentWebhook(agentId: string): Promise<void> {
+    await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/webhook`,
+      { method: 'DELETE' },
+    );
+  },
+
+  async createAgentSession(agentId: string, title?: string): Promise<Session> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/sessions`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to create agent session: ${res.statusText}`);
+    return data;
+  },
+
+  async updateSession(
+    id: string,
+    input: { title?: string; model?: string; agent_id?: string | null },
+  ): Promise<Session> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/sessions/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to update session: ${res.statusText}`);
+    return data;
   },
 
   async getWorkspaces(): Promise<WorkspaceInfo> {
@@ -1300,6 +1454,18 @@ export const api = {
 
   createTerminalWs(): WebSocket {
     return new WebSocket(this.getTerminalWsUrl());
+  },
+
+  /**
+   * Subscribe without a session filter: the Agents Office needs the events of
+   * every session and subagent, not just the one on screen.
+   */
+  subscribeAllEvents(
+    onEvent: (event: AgentEvent) => void,
+    onReconnect?: () => void,
+    onDisconnect?: () => void,
+  ): () => void {
+    return this.subscribeEvents(onEvent, onReconnect, onDisconnect, null);
   },
 
   subscribeEvents(

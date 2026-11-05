@@ -1,5 +1,5 @@
 import { BrainCircuit, ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MarkdownView } from './MarkdownView';
 
 interface ReasoningBlockProps {
@@ -9,6 +9,17 @@ interface ReasoningBlockProps {
 
 export function ReasoningBlock({ content, live = false }: ReasoningBlockProps) {
   const [open, setOpen] = useState(live);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Follow the newest reasoning token, but stop the moment the operator
+  // scrolls up: yanking the viewport back down while they read is worse than
+  // a stale frame.
+  const stickToBottomRef = useRef(true);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || !open || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [content, open]);
 
   return (
     <section
@@ -33,7 +44,7 @@ export function ReasoningBlock({ content, live = false }: ReasoningBlockProps) {
         <span className={`odon-reasoning-mark ${live ? 'is-live' : ''}`}>
           <BrainCircuit className="h-3.5 w-3.5" />
         </span>
-        <span className="text-[11.5px] font-semibold text-neutral-700">
+        <span className="text-[12.5px] font-semibold text-neutral-700">
           {live ? 'ODON is reasoning…' : 'Reasoning & thought process'}
         </span>
         {live && (
@@ -43,7 +54,15 @@ export function ReasoningBlock({ content, live = false }: ReasoningBlockProps) {
         )}
       </button>
       {open && (
-        <div className="max-h-60 overflow-y-auto bg-white/45 px-3 py-2 text-[11px] leading-snug text-neutral-600 select-text break-words">
+        <div
+          ref={bodyRef}
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            stickToBottomRef.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+          }}
+          className="max-h-80 overflow-y-auto bg-white/45 px-3 py-2 text-[12.5px] leading-relaxed text-neutral-600 select-text break-words"
+        >
           {content ? (
             <MarkdownView content={content} dense preserveLineBreaks />
           ) : (

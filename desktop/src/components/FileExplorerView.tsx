@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Folder,
   FolderOpen,
@@ -22,26 +22,75 @@ import {
   FilePlus,
   FolderPlus,
   ArrowUp,
+  ArrowLeft,
+  ArrowRight,
+  AlertCircle,
 } from 'lucide-react';
 import { api, FsEntryItem, FsReadResult } from '../api';
+import { CodeEditor } from './CodeEditor';
 
 interface FileExplorerViewProps {
+  /** Workspace selected in the composer; the explorer starts under it. */
+  workspaceRoot?: string;
   onAskAiAboutFile?: (path: string, content: string) => void;
   onOpenInTerminal?: (path: string) => void;
 }
 
+const joinPath = (base: string, child: string): string => {
+  if (!base || base === '.') return child;
+  const separator = base.includes('\\') ? '\\' : '/';
+  return `${base.replace(/[\\/]+$/, '')}${separator}${child}`;
+};
+
+const parentPath = (path: string): string | null => {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  if (!trimmed || trimmed === '.') return null;
+  const index = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  if (index < 0) return null;
+  if (index === 0) return trimmed.slice(0, 1);
+  const parent = trimmed.slice(0, index);
+  // `C:` is a drive-relative spelling, not a directory; keep the root separator.
+  if (/^[a-zA-Z]:$/.test(parent)) return `${parent}\\`;
+  return parent;
+};
+
+const pathKey = (path: string): string =>
+  path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+const samePath = (a: string, b: string): boolean => pathKey(a) === pathKey(b);
+
+const isInside = (root: string, path: string): boolean => {
+  const rootKey = pathKey(root);
+  return pathKey(path) === rootKey || pathKey(path).startsWith(`${rootKey}/`);
+};
+
+const relativeTo = (root: string, path: string): string => {
+  const trimmedRoot = root.replace(/[\\/]+$/, '');
+  if (samePath(trimmedRoot, path)) return '.';
+  if (pathKey(path).startsWith(`${pathKey(trimmedRoot)}/`)) {
+    return path.slice(trimmedRoot.length + 1);
+  }
+  return path;
+};
+
 export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
+  workspaceRoot,
   onAskAiAboutFile,
   onOpenInTerminal,
 }) => {
-  const [currentPath, setCurrentPath] = useState<string>('.');
+  const rootPath = workspaceRoot && workspaceRoot.trim() ? workspaceRoot : '.';
+  const [currentPath, setCurrentPath] = useState<string>(rootPath);
+  const [history, setHistory] = useState<string[]>([rootPath]);
+  const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [entries, setEntries] = useState<FsEntryItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  
+
   // Selected file and its content
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileData, setFileData] = useState<FsReadResult | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [editedContent, setEditedContent] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
@@ -50,48 +99,105 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
   // Modal for new file / new folder
   const [createModal, setCreateModal] = useState<'file' | 'folder' | null>(null);
   const [newItemName, setNewItemName] = useState<string>('');
+  // A slow listing for a previous workspace must not overwrite the folder the
+  // operator is now looking at.
+  const loadRequestRef = useRef(0);
 
   const loadDirectory = async (path: string) => {
+    const requestId = ++loadRequestRef.current;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const res = await api.fsList(path);
+      if (requestId !== loadRequestRef.current) return;
+      if (res.error) {
+        setEntries([]);
+        setLoadError(res.error);
+        return;
+      }
       setEntries(res.entries || []);
       setCurrentPath(path);
-    } catch (err) {
-      console.error('Failed to load directory:', err);
+    } catch (err: any) {
+      if (requestId !== loadRequestRef.current) return;
+      setEntries([]);
+      setLoadError(err?.message || 'Failed to load directory');
     } finally {
-      setIsLoading(false);
+      if (requestId === loadRequestRef.current) setIsLoading(false);
     }
   };
 
+  // Follow the workspace selected in the composer. Switching workspaces starts
+  // a new history: back/forward must not walk into a folder that is no longer
+  // allowed.
   useEffect(() => {
-    loadDirectory('.');
-  }, []);
+    setHistory([rootPath]);
+    setHistoryIndex(0);
+    setSelectedFile(null);
+    setFileData(null);
+    setFileError(null);
+    setEditedContent('');
+    setSearchQuery('');
+    void loadDirectory(rootPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath]);
 
-  const handleOpenFile = async (entry: FsEntryItem) => {
-    if (entry.is_dir) {
-      loadDirectory(entry.path);
-    } else {
-      setSelectedFile(entry.path);
-      try {
-        const res = await api.fsRead(entry.path);
-        setFileData(res);
-        setEditedContent(res.content || '');
-      } catch (err) {
-        console.error('Failed to read file:', err);
+  const navigateTo = (path: string) => {
+    if (!samePath(path, currentPath)) {
+      const nextHistory = history.slice(0, historyIndex + 1);
+      if (!nextHistory.length || !samePath(nextHistory[nextHistory.length - 1], path)) {
+        nextHistory.push(path);
+        setHistory(nextHistory);
+        setHistoryIndex(nextHistory.length - 1);
       }
     }
+    void loadDirectory(path);
+  };
+
+  const canGoBack = historyIndex > 0;
+  const canGoForward = historyIndex < history.length - 1;
+  const parent = parentPath(currentPath);
+  const canGoUp = !!parent && (rootPath === '.' || isInside(rootPath, parent));
+
+  const goBack = () => {
+    if (!canGoBack) return;
+    const nextIndex = historyIndex - 1;
+    setHistoryIndex(nextIndex);
+    void loadDirectory(history[nextIndex]);
+  };
+
+  const goForward = () => {
+    if (!canGoForward) return;
+    const nextIndex = historyIndex + 1;
+    setHistoryIndex(nextIndex);
+    void loadDirectory(history[nextIndex]);
   };
 
   const handleGoUp = () => {
-    if (currentPath === '.' || !currentPath.includes('/')) {
-      loadDirectory('.');
+    if (!canGoUp || !parent) return;
+    navigateTo(parent);
+  };
+
+  const handleOpenFile = async (entry: FsEntryItem) => {
+    const fullPath = joinPath(currentPath, entry.name);
+    if (entry.is_dir) {
+      navigateTo(fullPath);
       return;
     }
-    const parts = currentPath.split('/');
-    parts.pop();
-    const parent = parts.join('/') || '.';
-    loadDirectory(parent);
+    setSelectedFile(fullPath);
+    setFileError(null);
+    try {
+      const res = await api.fsRead(fullPath);
+      if (res.error) {
+        setFileData(null);
+        setFileError(res.error);
+        return;
+      }
+      setFileData(res);
+      setEditedContent(res.content || '');
+    } catch (err: any) {
+      setFileData(null);
+      setFileError(err?.message || 'Failed to read file');
+    }
   };
 
   const handleSaveFile = async () => {
@@ -100,11 +206,14 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
     try {
       const res = await api.fsWrite(selectedFile, editedContent);
       if (res.success) {
+        setFileError(null);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2000);
+      } else {
+        setFileError(res.error || 'Failed to save file');
       }
-    } catch (err) {
-      console.error('Failed to save file:', err);
+    } catch (err: any) {
+      setFileError(err?.message || 'Failed to save file');
     } finally {
       setIsSaving(false);
     }
@@ -113,21 +222,24 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
   const handleDeleteEntry = async (entry: FsEntryItem, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm(`Are you sure you want to delete ${entry.name}?`)) return;
+    const fullPath = joinPath(currentPath, entry.name);
     try {
-      await api.fsDelete(entry.path);
-      if (selectedFile === entry.path) {
+      await api.fsDelete(fullPath);
+      if (selectedFile && samePath(selectedFile, fullPath)) {
         setSelectedFile(null);
         setFileData(null);
+        setFileError(null);
       }
       loadDirectory(currentPath);
     } catch (err) {
       console.error('Failed to delete path:', err);
+      setLoadError('Failed to delete path');
     }
   };
 
   const handleCreateItem = async () => {
     if (!newItemName.trim() || !createModal) return;
-    const target = currentPath === '.' ? newItemName.trim() : `${currentPath}/${newItemName.trim()}`;
+    const target = joinPath(currentPath, newItemName.trim());
     try {
       if (createModal === 'file') {
         await api.fsWrite(target, '');
@@ -139,6 +251,7 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
       loadDirectory(currentPath);
     } catch (err) {
       console.error('Failed to create item:', err);
+      setLoadError('Failed to create item');
     }
   };
 
@@ -152,6 +265,16 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
   const filteredEntries = entries.filter((e) =>
     e.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const rootLabel =
+    rootPath === '.'
+      ? 'Workspace'
+      : rootPath.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean).pop() || rootPath;
+  const relativePath = relativeTo(rootPath, currentPath);
+  const breadcrumb = [
+    rootLabel,
+    ...(relativePath === '.' ? [] : relativePath.split(/[\\/]/).filter(Boolean)),
+  ].join(' / ');
 
   const getFileIcon = (entry: FsEntryItem) => {
     if (entry.is_dir) return <Folder className="w-4 h-4 text-blue-500 fill-blue-500/20" />;
@@ -219,41 +342,69 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
             />
           </div>
 
-          {/* Breadcrumb Path & Up Button */}
-          <div className="flex items-center justify-between text-[11px] text-neutral-500 font-mono pt-1">
-            <span className="truncate max-w-[200px]" title={currentPath}>
-              {currentPath}
+          {/* Navigation: back / forward / up + breadcrumb */}
+          <div className="flex items-center gap-1 min-w-0 pt-1">
+            <button
+              onClick={goBack}
+              disabled={!canGoBack}
+              className="p-1 rounded-md text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/70 disabled:opacity-30 disabled:cursor-default cursor-pointer"
+              title="Back"
+              aria-label="Back"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={goForward}
+              disabled={!canGoForward}
+              className="p-1 rounded-md text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/70 disabled:opacity-30 disabled:cursor-default cursor-pointer"
+              title="Forward"
+              aria-label="Forward"
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleGoUp}
+              disabled={!canGoUp}
+              className="p-1 rounded-md text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/70 disabled:opacity-30 disabled:cursor-default cursor-pointer"
+              title="Up one folder"
+              aria-label="Up one folder"
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+            </button>
+            <span
+              className="text-[11px] text-neutral-500 font-mono truncate min-w-0"
+              title={currentPath}
+            >
+              {breadcrumb}
             </span>
-            {currentPath !== '.' && (
-              <button
-                onClick={handleGoUp}
-                className="flex items-center gap-1 text-blue-600 hover:underline cursor-pointer"
-              >
-                <ArrowUp className="w-3 h-3" />
-                <span>Up</span>
-              </button>
-            )}
           </div>
         </div>
 
         {/* Entries List */}
         <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-          {filteredEntries.length === 0 ? (
+          {loadError ? (
+            <div className="p-4 text-xs text-red-600 flex items-start gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>{loadError}</span>
+            </div>
+          ) : filteredEntries.length === 0 ? (
             <div className="p-6 text-center text-xs text-neutral-400">
               {isLoading ? 'Loading...' : 'Empty folder'}
             </div>
           ) : (
             filteredEntries.map((entry) => {
-              const isSelected = selectedFile === entry.path;
+              const entryPath = joinPath(currentPath, entry.name);
+              const isSelected = !!selectedFile && samePath(selectedFile, entryPath);
               return (
                 <div
-                  key={entry.path}
+                  key={entry.name}
                   onClick={() => handleOpenFile(entry)}
                   className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
                     isSelected
                       ? 'bg-blue-50 text-blue-700 font-medium'
                       : 'text-neutral-700 hover:bg-neutral-200/50'
                   }`}
+                  title={entryPath}
                 >
                   <div className="flex items-center gap-2 truncate">
                     {getFileIcon(entry)}
@@ -340,16 +491,16 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
             </div>
 
             {/* File Content Area */}
-            <div className="flex-1 overflow-auto p-4 font-mono text-xs">
+            <div className="flex-1 min-h-0 overflow-hidden">
               {fileData.is_text ? (
-                <textarea
+                <CodeEditor
                   value={editedContent}
-                  onChange={(e) => setEditedContent(e.target.value)}
-                  className="w-full h-full resize-none outline-none font-mono text-xs text-neutral-800 leading-relaxed bg-transparent"
-                  spellCheck={false}
+                  onChange={setEditedContent}
+                  language={fileData.name.split('.').pop() || 'text'}
+                  onSave={handleSaveFile}
                 />
               ) : fileData.base64 ? (
-                <div className="flex flex-col items-center justify-center h-full p-8">
+                <div className="flex h-full flex-col items-center justify-center overflow-auto p-8">
                   <img
                     src={`data:image/png;base64,${fileData.base64}`}
                     alt={fileData.name}
@@ -362,6 +513,13 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
               )}
             </div>
           </>
+        ) : selectedFile && fileError ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-2 p-8 text-center">
+            <AlertCircle className="w-8 h-8 text-red-400" />
+            <div className="text-sm font-medium text-neutral-700">Cannot open file</div>
+            <div className="text-xs text-neutral-500 max-w-md break-words">{fileError}</div>
+            <div className="text-[11px] text-neutral-400 font-mono break-all">{selectedFile}</div>
+          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-neutral-400 p-8 text-center space-y-2">
             <FolderOpen className="w-12 h-12 text-neutral-300 stroke-[1.5]" />
@@ -386,7 +544,9 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
               </button>
             </div>
 
-            <div className="text-xs text-neutral-500 font-mono">Location: {currentPath}</div>
+            <div className="text-xs text-neutral-500 font-mono truncate" title={currentPath}>
+              Location: {currentPath}
+            </div>
 
             <input
               type="text"

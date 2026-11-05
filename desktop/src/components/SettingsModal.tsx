@@ -91,6 +91,11 @@ interface SettingsModalProps {
   onSelectProvider?: (providerId: string) => void;
   currentModel?: string;
   onSelectModel?: (modelId: string) => void;
+  /**
+   * Called after a provider/endpoint/key edit. The host re-reads the catalogue
+   * so the new provider appears in the model picker without a restart.
+   */
+  onProvidersChanged?: () => void;
   /** Called after a successful daemon restart so the host can re-probe. */
   onDaemonRestarted?: () => void;
 }
@@ -130,6 +135,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSelectProvider,
   currentModel,
   onSelectModel,
+  onProvidersChanged,
   onDaemonRestarted,
 }) => {
   type SettingsTab =
@@ -325,6 +331,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     ]);
     if (data?.providers?.length) setProviders(data.providers);
     setProviderConfigs(configs || []);
+    // The picker lives in the host component; tell it to re-read the catalogue
+    // so a saved endpoint is usable immediately, not after an app restart.
+    onProvidersChanged?.();
   };
 
   const slugifyProvider = (value: string) =>
@@ -586,7 +595,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             window.clearInterval(poll);
             setOauthAccounts((prev) => ({ ...prev, [providerId.toLowerCase()]: hit }));
             setOauthPrompt(null);
-            api.getModels().then((d) => d?.providers && setProviders(d.providers)).catch(() => { });
+            api.getModels().then((d) => {
+              if (d?.providers) setProviders(d.providers);
+              onProvidersChanged?.();
+            }).catch(() => { });
           }
         } catch {
           /* daemon briefly unreachable: keep polling */
@@ -609,6 +621,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         return copy;
       });
       setOauthPrompt(null);
+      onProvidersChanged?.();
     } catch (err: any) {
       setKeyError(err.message || 'Disconnect failed');
     } finally {
@@ -689,6 +702,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (data?.providers?.length) {
         setProviders(data.providers);
       }
+      onProvidersChanged?.();
     } catch (e: any) {
       setKeyError(`Failed to save key: ${e?.message || e}`);
       return;
@@ -711,6 +725,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (data?.providers?.length) {
         setProviders(data.providers);
       }
+      onProvidersChanged?.();
     } catch (e: any) {
       setKeyError(`Failed to clear key: ${e?.message || e}`);
       return;
@@ -1898,10 +1913,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-bold text-sm text-neutral-900 dark:text-white block">
-                  Autonomous Skills (.odon/skills)
+                  Autonomous Skills (built-in + .odon/skills)
                 </span>
                 <span className="text-xs text-neutral-500">
-                  Reusable markdown procedures and automated routines callable by the agent.
+                  Reusable markdown procedures callable by the agent. Built-ins ship with ODON;
+                  a user skill with the same name overrides one.
                 </span>
               </div>
               <button
@@ -1977,21 +1993,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <span className="text-[10px] font-mono bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-600">
                           {skill.name}.md
                         </span>
+                        {skill.source === 'builtin' && (
+                          <span className="text-[9px] font-semibold uppercase tracking-wide bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded">
+                            Built-in
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11.5px] text-neutral-500">{skill.description || 'Autonomous multi-step procedure.'}</p>
                     </div>
 
-                    <button
-                      onClick={async () => {
-                        if (!confirm(`Delete skill ${skill.name}?`)) return;
-                        await api.deleteSkill(skill.name);
-                        const res = await api.getSkills();
-                        setSkillsList(res.skills || []);
-                      }}
-                      className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {skill.source !== 'builtin' && (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Delete skill ${skill.name}?`)) return;
+                          await api.deleteSkill(skill.name);
+                          const res = await api.getSkills();
+                          setSkillsList(res.skills || []);
+                        }}
+                        className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

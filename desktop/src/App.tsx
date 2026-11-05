@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useState, useEffect, useMemo, useRef } from 'react';
 import {
   MessageSquare,
   Code2,
@@ -53,6 +53,7 @@ import {
   ChevronUp,
   CornerDownRight,
   History,
+  Building2,
 } from 'lucide-react';
 import { CatLogo } from './components/CatLogo';
 import { BootSplash } from './components/BootSplash';
@@ -95,6 +96,9 @@ import {
 } from './lib/desktop';
 import { Session, Message, MessageAttachment, Artifact, SystemStatus, ProviderItem, ModelItem, FALLBACK_PROVIDERS, getCustomOpenAiModels, saveCustomOpenAiModels } from './types';
 
+// Three.js lives in its own chunk; the chat bundle must not pay for it.
+const AgentsOfficeView = React.lazy(() => import('./components/AgentsOfficeView'));
+
 // The composer exposes exactly four modes. Values outside this set are never
 // valid UI state: older builds wrote starter-card modes ("create", "agents",
 // "automations") into localStorage, so anything unrecognised falls back to chat.
@@ -114,6 +118,8 @@ interface ToolCallSummary {
   name: string;
   /** Target URL when the tool was called with one, so the chip can open the real page. */
   url?: string;
+  /** Live browser session the tool drove, so the chip can attach the live viewport. */
+  sessionId?: string;
   /** One-line argument summary (command, path, query...), shown next to the name. */
   args?: string;
   /** Tool output, available only for calls recorded on this turn. */
@@ -149,11 +155,31 @@ function toolOutputText(output: unknown): string | undefined {
   }
 }
 
+/** Any tool that drives a browser, whether a live session or the legacy one-shot tools. */
+function isBrowserTool(name: string): boolean {
+  return String(name || '').toLowerCase().startsWith('browser_');
+}
+
+/** The live Chromium session a browser tool targets, from args or from its result. */
+function browserSessionIdOf(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = (value as Record<string, unknown>).session_id;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+function browserUrlOf(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = (value as Record<string, unknown>).url;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  /** Guidance injected into a running turn; rendered as a user block, never ODON prose. */
+  steer?: boolean;
   showAppCard?: boolean;
   thought?: string;
   toolCalls?: ToolCallSummary[];
@@ -233,6 +259,7 @@ function normalizeSessionHistory(history: Message[]): ChatMessage[] {
           id: call.call_id,
           name: call.tool_name || (call as { name?: string }).name || 'tool',
           url: typeof (call.arguments as any)?.url === 'string' ? (call.arguments as any).url : undefined,
+          sessionId: browserSessionIdOf(call.arguments) ?? browserSessionIdOf(call.output),
           args: summarizeToolArgs(call.arguments),
           output: toolOutputText(call.output),
           isError: call.is_error,
@@ -726,6 +753,9 @@ export default function App() {
   const [liveTerminal, setLiveTerminal] = useState<TerminalEntry[]>([]);
   const pendingTerminalRef = useRef<Map<string, TerminalEntry>>(new Map());
   const todoCallIdsRef = useRef<Set<string>>(new Set());
+  // Browser calls in flight: `tool_call_finished` carries no tool name, so the
+  // started event records which call drives which session.
+  const browserCallsRef = useRef<Map<string, { name: string; sessionId?: string }>>(new Map());
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [steerCards, setSteerCards] = useState<SteerCard[]>([]);
   const [subagentActivity, setSubagentActivity] = useState<
@@ -747,11 +777,25 @@ export default function App() {
     arguments: Record<string, unknown>;
   } | null>(null);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
   // Scroll container the find bar searches; held as a ref so opening the bar
   // never re-renders the transcript.
   const transcriptRef = useRef<HTMLDivElement>(null);
+  // Auto-scroll only while the operator is reading the newest output. Once they
+  // scroll up the stream keeps arriving without dragging the viewport back.
+  const stickToBottomRef = useRef(true);
   const currentSessionIdRef = useRef<string | null>(null);
+
+  const handleTranscriptScroll = () => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    stickToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+  };
+
+  const scrollTranscriptToBottom = () => {
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
 
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
@@ -900,6 +944,79 @@ export default function App() {
     }
   };
 
+  // A BYOK gateway can be "configured" (key saved) with no model ids yet.
+  // Nothing then populates the picker, so ask the endpoint once and re-read
+  // the catalogue. After the first success the ids are persisted, so the
+  // network round-trip does not repeat.
+  const loadCatalog = async () => {
+    let data = await api.getModels();
+    const starved = (data?.providers ?? []).filter(
+      (p: any) =>
+        p?.configured &&
+        p?.auth_type === 'api_key' &&
+        Array.isArray(p?.models) &&
+        p.models.length === 0,
+    );
+    if (starved.length === 0) return data;
+    let discovered = false;
+    for (const p of starved) {
+      try {
+        const found = await api.discoverModels(p.id);
+        if (found.models.length > 0) discovered = true;
+      } catch {
+        // Endpoint unreachable or key invalid: keep the empty catalogue and
+        // let the required-provider choice below fall through to a usable one.
+      }
+    }
+    if (!discovered) return data;
+    try {
+      data = await api.getModels();
+    } catch {
+      // Keep the first catalogue if the refresh fails.
+    }
+    return data;
+  };
+
+  /**
+   * Re-read the provider catalogue after Settings changes it.
+   *
+   * The provider strip and the model picker both render from `providers`,
+   * which used to be fetched once at boot. Saving a custom endpoint therefore
+   * only showed up after a restart. This refreshes it in place, and repairs
+   * the active selection if the provider the operator had chosen no longer
+   * exists (it was just deleted or renamed).
+   */
+  const refreshProvidersFromDaemon = async () => {
+    try {
+      const data = await loadCatalog();
+      if (data?.providers?.length) {
+        setProviders(data.providers);
+        const stillExists = data.providers.some(
+          (provider: any) => provider.id === activeProviderId,
+        );
+        if (!stillExists) {
+          const usable = (p: any) =>
+            (p?.connected || p?.configured) &&
+            Array.isArray(p?.models) &&
+            p.models.length > 0;
+          const next = data.providers.find(usable) || data.providers[0];
+          if (next) {
+            setActiveProviderId(next.id);
+            localStorage.setItem('odon_active_provider', next.id);
+            const rec = next.models?.find((m: any) => m.recommended) || next.models?.[0];
+            if (rec) {
+              setSelectedModel(rec.id);
+              localStorage.setItem('odon_selected_model', rec.id);
+            }
+          }
+        }
+      }
+    } catch {
+      // Keep the last known catalogue; opening Settings retries.
+    }
+    setCustomOpenAiModels(getCustomOpenAiModels());
+  };
+
   // Initial setup & SSE subscription
   useEffect(() => {
     let statusTimer: number | undefined;
@@ -918,38 +1035,6 @@ export default function App() {
         toolsLoadedRef.current = true;
       }
     }).catch(() => {});
-    // A BYOK gateway can be "configured" (key saved) with no model ids yet.
-    // Nothing then populates the picker, so ask the endpoint once and re-read
-    // the catalogue. After the first success the ids are persisted, so the
-    // network round-trip does not repeat.
-    const loadCatalog = async () => {
-      let data = await api.getModels();
-      const starved = (data?.providers ?? []).filter(
-        (p: any) =>
-          p?.configured &&
-          p?.auth_type === 'api_key' &&
-          Array.isArray(p?.models) &&
-          p.models.length === 0,
-      );
-      if (starved.length === 0) return data;
-      let discovered = false;
-      for (const p of starved) {
-        try {
-          const found = await api.discoverModels(p.id);
-          if (found.models.length > 0) discovered = true;
-        } catch {
-          // Endpoint unreachable or key invalid: keep the empty catalogue and
-          // let the required-provider choice below fall through to a usable one.
-        }
-      }
-      if (!discovered) return data;
-      try {
-        data = await api.getModels();
-      } catch {
-        // Keep the first catalogue if the refresh fails.
-      }
-      return data;
-    };
 
     loadCatalog().then((data) => {
       if (data?.providers?.length) {
@@ -1056,16 +1141,54 @@ export default function App() {
             });
             setLiveTerminal(Array.from(pendingTerminalRef.current.values()).slice(-4));
           }
-        } else if (['browser_open', 'browser_navigate', 'browser_session_navigate'].includes(toolName)) {
-          const u = event.payload.arguments?.url;
-          if (u) {
-            window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { url: u } }));
+        } else if (isBrowserTool(toolName)) {
+          const args = event.payload.arguments || {};
+          const sessionId = browserSessionIdOf(args);
+          const targetUrl = browserUrlOf(args);
+          browserCallsRef.current.set(event.payload.call_id, { name: toolName, sessionId });
+          // Live session tools attach the viewport to the exact browser the
+          // agent drives. Creation has no id yet, so the panel waits for the
+          // session the agent is about to register instead of opening a second
+          // browser of its own.
+          if (sessionId) {
+            window.dispatchEvent(
+              new CustomEvent('odon:open-browser', { detail: { sessionId, url: targetUrl } }),
+            );
+          } else if (
+            toolName === 'browser_session_create' ||
+            toolName === 'browser_session_resume'
+          ) {
+            window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { live: true } }));
+          } else if (targetUrl) {
+            window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: { url: targetUrl } }));
           }
         }
       } else if (event.type === 'tool_call_finished') {
         setStreamingTool(null);
         if (todoCallIdsRef.current.delete(event.payload.call_id) && activeSessionId) {
           api.getTodos(activeSessionId).then(setTodos).catch(() => {});
+        }
+        const browserCall = browserCallsRef.current.get(event.payload.call_id);
+        if (browserCall) {
+          browserCallsRef.current.delete(event.payload.call_id);
+          const sessionId = browserSessionIdOf(event.payload.output) ?? browserCall.sessionId;
+          if (browserCall.name === 'browser_session_close' && !event.payload.is_error) {
+            window.dispatchEvent(
+              new CustomEvent('odon:browser-detach', { detail: { sessionId } }),
+            );
+          } else if (sessionId) {
+            // Attach with the id the call reported (creation/resume have none
+            // in their arguments) and pull a fresh frame for the action just
+            // performed instead of waiting for the next poll tick.
+            window.dispatchEvent(
+              new CustomEvent('odon:open-browser', {
+                detail: { sessionId, url: browserUrlOf(event.payload.output) },
+              }),
+            );
+            window.dispatchEvent(
+              new CustomEvent('odon:browser-refresh', { detail: { sessionId } }),
+            );
+          }
         }
         const pending = pendingTerminalRef.current.get(event.payload.call_id);
         if (pending) {
@@ -1077,6 +1200,30 @@ export default function App() {
         setArtifacts((prev) => [event.payload.artifact, ...prev.filter((a) => a.id !== event.payload.artifact.id)]);
       } else if (event.type === 'steer_applied') {
         setSteerCards((prev) => prev.filter((card) => card.id !== event.payload.steer_id));
+        // The runtime injects the steer as a user message. Show it in the
+        // transcript at that moment, marked as operator guidance, so the answer
+        // that follows does not look like ODON talking to itself.
+        const steerText = (event.payload.text || '').trim();
+        if (steerText) {
+          const steerId = `steer_${event.payload.steer_id}`;
+          setMessages((prev) =>
+            prev.some((message) => message.id === steerId)
+              ? prev
+              : [
+                  ...prev,
+                  {
+                    id: steerId,
+                    role: 'user',
+                    content: steerText,
+                    timestamp: new Date().toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    }),
+                    steer: true,
+                  },
+                ],
+          );
+        }
       } else if (event.type === 'subagent_progress') {
         const { phase, detail, subagent_session_id } = event.payload;
         setSubagentActivity((prev) => {
@@ -1151,10 +1298,25 @@ export default function App() {
     };
   }, []);
 
-  // Auto-scroll chat
+  // Auto-scroll the transcript while the operator is at the bottom. The old
+  // `scrollIntoView({ behavior: 'smooth' })` restarted an animation on every
+  // token, so reasoning and answers that streamed continuously made the
+  // viewport stutter — and it scrolled even after the operator had scrolled up
+  // to read. Assigning `scrollTop` follows the stream without animation and
+  // respects the stick flag.
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingText, streamingThought, isGenerating]);
+    if (!stickToBottomRef.current) return;
+    scrollTranscriptToBottom();
+  }, [
+    messages,
+    streamingText,
+    streamingThought,
+    streamingTool,
+    isGenerating,
+    liveTerminal,
+    subagentActivity,
+    pendingApproval,
+  ]);
 
   const decideApproval = async (
     decision: 'approve_once' | 'approve_always' | 'approve_all' | 'deny',
@@ -1187,10 +1349,30 @@ export default function App() {
     setSteerCards([]);
     setSubagentActivity([]);
     stoppedRef.current = false;
+    stickToBottomRef.current = true;
     setActiveWorkspace(workspaces.default);
   };
 
   // Select an existing session from recent history
+  const applySessionModel = (rawModel?: string | null) => {
+    const raw = (rawModel || '').trim();
+    if (!raw || raw === 'odon-auto') return;
+    const [providerPart, modelPart] = raw.includes('::') ? raw.split('::') : ['', raw];
+    if (providerPart && modelPart) {
+      setActiveProviderId(providerPart);
+      setSelectedModel(modelPart);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('odon_active_provider', providerPart);
+        localStorage.setItem('odon_selected_model', modelPart);
+      }
+      return;
+    }
+    setSelectedModel(raw);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('odon_selected_model', raw);
+    }
+  };
+
   const loadSessionChat = async (id: string, title: string) => {
     setCurrentSessionId(id);
     currentSessionIdRef.current = id;
@@ -1205,10 +1387,24 @@ export default function App() {
     setTodos([]);
     setArtifacts([]);
     stoppedRef.current = false;
+    stickToBottomRef.current = true;
     try {
       const data = await api.getSession(id);
       if (currentSessionIdRef.current !== id) return;
       setActiveWorkspace(data.session?.workspace_root || workspaces.default || '');
+      // An agent desk owns a model. Align the composer with it so the picker
+      // never claims one provider while the turn runs on another.
+      let modelSource = data.session?.active_model;
+      if (data.session?.agent_id) {
+        try {
+          const agents = await api.listAgents();
+          const agent = agents.find((row) => row.id === data.session?.agent_id);
+          if (agent?.model) modelSource = agent.model;
+        } catch {
+          // The session's stored model is still a usable fallback.
+        }
+      }
+      applySessionModel(modelSource);
       if (data.messages && data.messages.length > 0) {
         setMessages(normalizeSessionHistory(data.messages));
       } else {
@@ -1539,6 +1735,9 @@ export default function App() {
     setInputMessage('');
     setInChatMode(true);
     setIsGenerating(true);
+    // A new prompt always brings the newest turn into view, even if the
+    // operator had scrolled up to read earlier messages.
+    stickToBottomRef.current = true;
     setStreamingText('');
     setStreamingThought('');
     setStreamingTool(null);
@@ -1589,6 +1788,11 @@ export default function App() {
           planMode,
           executionMode,
         );
+        // Remember the exact provider::model this thread used, so reopening it
+        // restores the same picker state instead of the creation-time default.
+        if (sid) {
+          void api.updateSession(sid, { model: modelPayload }).catch(() => undefined);
+        }
 
         const assistantMsg: ChatMessage = {
           id: resMsg.id,
@@ -1601,6 +1805,7 @@ export default function App() {
             id: t.call_id,
             name: t.tool_name || (t as { name?: string }).name || 'tool',
             url: typeof (t.arguments as any)?.url === 'string' ? (t.arguments as any).url : undefined,
+            sessionId: browserSessionIdOf(t.arguments) ?? browserSessionIdOf(t.output),
             args: summarizeToolArgs(t.arguments),
             output: toolOutputText(t.output),
             isError: t.is_error,
@@ -1817,6 +2022,46 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
     const query = commandQuery.trim().toLowerCase();
     return !query || action.label.toLowerCase().includes(query) || action.hint.toLowerCase().includes(query);
   });
+
+  /**
+   * A code artifact whose entry file is HTML can run in the Browser panel's
+   * sandboxed srcdoc iframe. This is what makes game/office demos playable
+   * from chat without a dev server.
+   */
+  const artifactHtmlEntry = (
+    artifact: Artifact | undefined,
+  ): { html: string; title: string } | null => {
+    if (!artifact || artifact.kind !== 'code' || artifact.payload.type !== 'code') return null;
+    const data = artifact.payload.data as any;
+    const files: Array<{ path: string; content: string }> = Array.isArray(data?.files)
+      ? data.files
+      : [];
+    const entry =
+      files.find((file) => file.path === data?.entry_file) ||
+      files.find((file) => /\.html?$/i.test(file.path));
+    if (!entry) return null;
+    const looksHtml =
+      /\.html?$/i.test(entry.path) ||
+      /^\s*(<!doctype html|<html[\s>])/i.test(entry.content);
+    // A multi-file project needs its dev server: relative module/CSS URLs
+    // cannot resolve inside the srcdoc iframe. Only self-contained pages are
+    // safe to hand to the sandboxed preview.
+    const hasRelativeSubresources =
+      /<(?:script|link)[^>]*(?:src|href)\s*=\s*["'](?:\.{0,2}\/)/i.test(entry.content) ||
+      /(?:import|from)\s+["']\.{1,2}\//i.test(entry.content);
+    return looksHtml && !hasRelativeSubresources
+      ? { html: entry.content, title: artifact.title }
+      : null;
+  };
+
+  const openArtifactPreview = (artifact: Artifact | undefined) => {
+    const entry = artifactHtmlEntry(artifact);
+    if (entry) {
+      window.dispatchEvent(new CustomEvent('odon:open-browser', { detail: entry }));
+    }
+    setRightPanelView('browser');
+    setIsRightPanelOpen(true);
+  };
 
   // Extract generated code files for CodeEditorView
   const latestCodeArtifact = artifacts.find((a) => a.kind === 'code');
@@ -2064,6 +2309,17 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                 <Folder className={`w-4 h-4 ${(activeNav === 'files' || activeNav === 'explorer') ? 'text-blue-600' : 'text-neutral-600'}`} />
                 <span>Files</span>
               </button>
+
+              <button
+                onClick={() => setActiveNav('office')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${activeNav === 'office'
+                    ? 'bg-sand-100 text-blue-600 font-semibold shadow-2xs'
+                    : 'text-neutral-700 hover:bg-neutral-200'
+                  }`}
+              >
+                <Building2 className={`w-4 h-4 ${activeNav === 'office' ? 'text-blue-600' : 'text-neutral-600'}`} />
+                <span>Agents Office</span>
+              </button>
             </nav>
 
             {/* Recent Section (Bound to SQLite Sessions) */}
@@ -2154,7 +2410,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     {activeNav === 'terminal' && <Terminal className="w-3.5 h-3.5 text-blue-600" />}
                     {activeNav === 'code' && <Code2 className="w-3.5 h-3.5 text-blue-600" />}
                     {(activeNav === 'files' || activeNav === 'explorer') && <Folder className="w-3.5 h-3.5 text-blue-600" />}
-                    <span>{activeNav === 'files' || activeNav === 'explorer' ? 'File Explorer' : `${activeNav} Workspace`}</span>
+                    {activeNav === 'office' && <Building2 className="w-3.5 h-3.5 text-blue-600" />}
+                    <span>
+                      {activeNav === 'files' || activeNav === 'explorer'
+                        ? 'File Explorer'
+                        : activeNav === 'office'
+                          ? 'Agents Office'
+                          : `${activeNav} Workspace`}
+                    </span>
                   </span>
                 </div>
               ) : (
@@ -2256,6 +2519,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           {(activeNav === 'files' || activeNav === 'explorer') && (
             <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white min-w-0">
               <FileExplorerView
+                workspaceRoot={activeWorkspace || workspaces.default || ''}
                 onAskAiAboutFile={(path, content) => {
                   setActiveNav('chat');
                   setInputMessage(`Tolong analisa file ${path}:\n\`\`\`\n${content.slice(0, 4000)}\n\`\`\``);
@@ -2264,6 +2528,26 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   setActiveNav('terminal');
                 }}
               />
+            </div>
+          )}
+
+          {activeNav === 'office' && (
+            <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white min-w-0">
+              <Suspense
+                fallback={
+                  <div className="flex h-full flex-col items-center justify-center gap-2 text-neutral-400">
+                    <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+                    <span className="text-xs font-medium">Opening the office…</span>
+                  </div>
+                }
+              >
+                <AgentsOfficeView
+                  onOpenSession={(id, title) => {
+                    void loadSessionChat(id, title);
+                    setActiveNav('chat');
+                  }}
+                />
+              </Suspense>
             </div>
           )}
 
@@ -2284,10 +2568,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
               <CodeEditorView
                 files={codeFiles}
                 diff={selectedPatchDiff}
-                onRunPreview={() => {
-                  setRightPanelView('browser');
-                  setIsRightPanelOpen(true);
-                }}
+                onRunPreview={() => openArtifactPreview(latestCodeArtifact)}
                 onOpenTerminal={() => {
                   setActiveNav('terminal');
                 }}
@@ -2296,9 +2577,13 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
           )}
 
           {/* Center Content Area for Chat / Documents / Creative Tasks */}
-          {activeNav !== 'github' && activeNav !== 'automations' && activeNav !== 'mcp' && activeNav !== 'terminal' && activeNav !== 'code' && activeNav !== 'files' && activeNav !== 'explorer' && activeNav !== 'ssh' && (
+          {activeNav !== 'github' && activeNav !== 'automations' && activeNav !== 'mcp' && activeNav !== 'terminal' && activeNav !== 'code' && activeNav !== 'files' && activeNav !== 'explorer' && activeNav !== 'ssh' && activeNav !== 'office' && (
             <>
-              <div ref={transcriptRef} className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 flex flex-col justify-start select-text min-w-0 w-full">
+              <div
+                ref={transcriptRef}
+                onScroll={handleTranscriptScroll}
+                className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 flex flex-col justify-start select-text min-w-0 w-full"
+              >
 
             {/* VIEW A: WELCOME HERO (EXACT MATCH TO DESIGN) */}
             {!inChatMode && (
@@ -2334,15 +2619,22 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                          msg.role === 'user'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white border border-neutral-200 text-neutral-900 shadow-2xs'
+                          msg.steer
+                            ? 'bg-amber-500 text-white'
+                            : msg.role === 'user'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white border border-neutral-200 text-neutral-900 shadow-2xs'
                         }`}>
                           {msg.role === 'user' ? 'U' : <CatLogo className="w-3.5 h-3.5 text-neutral-900" />}
                         </div>
                         <span className="text-xs font-semibold text-neutral-900">
                           {msg.role === 'user' ? 'You' : 'ODON'}
                         </span>
+                        {msg.steer && (
+                          <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800">
+                            Steer
+                          </span>
+                        )}
                         <span className="text-[10px] text-neutral-400">{msg.timestamp}</span>
                       </div>
 
@@ -2376,7 +2668,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                             </div>
                             <span className="text-[10px] text-neutral-400 font-mono group-open:hidden">Click to expand</span>
                           </summary>
-                          <div className="p-3 border-t border-neutral-200/60 bg-neutral-50/30 text-[11px] leading-snug text-neutral-600 select-text max-w-full min-w-0 overflow-x-hidden break-words">
+                          <div className="p-3 border-t border-neutral-200/60 bg-neutral-50/30 text-[12.5px] leading-relaxed text-neutral-600 select-text max-w-full min-w-0 overflow-x-hidden break-words">
                             <MarkdownView content={msg.thought} dense preserveLineBreaks />
                           </div>
                         </details>
@@ -2421,7 +2713,15 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                                   } else if (isWeb) {
                                     // Seed the panel with the real target so it shows the
                                     // page the tool touched, not an empty/status screen.
-                                    setBrowserSeed(tc.url ? { url: tc.url } : null);
+                                    // Live session calls attach the viewport instead of
+                                    // re-fetching the URL through the proxy.
+                                    setBrowserSeed(
+                                      tc.sessionId
+                                        ? { sessionId: tc.sessionId, url: tc.url }
+                                        : tc.url
+                                          ? { url: tc.url }
+                                          : null,
+                                    );
                                     setRightPanelView('browser');
                                     setIsRightPanelOpen(true);
                                   }
@@ -2496,7 +2796,13 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                       </div>
                     )}
 
-                    <div className="pl-7 select-text">
+                    <div
+                      className={
+                        msg.steer
+                          ? 'ml-7 rounded-xl border border-amber-200/80 bg-amber-50/50 px-3 py-2 select-text min-w-0 break-words'
+                          : 'pl-7 select-text'
+                      }
+                    >
                       <MarkdownView content={msg.content} preserveLineBreaks />
                     </div>
 
@@ -2598,10 +2904,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
                                   <div className="flex items-center gap-2 mt-3">
                                     <button
-                                      onClick={() => {
-                                        setRightPanelView('browser');
-                                        setIsRightPanelOpen(true);
-                                      }}
+                                      onClick={() => openArtifactPreview(art)}
                                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
                                     >
                                       <ExternalLink className="w-3 h-3" />
@@ -2728,13 +3031,14 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   </div>
                 )}
 
-                <div ref={chatEndRef} />
               </div>
             )}
           </div>
 
-          {/* Tasks stay attached to the composer instead of interrupting the transcript. */}
-          {todos.length > 0 && (
+          {/* Tasks stay attached to the composer instead of interrupting the transcript.
+              A plan is per-turn working state: once every item is done the panel
+              goes away instead of pinning a finished list above the composer. */}
+          {todos.some((item) => item.status !== 'completed') && (
             <div className={`px-4 ${isRightPanelOpen ? 'max-w-3xl' : 'max-w-4xl'} w-full mx-auto shrink-0`}>
               {showTodos ? (
                 <TodoPanel items={todos} live={isGenerating} onHide={() => setShowTodos(false)} />
@@ -2851,7 +3155,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     ? 'Steer the agent (Enter to queue; press Send on the card to prioritize)...'
                     : getPlaceholder()
                 }
-                className="w-full text-xs text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent resize-none overflow-y-hidden"
+                className="w-full text-[13.5px] leading-relaxed text-neutral-800 placeholder-neutral-400 outline-none px-1 py-1 bg-transparent resize-none overflow-y-hidden"
               />
 
               {/* Bottom Row Tools inside Input Box */}
@@ -3071,7 +3375,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                     <CodeEditorView
                       files={codeFiles}
                       diff={selectedPatchDiff}
-                      onRunPreview={() => setRightPanelView('browser')}
+                      onRunPreview={() => openArtifactPreview(latestCodeArtifact)}
                       onOpenTerminal={() => setRightPanelView('terminal')}
                     />
                   </div>
@@ -3369,6 +3673,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
         onClose={() => {
           setSettingsOpen(false);
           setCustomOpenAiModels(getCustomOpenAiModels());
+          // Catch-all: any provider edit that did not notify while the modal
+          // was open still lands in the picker the moment it closes.
+          void refreshProvidersFromDaemon();
         }}
         isDark={false}
         onToggleTheme={() => { }}
@@ -3376,6 +3683,9 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
         onSelectProvider={handleSelectProvider}
         currentModel={selectedModel}
         onSelectModel={handleSelectModel}
+        onProvidersChanged={() => {
+          void refreshProvidersFromDaemon();
+        }}
         onDaemonRestarted={() => {
           void checkDaemonStatus();
         }}
