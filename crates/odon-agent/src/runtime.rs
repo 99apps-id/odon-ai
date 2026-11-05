@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use odon_core::{
-    AgentEvent, AgentState, Artifact, EventSender, Message, MessageAttachment, MessageRole,
+    Agent, AgentEvent, AgentState, Artifact, EventSender, Message, MessageAttachment, MessageRole,
     OdonError, Result, Session, SessionMode, ToolCallInfo, ACTIVE_SESSION_ID,
 };
 use odon_provider::{ChatRequest, ModelProvider, StreamEvent, ToolDefinition};
@@ -1263,8 +1263,16 @@ impl AgentRuntime {
             // reads the text, so both the persisted history and the accumulated
             // transcript stay free of the duplicate.
             if let Some(previous) = truncation_seam.take() {
-                let overlap =
+                let mut overlap =
                     crate::continuation::continuation_overlap_length(&previous, &step_text);
+                // The overlap length is measured in bytes by the KMP scan, so it
+                // can land inside a multi-byte character. `step_text.get` is
+                // boundary-safe (returns None) but that would silently drop the
+                // whole resumed step after the accumulated text was already
+                // truncated; round down to a real boundary instead.
+                while overlap > 0 && !step_text.is_char_boundary(overlap) {
+                    overlap -= 1;
+                }
                 if overlap > 0 && overlap <= step_text.len() {
                     let keep = total_accumulated_text.len().saturating_sub(step_text.len());
                     total_accumulated_text.truncate(keep);
@@ -1300,6 +1308,12 @@ impl AgentRuntime {
                 // follow-up iteration; the turn budget is a safety cap for
                 // autonomous work, not permission to drop user guidance.
                 if pending_steer && !grace_call {
+                    self.persist_partial_assistant_step(
+                        session_id,
+                        &step_text,
+                        &step_thought,
+                        requested_model,
+                    );
                     continue;
                 }
                 // The step produced no prose and no tool call: a reasoning
@@ -1334,6 +1348,12 @@ impl AgentRuntime {
                 {
                     truncation_continuations += 1;
                     truncation_seam = Some(step_text.clone());
+                    self.persist_partial_assistant_step(
+                        session_id,
+                        &step_text,
+                        &step_thought,
+                        requested_model,
+                    );
                     let nudge =
                         Message::new_user(session_id, crate::continuation::OUTPUT_LIMIT_NUDGE);
                     let _ = self.storage.save_message(&nudge);
@@ -1355,6 +1375,12 @@ impl AgentRuntime {
                     && crate::continuation::promises_next_action(&step_text)
                 {
                     promised_continuations += 1;
+                    self.persist_partial_assistant_step(
+                        session_id,
+                        &step_text,
+                        &step_thought,
+                        requested_model,
+                    );
                     let mut tail: Vec<char> = step_text.trim().chars().collect();
                     let keep_from = tail.len().saturating_sub(280);
                     tail.drain(..keep_from);
@@ -1595,7 +1621,13 @@ impl AgentRuntime {
                             }
                             joined = join_set.join_next() => match joined {
                                 Some(Ok(done)) => executed.push(done),
-                                Some(Err(_)) => {}
+                                Some(Err(err)) => {
+                                    // A panic (or an abort) in a tool task must
+                                    // not be swallowed: log it so the failure is
+                                    // diagnosable instead of masquerading as a
+                                    // user cancellation below.
+                                    tracing::error!(error = %err, "tool task join error");
+                                }
                                 None => break,
                             }
                         }
@@ -1603,6 +1635,7 @@ impl AgentRuntime {
                     // Calls that never finished (a Stop aborted them)
                     // still owe the model a result, or the history the
                     // next step replays is invalid.
+                    let cancelled = cancellation.is_cancelled();
                     for meta in &registry_meta {
                         if !executed.iter().any(|done| done.index == meta.index) {
                             executed.push(ExecutedCall {
@@ -1611,7 +1644,11 @@ impl AgentRuntime {
                                 name: meta.name.clone(),
                                 args: meta.args.clone(),
                                 output: serde_json::json!({
-                                    "error": "Tool execution cancelled by user"
+                                    "error": if cancelled {
+                                        "Tool execution cancelled by user"
+                                    } else {
+                                        "tool task failed to complete"
+                                    }
                                 }),
                                 is_error: true,
                             });
@@ -1929,18 +1966,54 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         // `provider::` prefix, so without this the child would re-resolve the
         // provider from the model id alone and could land on a different (for
         // example, usage-capped) provider.
+        // An explicit `agent` target overrides the persona first: its model
+        // (and the provider prefix inside it) wins over the parent's, so the
+        // office roster can route work to a differently-modelled teammate.
+        let agent_persona = match self.resolve_delegated_agent(args.get("agent")) {
+            Ok(agent) => agent,
+            Err(error) => return (serde_json::json!({ "error": error.to_string() }), true),
+        };
+        let (agent_provider, agent_model) = agent_persona
+            .as_ref()
+            .map(|agent| {
+                let (provider, bare) = match agent.model.split_once("::") {
+                    Some((provider, bare)) => (Some(provider.to_string()), bare.to_string()),
+                    None => (None, agent.model.clone()),
+                };
+                let bare = bare.trim();
+                let bare = if bare.is_empty() || bare == "odon-auto" {
+                    None
+                } else {
+                    Some(bare.to_string())
+                };
+                (provider, bare)
+            })
+            .unwrap_or((None, None));
         let provider_override = args
             .get("provider")
             .and_then(|v| v.as_str())
-            .filter(|v| !v.trim().is_empty())
             .map(str::trim)
-            .or(parent_provider);
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .or(agent_provider)
+            .or_else(|| parent_provider.map(str::to_string));
         let requested_model = args
             .get("model")
             .and_then(|v| v.as_str())
-            .filter(|v| !v.trim().is_empty())
-            .map(str::trim);
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string);
         let parent_model_override = self.resolve_model_for_session(parent_session_id);
+        let model_override = requested_model
+            .clone()
+            .or(agent_model)
+            .or(parent_model_override.clone())
+            .unwrap_or_else(|| model.to_string());
+        let persona_prompt = agent_persona
+            .as_ref()
+            .map(|agent| agent.system_prompt.trim())
+            .filter(|prompt| !prompt.is_empty())
+            .map(str::to_string);
 
         let child_ids: Vec<String> = (0..tasks.len())
             .map(|index| format!("sub-{}-{}", uuid::Uuid::new_v4().simple(), index))
@@ -1951,15 +2024,18 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
             let mut session = Session::new(
                 format!("Subagent: {}", truncate_chars(&tasks[index], 60)),
                 SessionMode::Agents,
-                model.to_string(),
+                model_override.clone(),
             );
             session.id = child_session_id.clone();
             session.workspace_root = Some(self.session_workspace(parent_session_id));
             if let Ok(parent) = self.storage.get_session(parent_session_id) {
-                // The child belongs to the same persisted agent as its parent,
-                // so the office wing and the agent's session history can both
-                // attribute the delegated work.
-                session.agent_id = parent.agent_id.clone();
+                // The child belongs to the delegated agent when one was named;
+                // otherwise it inherits the parent's, so the office wing and
+                // the agent's session history can both attribute the work.
+                session.agent_id = agent_persona
+                    .as_ref()
+                    .map(|agent| agent.id.clone())
+                    .or(parent.agent_id.clone());
                 if let Some(meta) = parent.metadata.clone() {
                     let mut child_meta = meta;
                     if let Some(obj) = child_meta.as_object_mut() {
@@ -1989,6 +2065,15 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
                         "child_count": child_count,
                     }));
                 }
+                if let Some(agent) = agent_persona.as_ref() {
+                    if let Some(obj) = session.metadata.as_mut().and_then(|m| m.as_object_mut()) {
+                        obj.insert("delegated_agent".to_string(), serde_json::json!(agent.id));
+                        obj.insert(
+                            "delegated_agent_name".to_string(),
+                            serde_json::json!(agent.name),
+                        );
+                    }
+                }
             }
             let _ = self.storage.save_session(&session);
         }
@@ -2010,11 +2095,9 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
             let child_runtime = self.child_runtime(self.workspace_root.clone());
             child_runtime.set_max_turn_iterations(SUBAGENT_MAX_ITERATIONS);
             let subagent_slot = Arc::clone(&subagent_slots);
-            let provider_name = provider_override.map(|v| v.to_string());
-            let model_override = requested_model
-                .or(parent_model_override.as_deref())
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| model.to_string());
+            let provider_name = provider_override.clone();
+            let model_override = model_override.clone();
+            let persona_prompt = persona_prompt.clone();
 
             join_set.spawn(async move {
                 AgentRuntime::publish_child_event(
@@ -2082,6 +2165,7 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
                             cancellation_child,
                             depth + 1,
                             Some(workspace_root),
+                            persona_prompt,
                         ))
                         .await
                         {
@@ -2197,11 +2281,8 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         // parent needs both to retry with an explicit override. Deriving the
         // provider from the model string's `provider::model` prefix keeps it
         // correct even when the child inherited the parent's selection.
-        let effective_model = requested_model
-            .or(parent_model_override.as_deref())
-            .unwrap_or(model);
+        let effective_model = model_override;
         let provider_display = provider_override
-            .map(str::to_string)
             .or_else(|| {
                 effective_model
                     .split_once("::")
@@ -2211,7 +2292,7 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         let model_display = effective_model
             .split_once("::")
             .map(|(_, model)| model.to_string())
-            .unwrap_or_else(|| effective_model.to_string());
+            .unwrap_or_else(|| effective_model.clone());
 
         if child_count > 1 {
             (
@@ -2238,6 +2319,28 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
                 overall_error.is_some(),
             )
         }
+    }
+
+    /// Resolves the `agent` argument of `run_subagent` against the persisted
+    /// roster. Matches by agent id first, then by case-insensitive name.
+    fn resolve_delegated_agent(&self, spec: Option<&serde_json::Value>) -> Result<Option<Agent>> {
+        let Some(spec) = spec.and_then(|value| value.as_str()).map(str::trim) else {
+            return Ok(None);
+        };
+        if spec.is_empty() {
+            return Ok(None);
+        }
+        let agents = self
+            .storage
+            .list_agents()
+            .map_err(|e| OdonError::Storage(e.to_string()))?;
+        match_agent_spec(spec, &agents)
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| OdonError::Tool {
+                tool: "run_subagent".to_string(),
+                message: format!("unknown agent '{spec}'"),
+            })
     }
 
     fn parse_subagent_tasks(args: &serde_json::Value) -> Option<Vec<String>> {
@@ -2523,6 +2626,36 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         ))
     }
 
+    // When a step ends without a tool call but the turn is going to run again
+    // (a truncated reply, a promised action, or a pending steer), the prose the
+    // model just streamed must be persisted before the follow-up nudge. The
+    // tool-call branch already saves the intermediate assistant step; without
+    // the same save here, `list_messages` replays `[user, nudge]` with no
+    // assistant turn and the model restarts the answer from scratch instead of
+    // resuming it, producing duplicated, incoherent prose.
+    fn persist_partial_assistant_step(
+        &self,
+        session_id: &str,
+        text: &str,
+        thought: &str,
+        model: &str,
+    ) {
+        if text.trim().is_empty() && thought.trim().is_empty() {
+            return;
+        }
+        let message = Message::new_assistant(
+            session_id,
+            text.to_string(),
+            if thought.trim().is_empty() {
+                None
+            } else {
+                Some(thought.to_string())
+            },
+            Some(model.to_string()),
+        );
+        let _ = self.storage.save_message(&message);
+    }
+
     async fn finalize_child_workspace(child_session_id: &str, storage: Arc<StorageEngine>) {
         // `git worktree remove` takes the worktree PATH and needs a CWD inside
         // the repository. This used to pass the session id and no CWD, so it
@@ -2569,6 +2702,7 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         cancellation: CancellationToken,
         depth: u32,
         workspace_root: Option<String>,
+        extra_system_prompt: Option<String>,
     ) -> Result<Message> {
         if self.storage.get_session(child_session_id).is_err() {
             let mut child = Session::new(
@@ -2595,7 +2729,7 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
             None,
             cancellation,
             None,
-            None,
+            extra_system_prompt.as_deref(),
             depth,
             Some(self.max_turn_iterations()),
         )
@@ -2695,7 +2829,10 @@ fn history_budget_for_request(
 fn budget_for_model_context(configured: usize, model_context: Option<usize>) -> usize {
     match model_context {
         Some(context) if context > 0 => {
-            let safe = context.saturating_sub(context / 8).max(8_000);
+            // Keep the 8k usability floor, but never let it push the budget
+            // past the model's own window: an 8k/4k local model must not get a
+            // floor larger than its context.
+            let safe = context.saturating_sub(context / 8).max(8_000.min(context));
             configured.min(safe)
         }
         _ => configured,
@@ -3017,17 +3154,28 @@ fn find_tools_definition() -> ToolDefinition {
     }
 }
 
+/// Matches a `run_subagent` agent spec (id or name) against the roster.
+fn match_agent_spec<'a>(spec: &str, agents: &'a [Agent]) -> Option<&'a Agent> {
+    agents
+        .iter()
+        .find(|agent| agent.id == spec || agent.name.eq_ignore_ascii_case(spec))
+}
+
 /// The `run_subagent` definition offered on top-level turns.
 fn subagent_definition() -> ToolDefinition {
     ToolDefinition {
         name: "run_subagent".to_string(),
         description:
-            "Delegate one self-contained task to a subagent with its own session and a bounded step budget. It works in the same workspace and returns its final report. Use for independent side tasks; never for work that needs the current conversation's full context."
+            "Delegate one self-contained task to a subagent with its own session and a bounded step budget. It works in the same workspace and returns its final report. Use for independent side tasks; never for work that needs the current conversation's full context. Name a persisted agent with 'agent' to delegate to that teammate: its persona, model and working hours apply."
                 .to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "task": { "type": "string", "description": "One self-contained instruction for the subagent." },
+                "agent": {
+                    "type": "string",
+                    "description": "Optional id or name of a persisted agent (from the office roster) to delegate to. Its system prompt and model apply; an unknown name is an error."
+                },
                 "model": {
                     "type": "string",
                     "description": "Optional model override for this subagent. Defaults to the model the parent session is using. Accepts 'provider::model' or a bare model id."
@@ -3239,8 +3387,10 @@ mod tests {
         assert_eq!(budget_for_model_context(120_000, Some(200_000)), 120_000);
         // Without a catalogue context the configured budget is untouched.
         assert_eq!(budget_for_model_context(120_000, None), 120_000);
-        // A nonsense context never produces an unusable budget.
-        assert_eq!(budget_for_model_context(120_000, Some(1)), 8_000);
+        // An advertised context below the 8k floor is not allowed to raise the
+        // budget above the window: the request must still fit the model.
+        assert_eq!(budget_for_model_context(120_000, Some(1)), 1);
+        assert_eq!(budget_for_model_context(120_000, Some(4_096)), 4_096);
     }
 
     #[test]
@@ -3588,7 +3738,27 @@ mod tests {
             props.contains_key("provider"),
             "provider override must be advertised"
         );
+        assert!(
+            props.contains_key("agent"),
+            "the persisted-agent target must be advertised"
+        );
         assert!(props.contains_key("task"));
+    }
+
+    #[test]
+    fn delegated_agent_resolves_by_id_or_name_and_rejects_unknowns() {
+        let mut agent = Agent::new("Coding", "Software Engineering");
+        agent.id = "agent_coding".to_string();
+        let roster = vec![agent];
+
+        let by_id = match_agent_spec("agent_coding", &roster);
+        assert_eq!(by_id.expect("id must match").name, "Coding");
+        // Names are case-insensitive; ids are not fuzzy-matched by name rules
+        // but both fall through the same lookup.
+        let by_name = match_agent_spec("coding", &roster);
+        assert_eq!(by_name.expect("name must match").id, "agent_coding");
+        assert!(match_agent_spec("Design", &roster).is_none());
+        assert!(match_agent_spec("", &roster).is_none());
     }
 
     #[test]
