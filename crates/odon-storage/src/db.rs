@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use odon_core::{
-    Agent, AgentSchedule, Artifact, ArtifactKind, ArtifactPayload, Message, MessageContent,
-    MessageRole, Session, SessionMode, SessionStatus,
+    Agent, AgentInboxMessage, AgentSchedule, Artifact, ArtifactKind, ArtifactPayload, Message,
+    MessageContent, MessageRole, Session, SessionMode, SessionStatus,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
@@ -191,6 +191,21 @@ impl StorageEngine {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS agent_inbox (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                session_id TEXT,
+                text TEXT NOT NULL,
+                queued_at TEXT NOT NULL,
+                released_at TEXT,
+                FOREIGN KEY (agent_id) REFERENCES agents (id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_inbox_pending
+                ON agent_inbox (agent_id, released_at);
             ",
         )?;
         // Older databases predate columns such as `sessions.metadata` and
@@ -1222,6 +1237,66 @@ impl StorageEngine {
         let count = conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
         Ok(count > 0)
     }
+
+    /// Parks a channel message for an off-shift agent.
+    pub fn queue_agent_message(&self, message: &AgentInboxMessage) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT INTO agent_inbox (id, agent_id, channel, sender_id, session_id, text, queued_at, released_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
+            params![
+                message.id,
+                message.agent_id,
+                message.channel,
+                message.sender_id,
+                message.session_id,
+                message.text,
+                message.queued_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The still-parked messages for one agent, oldest first.
+    pub fn queued_agent_messages(&self, agent_id: &str) -> Result<Vec<AgentInboxMessage>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, channel, sender_id, session_id, text, queued_at
+             FROM agent_inbox
+             WHERE agent_id = ?1 AND released_at IS NULL
+             ORDER BY queued_at ASC",
+        )?;
+        let rows = stmt.query_map(params![agent_id], |row| {
+            let queued: String = row.get(6)?;
+            Ok(AgentInboxMessage {
+                id: row.get(0)?,
+                agent_id: row.get(1)?,
+                channel: row.get(2)?,
+                sender_id: row.get(3)?,
+                session_id: row.get(4)?,
+                text: row.get(5)?,
+                queued_at: DateTime::parse_from_rfc3339(&queued)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(StorageError::Sqlite)
+    }
+
+    /// Marks parked messages as released; returns how many rows moved.
+    pub fn mark_agent_inbox_released(&self, ids: &[String]) -> Result<usize> {
+        let conn = self.lock_conn()?;
+        let now = Utc::now().to_rfc3339();
+        let mut released = 0;
+        for id in ids {
+            released += conn.execute(
+                "UPDATE agent_inbox SET released_at = ?2 WHERE id = ?1 AND released_at IS NULL",
+                params![id, now],
+            )?;
+        }
+        Ok(released)
+    }
 }
 
 fn agent_from_row(row: &rusqlite::Row<'_>) -> Result<Agent> {
@@ -1360,6 +1435,46 @@ mod tests {
             .any(|row| row.agent_id.as_deref() == Some(agent.id.as_str())));
 
         assert_eq!(storage.list_agents().unwrap().len(), 1);
+
+        // Off-shift inbox: queue two, drain them, and confirm the released
+        // rows no longer appear as pending.
+        let first = AgentInboxMessage::new(
+            agent.id.clone(),
+            "telegram",
+            "chat-1",
+            Some("agent_telegram_x_chat-1".to_string()),
+            "prepare the report",
+        );
+        let second = AgentInboxMessage::new(
+            agent.id.clone(),
+            "telegram",
+            "chat-1",
+            None,
+            "and the charts",
+        );
+        storage.queue_agent_message(&first).unwrap();
+        storage.queue_agent_message(&second).unwrap();
+        let pending = storage.queued_agent_messages(&agent.id).unwrap();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].text, "prepare the report", "oldest first");
+        assert!(storage
+            .queued_agent_messages("agent_nobody")
+            .unwrap()
+            .is_empty());
+        let released_ids = [first.id.clone(), second.id.clone()];
+        assert_eq!(
+            storage.mark_agent_inbox_released(&released_ids).unwrap(),
+            2
+        );
+        assert!(storage.queued_agent_messages(&agent.id).unwrap().is_empty());
+        // Releasing twice is a no-op, not an error.
+        assert_eq!(
+            storage
+                .mark_agent_inbox_released(std::slice::from_ref(&first.id))
+                .unwrap(),
+            0
+        );
+
         assert!(storage.delete_agent(&agent.id).unwrap());
         assert!(storage.list_agents().unwrap().is_empty());
     }

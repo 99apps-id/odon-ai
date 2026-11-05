@@ -8,7 +8,7 @@ pub mod message;
 pub mod provider;
 pub mod session;
 
-pub use agent::{Agent, AgentSchedule};
+pub use agent::{Agent, AgentInboxMessage, AgentSchedule};
 pub use artifact::{Artifact, ArtifactFile, ArtifactKind, ArtifactPayload};
 pub use error::{OdonError, Result};
 pub use events::{

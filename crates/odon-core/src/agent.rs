@@ -145,6 +145,41 @@ impl Agent {
     }
 }
 
+/// A channel message parked for an agent that is outside its working hours.
+/// The daemon's shift scheduler releases it once `is_on_shift` turns true.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInboxMessage {
+    pub id: String,
+    pub agent_id: String,
+    pub channel: String,
+    pub sender_id: String,
+    /// The relay thread the message arrived on, so the released turn answers
+    /// in the same conversation.
+    pub session_id: Option<String>,
+    pub text: String,
+    pub queued_at: DateTime<Utc>,
+}
+
+impl AgentInboxMessage {
+    pub fn new(
+        agent_id: impl Into<String>,
+        channel: impl Into<String>,
+        sender_id: impl Into<String>,
+        session_id: Option<String>,
+        text: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: format!("inbox_{}", Uuid::new_v4().simple()),
+            agent_id: agent_id.into(),
+            channel: channel.into(),
+            sender_id: sender_id.into(),
+            session_id,
+            text: text.into(),
+            queued_at: Utc::now(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

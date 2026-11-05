@@ -42,7 +42,8 @@ use odon_channel::{ChannelAdapter, IncomingChannelMessage, TelegramRelay, WhatsA
 use odon_core::events::create_event_bus;
 use odon_core::session::{Session, SessionMode};
 use odon_core::{
-    Agent, AgentEvent, AgentSchedule, ArtifactPayload, EventSender, Message, OdonError,
+    Agent, AgentEvent, AgentInboxMessage, AgentSchedule, ArtifactPayload, EventSender, Message,
+    OdonError,
 };
 use odon_provider::{
     anthropic::AnthropicProvider,
@@ -1961,8 +1962,59 @@ async fn relay_status_text(state: &AppState, session_id: &str) -> String {
     )
 }
 
-async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) {
-    // A per-agent bot carries its agent id; the global WhatsApp/Telegram relay
+/// Whether off-shift messages are parked for later delivery. On by default;
+/// `ODON_OFF_SHIFT_QUEUE=0` restores the old always-answer behavior.
+fn off_shift_queue_enabled() -> bool {
+    std::env::var("ODON_OFF_SHIFT_QUEUE")
+        .map(|value| value.trim() != "0")
+        .unwrap_or(true)
+}
+
+/// Every minute the daemon checks whether an agent's shift has started and, if
+/// so, feeds its parked messages back through the normal relay path so they
+/// are answered in the same thread they arrived on.
+async fn release_off_shift_queue(state: AppState) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        let Ok(agents) = state.storage.list_agents() else {
+            continue;
+        };
+        for agent in agents.iter().filter(|agent| agent.enabled) {
+            if !agent.schedule.is_on_shift(chrono::Utc::now()) {
+                continue;
+            }
+            let Ok(queued) = state.storage.queued_agent_messages(&agent.id) else {
+                continue;
+            };
+            if queued.is_empty() {
+                continue;
+            }
+            let ids: Vec<String> = queued.iter().map(|message| message.id.clone()).collect();
+            if let Err(error) = state.storage.mark_agent_inbox_released(&ids) {
+                tracing::warn!("Failed to mark inbox released for {}: {error}", agent.id);
+                continue;
+            }
+            info!(
+                "Shift started for agent {}; releasing {} queued message(s)",
+                agent.id,
+                queued.len()
+            );
+            for parked in queued {
+                let incoming = IncomingChannelMessage {
+                    channel: parked.channel,
+                    sender_id: parked.sender_id,
+                    session_id: parked.session_id,
+                    text: parked.text,
+                    attachments: Vec::new(),
+                    agent_id: Some(agent.id.clone()),
+                };
+                tokio::spawn(handle_relay_message(state.clone(), incoming));
+            }
+        }
+    }
+}
+
+async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) {    // A per-agent bot carries its agent id; the global WhatsApp/Telegram relay
     // leaves it empty and keeps the operator's main session.
     let agent = message
         .agent_id
@@ -2184,6 +2236,47 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             )
             .await;
             return;
+        }
+    }
+
+    // An agent outside its working hours parks the message instead of waking
+    // the model; the shift scheduler releases it when the shift starts. Slash
+    // commands above intentionally bypass this so /status keeps working.
+    if off_shift_queue_enabled() {
+        if let Some(existing) = agent.as_ref() {
+            if !existing.schedule.is_on_shift(chrono::Utc::now()) {
+                let queued = AgentInboxMessage::new(
+                    existing.id.clone(),
+                    message.channel.clone(),
+                    message.sender_id.clone(),
+                    Some(session_id.clone()),
+                    message.text.clone(),
+                );
+                let position = state
+                    .storage
+                    .queue_agent_message(&queued)
+                    .ok()
+                    .and_then(|_| state.storage.queued_agent_messages(&existing.id).ok())
+                    .map(|rows| rows.len())
+                    .unwrap_or(1);
+                let reply = format!(
+                    "🕐 **{}** sedang di luar jam kerja ({}–{}). Pesanmu antre ke-{} dan akan diproses saat shift dimulai.",
+                    existing.name, existing.schedule.start, existing.schedule.end, position
+                );
+                let _ = send_relay_text(
+                    &state,
+                    &message.channel,
+                    &message.sender_id,
+                    &reply,
+                    message.agent_id.as_deref(),
+                )
+                .await;
+                info!(
+                    "Queued off-shift message for agent {} (position {position})",
+                    existing.id
+                );
+                return;
+            }
         }
     }
 
@@ -2837,6 +2930,11 @@ async fn main() -> anyhow::Result<()> {
                         handle_relay_message(relay_state.clone(), message).await;
                     }
                 });
+            }
+
+            {
+                let queue_state = state.clone();
+                tokio::spawn(release_off_shift_queue(queue_state));
             }
 
             {
@@ -4393,6 +4491,22 @@ async fn agent_webhook(
         },
         None => format!("agent_webhook_{}", sanitize_relay_fragment(&agent.id)),
     };
+
+    // A webhook caller waits synchronously for its reply, so there is nothing
+    // to queue against: report the shift instead of running the turn.
+    if off_shift_queue_enabled() && !agent.schedule.is_on_shift(chrono::Utc::now()) {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "ok": false,
+                "off_shift": true,
+                "reply": format!(
+                    "{} is off shift ({}–{}). Send the request again during working hours.",
+                    agent.name, agent.schedule.start, agent.schedule.end
+                ),
+            })),
+        );
+    }
 
     if state.storage.get_session(&session_id).is_err() {
         let model = if agent.model.trim().is_empty() {
@@ -8895,8 +9009,19 @@ async fn create_github_issue(
         .await
     {
         Ok(resp) => {
-            let data: Value = resp.json().await.unwrap_or(json!({ "status": "created" }));
-            (StatusCode::OK, Json(data))
+            // Pass GitHub's status through: swallowing it made a 401/403/422
+            // look like a created issue and the UI closed the dialog.
+            let status = resp.status();
+            let data: Value = resp.json().await.unwrap_or(json!({}));
+            if status.is_success() {
+                (StatusCode::OK, Json(data))
+            } else {
+                let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                (
+                    code,
+                    Json(github_error_body(&owner, &repo, status.as_u16(), &data)),
+                )
+            }
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
