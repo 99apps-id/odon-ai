@@ -399,6 +399,22 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
           <button
             type="button"
             onClick={() => {
+              const dataUrl = sceneRef.current?.snapshot();
+              if (!dataUrl) return;
+              const link = document.createElement('a');
+              link.href = dataUrl;
+              const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+              link.download = `odon-office-${stamp}.png`;
+              link.click();
+            }}
+            className="rounded-lg border border-neutral-200/80 bg-white/85 px-2 py-1 text-[10px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-white"
+            title="Download a PNG of the office"
+          >
+            📷 Snapshot
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               try {
                 const url = sceneRef.current?.snapshot();
                 if (!url) throw new Error('no image');
