@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   GitPullRequest,
   AlertCircle,
@@ -47,6 +47,10 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
   const [newTitle, setNewTitle] = useState<string>('');
   const [newBody, setNewBody] = useState<string>('');
 
+  // Monotonic request id: switching repos quickly must not let a slower
+  // response for the previous repo overwrite the newer one.
+  const loadRequestRef = useRef(0);
+
   // Initial load: check auth status, user repositories, and workspace repo
   useEffect(() => {
     api.getGitHubStatus().then((status) => {
@@ -82,6 +86,7 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
   }, []);
 
   const loadData = async (targetOwner = owner, targetRepo = repo) => {
+    const request = ++loadRequestRef.current;
     if (!targetOwner || !targetRepo) {
       setPrs([]);
       setIssues([]);
@@ -89,11 +94,16 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
     }
     setIsLoading(true);
     setLoadError(null);
+    // Clear the previous repo's rows immediately: the header switches
+    // instantly, and stale rows under a new repo header mislead the operator.
+    setPrs([]);
+    setIssues([]);
     try {
       const [prsResult, issuesResult] = await Promise.allSettled([
         api.getGitHubPrs(targetOwner, targetRepo),
         api.getGitHubIssues(targetOwner, targetRepo),
       ]);
+      if (loadRequestRef.current !== request) return;
       // A failed request used to be coerced into an empty list, so an expired
       // token rendered as "Pull requests (0)" instead of an actionable error.
       const failures: string[] = [];
@@ -106,10 +116,13 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
       setIssues(pick(issuesResult, 'Issues'));
       setLoadError(failures.length > 0 ? failures.join(' · ') : null);
     } catch (err) {
+      if (loadRequestRef.current !== request) return;
       console.error('Failed to load GitHub data:', err);
       setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
-      setIsLoading(false);
+      if (loadRequestRef.current === request) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -146,6 +159,13 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
   };
 
   const handleCheckoutBranch = (branchName: string) => {
+    // The branch name comes from `pr.head.ref`, which the PR author controls.
+    // Git refnames may contain `;`, `$()`, backticks or `&`, so interpolating
+    // an unvalidated ref into a shell command is arbitrary command execution.
+    if (!/^[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
+      setLoadError(`Refusing to check out unsafe branch name: ${branchName}`);
+      return;
+    }
     const cmd = `git fetch origin ${branchName} && git checkout ${branchName}`;
     if (onOpenTerminal) {
       onOpenTerminal(cmd);
@@ -160,9 +180,13 @@ export const GitHubView: React.FC<GitHubViewProps> = ({ onSendMessage, onOpenTer
       setNewTitle('');
       setNewBody('');
       setIsCreateOpen(false);
+      setLoadError(null);
       loadData();
     } catch (err) {
-      console.error('Failed to create issue:', err);
+      // The daemon forwards GitHub's failure status; show it instead of
+      // silently closing the dialog as if the issue was created.
+      const message = err instanceof Error ? err.message : String(err);
+      setLoadError(`Gagal membuat issue: ${message}`);
     }
   };
 

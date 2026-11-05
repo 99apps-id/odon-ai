@@ -123,6 +123,12 @@ export function tokenizeLine(line: string, family: string | null): Token[] {
       rest = rest.slice(1);
     }
   }
+  // If the guard stopped the loop, the remainder must still be rendered —
+  // otherwise the tail of a very long line becomes invisible text that the
+  // transparent textarea layer still contains.
+  if (rest.length > 0) {
+    out.push({ text: rest, kind: 'plain' });
+  }
   return out;
 }
 

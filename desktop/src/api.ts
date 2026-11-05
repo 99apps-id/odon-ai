@@ -1098,7 +1098,9 @@ export const api = {
 
   async getGitHubUserRepos(): Promise<{ repos: GitHubRepoItem[] }> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/github/user-repos`);
-    if (!res.ok) return { repos: [] };
+    // Masking the failure as an empty list rendered an expired token as an
+    // empty repository picker instead of an actionable error.
+    if (!res.ok) throw new Error(await readGitHubError(res));
     return res.json();
   },
 

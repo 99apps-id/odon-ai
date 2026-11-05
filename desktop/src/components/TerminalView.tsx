@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Terminal as TerminalIcon,
   RotateCcw,
@@ -16,11 +16,19 @@ interface TerminalTab {
   title: string;
   shell: string;
   cwd?: string;
+  /** Run once when this tab's PTY connects. */
+  initialCommand?: string;
 }
 
 interface TerminalViewProps {
   onClose?: () => void;
   onSendToAgent?: (text: string) => void;
+  /**
+   * A command handed over from another panel (e.g. GitHub "Checkout branch").
+   * Opens a fresh tab and runs it; the `id` lets repeated identical commands
+   * still trigger a new run.
+   */
+  initialCommand?: { text: string; id: number } | null;
 }
 
 /**
@@ -51,7 +59,7 @@ const SHELL_OPTIONS: ShellOption[] = IS_WINDOWS
       { id: 'sh', name: 'POSIX sh', hint: 'sh' },
     ];
 
-export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAgent }) => {
+export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAgent, initialCommand }) => {
   const [tabs, setTabs] = useState<TerminalTab[]>([
     {
       id: `tab-${SHELL_OPTIONS[0].id}-1`,
@@ -63,6 +71,26 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAge
     `tab-${SHELL_OPTIONS[0].id}-1`,
   );
   const [isAddMenuOpen, setIsAddMenuOpen] = useState<boolean>(false);
+  const lastCommandIdRef = useRef<number | null>(null);
+
+  // A command from another panel opens its own tab so it never fights an
+  // interactive session the operator already has open.
+  useEffect(() => {
+    if (!initialCommand || !initialCommand.text) return;
+    if (lastCommandIdRef.current === initialCommand.id) return;
+    lastCommandIdRef.current = initialCommand.id;
+    const newId = `tab-cmd-${initialCommand.id}`;
+    setTabs((prev) => [
+      ...prev,
+      {
+        id: newId,
+        title: 'Git Task',
+        shell: SHELL_OPTIONS[0].id,
+        initialCommand: initialCommand.text,
+      },
+    ]);
+    setActiveTabId(newId);
+  }, [initialCommand]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
@@ -186,6 +214,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ onClose, onSendToAge
                 shell={tab.shell}
                 cwd={tab.cwd}
                 title={tab.title}
+                initialCommand={tab.initialCommand}
                 className="w-full h-full rounded-none border-none"
               />
             </div>

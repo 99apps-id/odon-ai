@@ -472,6 +472,9 @@ export default function App() {
   const [dynamicTools, setDynamicTools] = useState<any[]>([]);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [rightPanelView, setRightPanelView] = useState<'artifacts' | 'editor' | 'browser' | 'terminal'>('artifacts');
+  // A command handed to the terminal from another panel (GitHub checkout).
+  // The id lets repeated identical commands still open a fresh run.
+  const [terminalCommand, setTerminalCommand] = useState<{ text: string; id: number } | null>(null);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   // Composer Execution Mode (unified UX: one composer, multiple modes)
   const [executionMode, setExecutionMode] = useState<ExecutionMode>(() => {
@@ -2119,6 +2122,12 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
       content: f.content,
     }))
     : undefined;
+  // Identity of the generated code artifact plus a cheap content signature, so
+  // the editor can tell a regenerated artifact from a re-render and reset its
+  // draft buffers.
+  const codeFilesKey = latestCodeArtifact
+    ? `${latestCodeArtifact.id}:${(codeFiles || []).map((f) => `${f.path}:${f.content.length}`).join('|')}`
+    : '';
 
   const selectedPatchDiff = (() => {
     const art = selectedPatchId ? artifacts.find((a) => a.id === selectedPatchId) : undefined;
@@ -2543,7 +2552,10 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   setActiveNav('chat');
                   handleSendMessage(prompt);
                 }}
-                onOpenTerminal={() => {
+                onOpenTerminal={(command) => {
+                  // The command was previously discarded, which left the
+                  // Checkout button doing nothing.
+                  setTerminalCommand({ text: command, id: Date.now() });
                   setActiveNav('terminal');
                 }}
               />
@@ -2605,7 +2617,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
 
           {activeNav === 'terminal' && (
             <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
-              <TerminalView />
+              <TerminalView initialCommand={terminalCommand} />
             </div>
           )}
 
@@ -2613,6 +2625,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
             <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white">
               <CodeEditorView
                 files={codeFiles}
+                filesKey={codeFilesKey}
                 diff={selectedPatchDiff}
                 onRunPreview={() => openArtifactPreview(latestCodeArtifact)}
                 onOpenTerminal={() => {
@@ -3423,6 +3436,7 @@ Make sure the daemon is running at \`http://127.0.0.1:4096\` to get direct AI mo
                   <div className="flex-1 overflow-hidden">
                     <CodeEditorView
                       files={codeFiles}
+                      filesKey={codeFilesKey}
                       diff={selectedPatchDiff}
                       onRunPreview={() => openArtifactPreview(latestCodeArtifact)}
                       onOpenTerminal={() => setRightPanelView('terminal')}

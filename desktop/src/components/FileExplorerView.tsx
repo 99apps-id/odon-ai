@@ -102,6 +102,14 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
   // A slow listing for a previous workspace must not overwrite the folder the
   // operator is now looking at.
   const loadRequestRef = useRef(0);
+  // Same guard for file reads: a slow read of file A landing after file B was
+  // opened used to leave B selected with A's text in the editor, and Save then
+  // overwrote B with A's content.
+  const openRequestRef = useRef(0);
+  // Line ending of the file as it is on disk. A controlled <textarea> reports
+  // LF-only values after the first edit, so saving blindly rewrote every
+  // CRLF-terminated line (breaking .bat files and repos with .gitattributes).
+  const fileEolRef = useRef<'lf' | 'crlf'>('lf');
 
   const loadDirectory = async (path: string) => {
     const requestId = ++loadRequestRef.current;
@@ -130,6 +138,10 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
   // a new history: back/forward must not walk into a folder that is no longer
   // allowed.
   useEffect(() => {
+    // Dirty edits in the previous workspace would be silently lost.
+    if (selectedFile && isDirty && !window.confirm('This file has unsaved changes. Discard them?')) {
+      return;
+    }
     setHistory([rootPath]);
     setHistoryIndex(0);
     setSelectedFile(null);
@@ -177,34 +189,48 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
     navigateTo(parent);
   };
 
+  const isDirty =
+    !!fileData && editedContent !== (fileData.content || '').replace(/\r\n/g, '\n');
+
+  const hasUnsavedChanges = () => isDirty && !window.confirm('This file has unsaved changes. Discard them?');
+
   const handleOpenFile = async (entry: FsEntryItem) => {
     const fullPath = joinPath(currentPath, entry.name);
     if (entry.is_dir) {
       navigateTo(fullPath);
       return;
     }
+    if (selectedFile && !samePath(selectedFile, fullPath) && hasUnsavedChanges()) return;
+    const requestId = ++openRequestRef.current;
     setSelectedFile(fullPath);
     setFileError(null);
     try {
       const res = await api.fsRead(fullPath);
+      if (requestId !== openRequestRef.current) return;
       if (res.error) {
         setFileData(null);
         setFileError(res.error);
         return;
       }
+      const raw = res.content || '';
+      fileEolRef.current = raw.includes('\r\n') ? 'crlf' : 'lf';
       setFileData(res);
-      setEditedContent(res.content || '');
+      setEditedContent(raw.replace(/\r\n/g, '\n'));
     } catch (err: any) {
+      if (requestId !== openRequestRef.current) return;
       setFileData(null);
       setFileError(err?.message || 'Failed to read file');
     }
   };
 
   const handleSaveFile = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !isDirty) return;
     setIsSaving(true);
     try {
-      const res = await api.fsWrite(selectedFile, editedContent);
+      // Restore the on-disk line ending before writing.
+      const content =
+        fileEolRef.current === 'crlf' ? editedContent.replace(/\n/g, '\r\n') : editedContent;
+      const res = await api.fsWrite(selectedFile, content);
       if (res.success) {
         setFileError(null);
         setSaveSuccess(true);
@@ -224,7 +250,13 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
     if (!confirm(`Are you sure you want to delete ${entry.name}?`)) return;
     const fullPath = joinPath(currentPath, entry.name);
     try {
-      await api.fsDelete(fullPath);
+      const res = await api.fsDelete(fullPath);
+      // The daemon answers HTTP 200 with { success: false } when an approval is
+      // rejected; treating that as success cleared the UI as if it worked.
+      if (res && res.success === false) {
+        setLoadError(res.error || 'Delete was not permitted');
+        return;
+      }
       if (selectedFile && samePath(selectedFile, fullPath)) {
         setSelectedFile(null);
         setFileData(null);
@@ -241,10 +273,11 @@ export const FileExplorerView: React.FC<FileExplorerViewProps> = ({
     if (!newItemName.trim() || !createModal) return;
     const target = joinPath(currentPath, newItemName.trim());
     try {
-      if (createModal === 'file') {
-        await api.fsWrite(target, '');
-      } else {
-        await api.fsMkdir(target);
+      const res =
+        createModal === 'file' ? await api.fsWrite(target, '') : await api.fsMkdir(target);
+      if (res && res.success === false) {
+        setLoadError(res.error || 'Create was not permitted');
+        return;
       }
       setCreateModal(null);
       setNewItemName('');

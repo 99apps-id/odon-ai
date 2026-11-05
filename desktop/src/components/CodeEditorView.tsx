@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Copy, Check, FileCode, Play, Save } from 'lucide-react';
 import { DiffView } from './DiffView';
 import { CodeEditor } from './CodeEditor';
@@ -11,6 +11,13 @@ interface CodeFile {
   content: string;
 }
 
+// The editor is mounted in two places (the full-page Code view and the right
+// panel) and switching views unmounts one of them. Keeping the buffers in a
+// module-level store means unsaved edits survive the unmount instead of being
+// silently discarded, and both mounts see the same draft.
+const sharedBuffers: Record<string, string> = {};
+const sharedSaved: Record<string, string> = {};
+
 
 interface CodeEditorViewProps {
   onRunPreview?: () => void;
@@ -18,21 +25,46 @@ interface CodeEditorViewProps {
   files?: CodeFile[];
   /** Unified diff to render instead of the file body (patch artifacts). */
   diff?: string;
+  /**
+   * Identity of the artifact the files come from. When it changes (a new or
+   * regenerated artifact), the drafts are reset so a fresh generation is not
+   * hidden behind a stale edit buffer.
+   */
+  filesKey?: string;
 }
 
-export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: CodeEditorViewProps) {
+export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff, filesKey }: CodeEditorViewProps) {
   const fileList = files && files.length > 0 ? files : [];
   const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   // Edited buffers survive tab switches and are written back to the workspace
   // on save; until then the artifact's own content stays the baseline.
-  const [buffers, setBuffers] = useState<Record<string, string>>({});
+  const [buffers, setBuffers] = useState<Record<string, string>>(() => ({ ...sharedBuffers }));
+  // Content as of the last successful write. Without this baseline the dirty
+  // indicator could never clear: the buffer differs from the artifact content
+  // forever after the first save.
+  const [savedContent, setSavedContent] = useState<Record<string, string>>(() => ({ ...sharedSaved }));
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
+  const savingRef = useRef(false);
+
+  // A new (or regenerated) artifact resets the drafts and tab selection.
+  useEffect(() => {
+    for (const key of Object.keys(sharedBuffers)) delete sharedBuffers[key];
+    for (const key of Object.keys(sharedSaved)) delete sharedSaved[key];
+    setBuffers({});
+    setSavedContent({});
+    setActiveFileIndex(0);
+  }, [filesKey]);
+
   const currentFile = fileList[activeFileIndex] || fileList[0];
   const currentContent = currentFile
     ? buffers[currentFile.path] ?? currentFile.content
     : '';
+  const baselineContent = currentFile
+    ? savedContent[currentFile.path] ?? currentFile.content
+    : '';
+  const isDirty = currentContent !== baselineContent;
 
   if (diff && diff.trim()) {
     return (
@@ -66,7 +98,11 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
   };
 
   const handleSave = async () => {
-    if (!currentFile) return;
+    if (!currentFile || !isDirty) return;
+    // One lock shared by the button and Ctrl+S so a write in flight cannot be
+    // issued twice concurrently for the same path.
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaveState('saving');
     setSaveError('');
     try {
@@ -74,11 +110,16 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
       if (!result.success) {
         throw new Error(result.error || 'The daemon did not confirm the write.');
       }
+      // Advance the baseline so the dirty dot clears.
+      sharedSaved[currentFile.path] = currentContent;
+      setSavedContent((previous) => ({ ...previous, [currentFile.path]: currentContent }));
       setSaveState('saved');
       setTimeout(() => setSaveState('idle'), 2000);
     } catch (error: any) {
       setSaveState('error');
       setSaveError(error?.message || 'Failed to save file');
+    } finally {
+      savingRef.current = false;
     }
   };
 
@@ -103,7 +144,7 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
         <div className="flex items-center overflow-x-auto scrollbar-none">
           {fileList.map((file, idx) => {
             const isActive = idx === activeFileIndex;
-            const isDirty = (buffers[file.path] ?? file.content) !== file.content;
+            const tabDirty = (buffers[file.path] ?? file.content) !== (savedContent[file.path] ?? file.content);
             return (
               <button
                 key={file.path}
@@ -116,7 +157,7 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
               >
                 <FileCode className={`w-3.5 h-3.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
                 {file.name}
-                {isDirty && <span className="text-amber-500" title="Unsaved changes">●</span>}
+                {tabDirty && <span className="text-amber-500" title="Unsaved changes">●</span>}
               </button>
             );
           })}
@@ -176,13 +217,17 @@ export function CodeEditorView({ onRunPreview, onOpenTerminal, files, diff }: Co
         </div>
       </div>
 
-      {/* Editable, syntax-highlighted code area */}
+      {/* Editable, syntax-highlighted code area. Keyed by path so switching
+          tabs starts with a clean caret/scroll instead of the previous file's
+          numeric offset. */}
       <div className="flex-1 min-h-0">
         <CodeEditor
+          key={currentFile.path}
           value={currentContent}
-          onChange={(next) =>
-            setBuffers((previous) => ({ ...previous, [currentFile.path]: next }))
-          }
+          onChange={(next) => {
+            sharedBuffers[currentFile.path] = next;
+            setBuffers((previous) => ({ ...previous, [currentFile.path]: next }));
+          }}
           language={language}
           onSave={handleSave}
         />
