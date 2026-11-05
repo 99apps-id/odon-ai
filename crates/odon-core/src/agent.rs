@@ -164,10 +164,8 @@ mod tests {
         // 09:00–18:00 in Jakarta (UTC+7): 02:00 UTC is 09:00 WIB (on shift),
         // 11:30 UTC is 18:30 WIB (off shift) — regardless of the daemon clock.
         let sched = schedule("09:00", "18:00", vec![], Some("Asia/Jakarta"));
-        assert!(sched
-            .is_on_shift(Utc.with_ymd_and_hms(2026, 11, 5, 2, 0, 0).unwrap()));
-        assert!(!sched
-            .is_on_shift(Utc.with_ymd_and_hms(2026, 11, 5, 11, 30, 0).unwrap()));
+        assert!(sched.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 5, 2, 0, 0).unwrap()));
+        assert!(!sched.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 5, 11, 30, 0).unwrap()));
     }
 
     #[test]
@@ -176,10 +174,8 @@ mod tests {
         // depending on DST, so pick a moment that is clearly inside: 03:00 UTC
         // is 22:00 EST in winter — on shift; 14:00 UTC is 09:00 EST — off.
         let sched = schedule("22:00", "06:00", vec![], Some("America/New_York"));
-        assert!(sched
-            .is_on_shift(Utc.with_ymd_and_hms(2026, 1, 15, 3, 0, 0).unwrap()));
-        assert!(!sched
-            .is_on_shift(Utc.with_ymd_and_hms(2026, 1, 15, 14, 0, 0).unwrap()));
+        assert!(sched.is_on_shift(Utc.with_ymd_and_hms(2026, 1, 15, 3, 0, 0).unwrap()));
+        assert!(!sched.is_on_shift(Utc.with_ymd_and_hms(2026, 1, 15, 14, 0, 0).unwrap()));
     }
 
     #[test]
