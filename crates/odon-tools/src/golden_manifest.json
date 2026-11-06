@@ -1,2313 +1,2471 @@
 [
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "agents_office_create",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "app_close",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "app_focus",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "app_input",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "app_launch",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "app_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "approval_decide",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "approval_history",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "approval_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "approval_policy_revoke",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "architecture_diagram",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_create_chart",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_create_code",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_create_document",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_create_image",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_delete",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_export",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_import",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_management",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "artifact_update",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "audit_search",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "automation_create",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "automation_delete",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "automation_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "automation_logs",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "automation_trigger",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "automation_update",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "axe_core_scan",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "bash_run",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_click",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_download",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_navigate",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_open",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_screenshot",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_click",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_click_at",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_click_item",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_close",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "browser_session_composer",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_create",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_navigate",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_resume",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_screenshot",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_select",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_text",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_type",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_session_wait",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "browser_status",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "calc_eval",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "change_summary",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "changelog_generate",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "clipboard_read",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "clipboard_write",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "code_index",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "code_search",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "copy_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "coverage_run",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "coverage_threshold_check",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "create_directory",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "cron_add",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "cron_list",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "cron_remove",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "daemon_metrics",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "daemon_status",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "delete_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "dependency_audit",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "deploy_automation",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "dev_server_logs",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "dev_server_start",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "dev_server_status",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "dev_server_stop",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "disk_usage",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "dns_lookup",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "docker_image_build",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "docker_image_push",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "doctor",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
-    "name": "edit",
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
+    "name": "edit",
     "availability": {
-      "status": "unavailable"
+      "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "editor_open",
+    "availability": {
+      "status": "unavailable",
+      "reason": "Desktop editor open integration is not connected yet"
+    },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "Desktop editor open integration is not connected yet"
-    ],
-    "name": "editor_open",
-    "ready": false,
-    "visibility": "model"
+    ]
   },
   {
+    "name": "editor_reload",
     "availability": {
       "status": "stable"
     },
-    "issues": [],
-    "name": "editor_reload",
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
+    "name": "editor_reveal",
     "availability": {
-      "status": "unavailable"
+      "status": "unavailable",
+      "reason": "Workspace file-tree reveal integration is not connected yet"
     },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "Workspace file-tree reveal integration is not connected yet"
-    ],
-    "name": "editor_reveal",
-    "ready": false,
-    "visibility": "model"
+    ]
   },
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "editor_save",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "env_get",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "env_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "exec_background",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "exec_background_kill",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "exec_background_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "exec_stream_stdout",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "file_checksum",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "file_hash",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "format_code",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_chmod",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_copy_recursive",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_delete",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_diff",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_du",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_edit",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_find",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_list",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_move_recursive",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_owner_check",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_patch",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_read",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_readlink",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_search",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_stat",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_symlink_create",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_tree",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_unzip",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_write",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "fs_zip",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "game_scaffold",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_add",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_blame",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_branch",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_checkout",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_cherry_pick",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_clean",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_commit",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_diff",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_log",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_log_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_ls_files",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_merge",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_pull",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_push",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_rebase",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_remote_add",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_remote_set_url",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_reset",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_reset_hard",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_revert",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_show",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_stash",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_stash_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_stash_pop",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_status",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "git_tag",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_create_issue",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_create_review",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_get_repo",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_list_comments",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_list_issues",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_list_prs",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_merge_pr",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_pr_files",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_workflow_jobs",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_workflow_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_workflow_logs",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_workflow_run",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "github_workflow_runs",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "glob",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "gmaps_search",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "graphql_client",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "grep",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "html_parse",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_delete",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_download",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_get",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_patch",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_post",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_put",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "http_upload",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "instagram_media_get",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "instagram_publish",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "instagram_status",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "license_scan",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "lighthouse_ci",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "list_directory",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "mcp_add_server",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
-    "name": "mcp_call",
+    "visibility": "compatibility",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
+    "name": "mcp_call",
     "availability": {
-      "status": "unavailable"
+      "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "mcp_call_stream",
+    "availability": {
+      "status": "unavailable",
+      "reason": "MCP progress streaming is not implemented yet; use mcp_call"
+    },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "MCP progress streaming is not implemented yet; use mcp_call"
-    ],
-    "name": "mcp_call_stream",
-    "ready": false,
-    "visibility": "model"
+    ]
   },
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "mcp_list_servers",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "mcp_list_tools",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "mcp_remove_server",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "mcp_toggle_server",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "memory_forget",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "memory_recall",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "memory_search",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "memory_store",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "metric_dashboard",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "model3d_create",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "move_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "multi_edit",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
-    "availability": {
-      "status": "experimental"
-    },
-    "issues": [],
     "name": "network_traceroute",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
-    "name": "notification_send",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
-    "name": "openapi_generate",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
-    "name": "pipeline_trigger",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
-    "name": "plan_mode",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "experimental"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "notification_send",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "openapi_generate",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "pipeline_trigger",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "plan_mode",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "port_scan",
+    "availability": {
+      "status": "experimental"
+    },
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "probe_url",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "process_kill",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "process_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "process_wait",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "project_detect",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "project_scripts",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "project_task",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "provider_delete",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "provider_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "provider_set_default",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "provider_test",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "read_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "relay_status",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "remember",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "responsive_screenshot",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "rest_client",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "review_diff",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "review_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "review_security",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "review_session_changes",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
-    "name": "run_checks",
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
+    "name": "run_checks",
     "availability": {
-      "status": "unavailable"
+      "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "schtasks_create",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "schtasks_delete",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "schtasks_query",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "security_audit_cert",
+    "availability": {
+      "status": "unavailable",
+      "reason": "TLS certificate inspection is not implemented yet"
+    },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "TLS certificate inspection is not implemented yet"
-    ],
-    "name": "security_audit_cert",
-    "ready": false,
-    "visibility": "model"
+    ]
   },
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "security_audit_headers",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "security_patch_pr",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [
-      "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
-    ],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "send_document",
-    "ready": false,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
-    ],
+    ]
+  },
+  {
     "name": "send_image",
-    "ready": false,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
-    ],
+    ]
+  },
+  {
     "name": "send_media",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
     "ready": false,
-    "visibility": "model"
+    "issues": [
+      "required environment variable 'TELEGRAM_BOT_TOKEN' is not set"
+    ]
   },
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "session_delete",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "session_export",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "session_get",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "session_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
-    "name": "session_messages",
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
   },
   {
+    "name": "session_messages",
     "availability": {
-      "status": "unavailable"
+      "status": "stable"
     },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "session_switch",
+    "availability": {
+      "status": "unavailable",
+      "reason": "Session switching must be performed by the agent runtime; a tool call cannot mutate its immutable execution context"
+    },
+    "visibility": "model",
+    "ready": false,
     "issues": [
       "Session switching must be performed by the agent runtime; a tool call cannot mutate its immutable execution context"
-    ],
-    "name": "session_switch",
-    "ready": false,
-    "visibility": "model"
+    ]
   },
   {
-    "availability": {
-      "status": "stable"
-    },
-    "issues": [],
     "name": "settings_get",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "settings_set",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "sftp_download",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "sftp_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "sftp_upload",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "shell_exec",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "skill_create",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "skill_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "skill_run",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "smart_install",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "ssh_exec",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "ssh_profile_test",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "system_info",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "termigo_copy_selection",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "termigo_multi_paste",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "termigo_paste_buffer_history",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "terminal_exec",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "terminal_info",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "test_file",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "test_run",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "think",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "threads_publish",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "threads_reply_list",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "threads_status",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "todo_read",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "todo_update",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "todo_write",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "tool_diagnostics",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "tunnel_list",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "tunnel_start",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
+    "name": "tunnel_stop",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "uptime_monitor",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "url_preview",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "video_merge",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "video_probe",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "video_trim",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "web_fetch",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "web_scrape",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "web_search",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "web_search_code",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "web_search_news",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "webhook_test",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "workspace_add",
-    "ready": true,
-    "visibility": "compatibility"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "compatibility",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "workspace_list",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
+    "visibility": "model",
+    "ready": true,
+    "issues": []
+  },
+  {
     "name": "workspace_remove",
-    "ready": true,
-    "visibility": "model"
-  },
-  {
     "availability": {
       "status": "stable"
     },
-    "issues": [],
-    "name": "write_file",
+    "visibility": "model",
     "ready": true,
-    "visibility": "model"
+    "issues": []
+  },
+  {
+    "name": "write_file",
+    "availability": {
+      "status": "stable"
+    },
+    "visibility": "model",
+    "ready": true,
+    "issues": []
   }
 ]

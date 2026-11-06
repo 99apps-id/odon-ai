@@ -145,6 +145,23 @@ pub(crate) fn browser_headful_default() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether to pin Chromium's DNS for public hosts too. Off by default: the
+/// `--host-resolver-rules` flag makes Chrome show an "unsupported command-line
+/// flag" infobar and some sites (Instagram, Threads) refuse to log in. Local
+/// and private targets are always pinned regardless. Opt in with
+/// `ODON_BROWSER_PIN_DNS=1`.
+pub(crate) fn browser_pin_dns_enabled() -> bool {
+    std::env::var("ODON_BROWSER_PIN_DNS")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 /// Base delay (ms) before each human-facing browser action (click/type/select).
 /// Opt in with `ODON_BROWSER_ACTION_DELAY_MS` (default 0 = no added delay). A
 /// per-call `delay_ms` overrides it.
@@ -446,8 +463,6 @@ pub(crate) async fn spawn_browser(
         let p = port().await?;
         let mut c = Command::new(&exe);
         c.args([
-            "--disable-gpu",
-            "--hide-scrollbars",
             "--window-size=1280,800",
             "--no-first-run",
             "--no-default-browser-check",
@@ -456,18 +471,32 @@ pub(crate) async fn spawn_browser(
             &format!("--user-data-dir={}", root.display()),
         ]);
         if headful {
-            // A visible window is far less likely to be flagged as an automated
-            // client, and this also clears the `navigator.webdriver` signal.
+            // A visible window with the real GPU and `navigator.webdriver`
+            // cleared behaves like a normal browser. Headless-only flags like
+            // `--disable-gpu` and `--hide-scrollbars` are automation tells, so
+            // they are left off here.
             c.arg("--disable-blink-features=AutomationControlled");
         } else {
-            c.arg("--headless=new");
+            c.args(["--headless=new", "--disable-gpu", "--hide-scrollbars"]);
         }
         // Pin the validated address for the landing page. Chromium has its own
         // resolver, so an un-pinned launch would re-resolve the hostname after
         // the guard already approved a different answer.
+        //
+        // The `--host-resolver-rules` flag triggers Chrome's "unsupported
+        // command-line flag" infobar and makes some sites (Instagram, Threads)
+        // refuse to log in. Pin only local/private targets (the preview case)
+        // unless the operator explicitly opts in with ODON_BROWSER_PIN_DNS.
         if let Ok(target) = crate::net_guard::validate_url_allow_loopback(url).await {
-            if let Some(rules) = crate::net_guard::host_resolver_rules(&target, false) {
-                c.arg(format!("--host-resolver-rules={rules}"));
+            let pin_public = browser_pin_dns_enabled();
+            let private_target = target
+                .ip_addrs()
+                .iter()
+                .any(|ip| crate::net_guard::is_blocked_ip(*ip));
+            if private_target || pin_public {
+                if let Some(rules) = crate::net_guard::host_resolver_rules(&target, false) {
+                    c.arg(format!("--host-resolver-rules={rules}"));
+                }
             }
         }
         c.arg(url);
@@ -1184,6 +1213,261 @@ impl Tool for BrowserSessionSelectTool {
             "delay_ms": delay,
             "status": "selected"
         }))
+    }
+}
+
+pub struct BrowserSessionClickAtTool;
+#[async_trait]
+impl Tool for BrowserSessionClickAtTool {
+    fn name(&self) -> &str {
+        "browser_session_click_at"
+    }
+    fn description(&self) -> &str {
+        "Click at viewport coordinates inside a live browser session (page.mouse.click equivalent) for targets that have no stable selector"
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "x": { "type": "number", "description": "Viewport x in CSS pixels" }, "y": { "type": "number", "description": "Viewport y in CSS pixels" }, "button": { "type": "string", "enum": ["left", "middle", "right"] }, "delay_ms": { "type": "integer", "description": "Human-like pause before clicking, in ms (default from ODON_BROWSER_ACTION_DELAY_MS)" } }),
+            json!(["session_id"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, a: Value) -> Result<Value> {
+        let id = validate_session_id(
+            a.get("session_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| err("session_id is required"))?,
+        )?;
+        let x = a
+            .get("x")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| err("x is required"))?;
+        let y = a
+            .get("y")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| err("y is required"))?;
+        if !x.is_finite() || !y.is_finite() {
+            return Err(err("x and y must be finite numbers"));
+        }
+        let button = a.get("button").and_then(Value::as_str).unwrap_or("left");
+        let delay = action_delay(&a);
+        human_pause(delay).await;
+        // Move first, then press/release, like a real pointer.
+        for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
+            cdp(
+                id,
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": kind,
+                    "x": x,
+                    "y": y,
+                    "button": button,
+                    "clickCount": if kind == "mouseMoved" { 0 } else { 1 }
+                }),
+            )
+            .await?;
+        }
+        Ok(json!({ "session_id": id, "x": x, "y": y, "clicked": true, "delay_ms": delay }))
+    }
+}
+
+pub struct BrowserSessionComposerTool;
+#[async_trait]
+impl Tool for BrowserSessionComposerTool {
+    fn name(&self) -> &str {
+        "browser_session_composer"
+    }
+    fn description(&self) -> &str {
+        "Focus a reply/comment composer (contenteditable, textarea or textbox) and type into it. Uses real input events (Input.insertText), so React/Draft.js editors on Instagram and Threads accept the text. Combine with browser_session_click_at for the send button (hybrid)."
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "selector": { "type": "string", "description": "Composer selector; omit to auto-detect a visible composer" }, "text": { "type": "string" }, "submit": { "type": "boolean", "description": "Press Enter after typing (default false)" }, "delay_ms": { "type": "integer", "description": "Human-like pause before typing, in ms (default from ODON_BROWSER_ACTION_DELAY_MS)" } }),
+            json!(["session_id", "text"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, a: Value) -> Result<Value> {
+        let id = validate_session_id(
+            a.get("session_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| err("session_id is required"))?,
+        )?;
+        let text = a
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| err("text is required"))?;
+        let selector = a
+            .get("selector")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let submit = a.get("submit").and_then(Value::as_bool).unwrap_or(false);
+        let delay = action_delay(&a);
+        let focus_js = match selector {
+            Some(sel) => format!(
+                "(()=>{{const e=document.querySelector({});if(!e)return false;e.scrollIntoView({{block:'center'}});e.focus();if(e.isContentEditable){{const r=document.createRange();r.selectNodeContents(e);r.collapse(false);const s=getSelection();if(s){{s.removeAllRanges();s.addRange(r);}}}}else if('selectionStart' in e){{try{{e.setSelectionRange(e.value.length,e.value.length)}}catch(_e){{}}}}return true}})()",
+                serde_json::to_string(sel).unwrap()
+            ),
+            None => "(()=>{const cands=Array.from(document.querySelectorAll('div[contenteditable=\"true\"],textarea,[role=\"textbox\"],input[type=\"text\"]'));const el=cands.find(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).display!=='none'});if(!el)return false;el.scrollIntoView({block:'center'});el.focus();if(el.isContentEditable){const r=document.createRange();r.selectNodeContents(el);r.collapse(false);const s=getSelection();if(s){s.removeAllRanges();s.addRange(r);}}else if('selectionStart' in el){try{el.setSelectionRange(el.value.length,el.value.length)}catch(e){}}return true})()".to_string(),
+        };
+        let focused = evaluate_js(id, &focus_js).await?;
+        if !focused
+            .get("value")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(err("no visible composer found; pass a selector"));
+        }
+        human_pause(delay).await;
+        cdp(id, "Input.insertText", json!({ "text": text })).await?;
+        if submit {
+            for kind in ["rawKeyDown", "keyUp"] {
+                cdp(
+                    id,
+                    "Input.dispatchKeyEvent",
+                    json!({ "type": kind, "key": "Enter", "code": "Enter", "text": "\r", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13 }),
+                )
+                .await?;
+            }
+        }
+        Ok(
+            json!({ "session_id": id, "typed": text.chars().count(), "submitted": submit, "delay_ms": delay, "status": "composed" }),
+        )
+    }
+}
+
+pub struct BrowserSessionClickItemTool;
+
+const FIND_ITEM_JS: &str = r#"
+(() => {
+  const needle = __NEEDLE__;
+  const exact = __EXACT__;
+  const containerSelector = __CONTAINER__;
+  const scope = containerSelector ? document.querySelector(containerSelector) : document;
+  if (!scope) return { found: false };
+  const CANDS = 'a,button,li,[role=listitem],[role=option],[role=button],[role=link],[tabindex]';
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const visible = (e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  };
+  const txt = (e) => norm(e.innerText || e.textContent || '');
+  const hit = (t) => exact ? t === needle : t.toLowerCase().includes(needle.toLowerCase());
+  const matches = [];
+  for (const e of scope.querySelectorAll(CANDS)) {
+    if (!visible(e)) continue;
+    if (hit(txt(e))) matches.push(e);
+  }
+  const el = matches[__INDEX__];
+  if (!el) return { found: false, matches: matches.length };
+  el.scrollIntoView({ block: 'center' });
+  const r = el.getBoundingClientRect();
+  const x = r.left + r.width / 2;
+  const y = r.top + r.height / 2;
+  const stable = (e) => {
+    if (e.id) return '#' + CSS.escape(e.id);
+    for (const a of ['data-testid', 'data-test-id', 'data-cy', 'aria-label', 'role', 'href']) {
+      const v = e.getAttribute && e.getAttribute(a);
+      if (v) return e.tagName.toLowerCase() + '[' + a + '="' + v + '"]';
+    }
+    return null;
+  };
+  return { found: true, matches: matches.length, text: txt(el).slice(0, 300), selector: stable(el), x, y };
+})()
+"#;
+
+#[async_trait]
+impl Tool for BrowserSessionClickItemTool {
+    fn name(&self) -> &str {
+        "browser_session_click_item"
+    }
+    fn description(&self) -> &str {
+        "Find a list item (for example a notification in an activity feed) by its visible text and click it, returning a stable selector and coordinates for reuse. More reliable than a positional nth-child selector."
+    }
+    fn parameters_schema(&self) -> Value {
+        schema(
+            json!({ "session_id": { "type": "string" }, "text": { "type": "string", "description": "Visible text to match (substring unless exact)" }, "exact": { "type": "boolean", "description": "Match the whole visible text (default false)" }, "container_selector": { "type": "string", "description": "Optional CSS selector scoping the search to a list region" }, "index": { "type": "integer", "description": "Which matching item to use, 0-based (default 0)" }, "click": { "type": "boolean", "description": "Click the item (default true); false only locates it" }, "delay_ms": { "type": "integer", "description": "Human-like pause before clicking, in ms (default from ODON_BROWSER_ACTION_DELAY_MS)" } }),
+            json!(["session_id", "text"]),
+        )
+    }
+    fn risk_tier(&self) -> RiskTier {
+        RiskTier::Tier1WorkspaceMutating
+    }
+    async fn execute(&self, _ctx: &ToolContext, a: Value) -> Result<Value> {
+        let id = validate_session_id(
+            a.get("session_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| err("session_id is required"))?,
+        )?;
+        let text = a
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| err("text is required"))?;
+        let exact = a.get("exact").and_then(Value::as_bool).unwrap_or(false);
+        let index = a.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let click = a.get("click").and_then(Value::as_bool).unwrap_or(true);
+        let container = a
+            .get("container_selector")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let delay = action_delay(&a);
+
+        let js = FIND_ITEM_JS
+            .replace("__NEEDLE__", &serde_json::to_string(text).unwrap())
+            .replace("__EXACT__", if exact { "true" } else { "false" })
+            .replace(
+                "__CONTAINER__",
+                &match container {
+                    Some(value) => serde_json::to_string(value).unwrap(),
+                    None => "null".to_string(),
+                },
+            )
+            .replace("__INDEX__", &index.to_string());
+        let found = evaluate_js(id, &js).await?;
+        if !found.get("found").and_then(Value::as_bool).unwrap_or(false) {
+            let matches = found.get("matches").and_then(Value::as_u64).unwrap_or(0);
+            return Err(err(format!(
+                "no visible item matching {text:?} (0 of {matches} matches)"
+            )));
+        }
+
+        let mut result = json!({
+            "session_id": id,
+            "text": found.get("text").cloned().unwrap_or(json!("")),
+            "selector": found.get("selector").cloned().unwrap_or(Value::Null),
+            "x": found.get("x").cloned().unwrap_or(json!(0)),
+            "y": found.get("y").cloned().unwrap_or(json!(0)),
+            "matches": found.get("matches").cloned().unwrap_or(json!(0)),
+        });
+        if click {
+            human_pause(delay).await;
+            let x = found.get("x").and_then(Value::as_f64).unwrap_or(0.0);
+            let y = found.get("y").and_then(Value::as_f64).unwrap_or(0.0);
+            for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
+                cdp(
+                    id,
+                    "Input.dispatchMouseEvent",
+                    json!({
+                        "type": kind,
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": if kind == "mouseMoved" { 0 } else { 1 }
+                    }),
+                )
+                .await?;
+            }
+            result["clicked"] = json!(true);
+            result["delay_ms"] = json!(delay);
+        }
+        Ok(result)
     }
 }
 

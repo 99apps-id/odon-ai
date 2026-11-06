@@ -16,6 +16,8 @@ pub mod github;
 pub mod gmaps;
 pub mod harness;
 pub mod image;
+pub mod instagram;
+pub mod integrations;
 pub mod local_app;
 pub mod mcp;
 pub mod media;
@@ -39,6 +41,7 @@ pub mod skills;
 pub mod skills_builtin;
 pub mod system;
 pub mod testing;
+pub mod threads;
 pub mod unified;
 pub mod ux;
 pub mod video;
@@ -136,6 +139,16 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(github::GitHubListIssuesTool::new()));
     reg.register(Box::new(github::GitHubCreateIssueTool::new()));
     reg.register(Box::new(github::GitHubListPullRequestsTool::new()));
+
+    // Instagram (Meta Graph API) Operations
+    reg.register(Box::new(instagram::InstagramPublishTool));
+    reg.register(Box::new(instagram::InstagramStatusTool));
+    reg.register(Box::new(instagram::InstagramMediaGetTool));
+
+    // Threads (Meta) Operations
+    reg.register(Box::new(threads::ThreadsPublishTool));
+    reg.register(Box::new(threads::ThreadsStatusTool));
+    reg.register(Box::new(threads::ThreadsReplyListTool));
 
     // Extended GitHub Operations
     reg.register(Box::new(git_ext::GitHubCreateReviewTool::new()));
@@ -295,6 +308,9 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(browser_session::BrowserSessionCloseTool));
     reg.register(Box::new(browser_session::BrowserSessionNavigateTool));
     reg.register(Box::new(browser_session::BrowserSessionClickTool));
+    reg.register(Box::new(browser_session::BrowserSessionClickAtTool));
+    reg.register(Box::new(browser_session::BrowserSessionClickItemTool));
+    reg.register(Box::new(browser_session::BrowserSessionComposerTool));
     reg.register(Box::new(browser_session::BrowserSessionTextTool));
     reg.register(Box::new(browser_session::BrowserSessionTypeTool));
     reg.register(Box::new(browser_session::BrowserSessionWaitTool));
@@ -364,10 +380,18 @@ pub fn build_full_tool_registry() -> ToolRegistry {
     reg.register(Box::new(ops_ext::SessionExportTool));
     reg.register(Box::new(ops_ext::RelayStatusTool));
     reg.register(Box::new(ops_ext::AutomationListTool));
+    reg.register(Box::new(integrations::AutomationCreateTool));
     reg.register(Box::new(ops_ext::AutomationTriggerTool));
     reg.register(Box::new(ops_ext::AutomationLogsTool));
     reg.register(Box::new(ops_ext::AutomationUpdateTool));
     reg.register(Box::new(ops_ext::AutomationDeleteTool));
+    reg.register(Box::new(integrations::SchTasksCreateTool));
+    reg.register(Box::new(integrations::SchTasksQueryTool));
+    reg.register(Box::new(integrations::SchTasksDeleteTool));
+    reg.register(Box::new(integrations::TunnelStartTool));
+    reg.register(Box::new(integrations::TunnelListTool));
+    reg.register(Box::new(integrations::TunnelStopTool));
+    reg.register(Box::new(integrations::HtmlParseTool));
     reg.register(Box::new(ops_ext::SettingsGetTool));
     reg.register(Box::new(ops_ext::SettingsSetTool));
 
@@ -394,7 +418,7 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(
             schemas.len(),
-            240,
+            257,
             "Tool surface changed; review the addition or removal and update this contract intentionally"
         );
         assert_eq!(
