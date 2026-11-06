@@ -1,6 +1,6 @@
 [package]
 name = "odon-desktop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "ODON desktop shell: a Tauri window over the odond sidecar daemon."
 license = "Apache-2.0"
