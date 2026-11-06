@@ -120,11 +120,24 @@ ODON exposes 255 registered tools (240 model-visible, 15 compatibility-only; 248
 ### 10. 🏢 Agents Office
 A live isometric 3D office rendered over real sessions — desks are conversations and persisted agents, the floor holds agent desks, delegated subagents appear in the **Subagent Wing**, and the back-office director's desk is you.
 
+<p align="center">
+  <img src="assets/agent-office/hero.png" alt="ODON Agents Office: live isometric floor with agent desks, subagent wing, meeting room, director office, and lounge" width="100%" />
+</p>
+
+<p align="center">
+  <a href="assets/agent-office/demo.mp4">
+    <img src="assets/agent-office/demo-poster.png" alt="Agents Office demo in night mode with warm lamps" width="720" />
+  </a>
+  <br />
+  <em>▶ Click the preview to watch the short demo (night mode with the lamps on).</em>
+</p>
+
 - **Persisted agents**: give each teammate a name, role, desk color, system prompt, model (`provider::model`), optional workspace, and skills picked from the catalogue as chips. Agents persist in SQLite (`agents`) and their desks update live from the daemon event stream.
-- **Working hours with timezones**: each agent has a shift (start/end + weekdays + IANA timezone such as `Asia/Jakarta`; DST-aware). Outside the shift the desk shows *off shift*, idle agents fall *asleep*, and (see relays below) inbound messages are parked instead of waking the model.
+- **Working hours with timezones**: each agent has a shift (start/end + weekdays + IANA timezone such as `Asia/Jakarta`; DST-aware, including overnight shifts that belong to the day they started). Outside the shift the desk shows *off shift*, idle agents fall *asleep*, and (see relays below) inbound messages are parked instead of waking the model.
 - **Desk actions**: open a chat or start a new one, focus the camera, and **approve or reject pending tool approvals right from the desk** (tooltip or side panel) without leaving the office.
 - **Live telemetry**: state badges (thinking / running tool / needs approval / completed / failed), a per-desk **activity trail** (tool calls, approvals, artifacts, delegation phases, with timestamps), and a **×N workload badge** counting active delegations.
-- **Extras**: PNG **snapshot** export of the office, day/night mode, and desk filtering by name, room, state, or role. Per-agent **Telegram connector** and **webhook trigger** are configured in the same editor (see Relays).
+- **Lighting**: explicit **Auto / Day / Night** control — Auto follows your clock, while Day and Night pin the lighting in either direction (so Day brightens the office even at night, and Night turns the lamps on during the day).
+- **Extras**: a single PNG **snapshot** button (preview + download), and desk filtering by name, room, state, or role. Per-agent **Telegram connector** and **webhook trigger** (custom inbound API key, public base URL, and outbound N8N forwarding with a test button) are configured in the same editor (see Relays).
 
 ---
 
