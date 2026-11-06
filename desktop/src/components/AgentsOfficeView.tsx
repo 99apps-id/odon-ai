@@ -55,7 +55,7 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
   const [agentSessions, setAgentSessions] = useState<Session[]>([]);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [nightMode, setNightMode] = useState(false);
+  const [lightMode, setLightMode] = useState<'auto' | 'day' | 'night'>('auto');
   const [query, setQuery] = useState('');
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [snapshotUrl, setSnapshotUrl] = useState('');
@@ -336,6 +336,11 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
     }
   };
 
+  const applyLightMode = (mode: 'auto' | 'day' | 'night') => {
+    setLightMode(mode);
+    sceneRef.current?.setLightMode(mode);
+  };
+
   return (
     <div className="flex h-full min-h-0 gap-3">
       <div className="relative flex-1 min-w-0 overflow-hidden rounded-xl border border-neutral-200 bg-sand-50">
@@ -373,44 +378,33 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
           >
             + Agent
           </button>
-          <button
-            type="button"
-            onClick={() => setNightMode((value) => {
-              const next = !value;
-              sceneRef.current?.setNight(next);
-              return next;
-            })}
-            className={`rounded-lg border px-2 py-1 text-[10px] font-medium shadow-2xs transition-colors ${
-              nightMode
-                ? 'border-blue-300 bg-blue-600 text-white hover:bg-blue-700'
-                : 'border-neutral-200/80 bg-white/85 text-neutral-600 hover:bg-white'
-            }`}
-            title="Force night mode (lamps on)"
-          >
-            {nightMode ? '☾ Night on' : '☀ Day'}
-          </button>
+          <div className="flex items-center rounded-lg border border-neutral-200/80 bg-white/85 p-0.5 shadow-2xs">
+            {(['auto', 'day', 'night'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => applyLightMode(mode)}
+                className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                  lightMode === mode
+                    ? 'bg-blue-600 text-white'
+                    : 'text-neutral-600 hover:bg-neutral-100'
+                }`}
+                title={
+                  mode === 'auto'
+                    ? 'Follow the operator clock'
+                    : `Force ${mode} lighting`
+                }
+              >
+                {mode === 'auto' ? 'Auto' : mode === 'day' ? '☀ Day' : '☾ Night'}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => sceneRef.current?.reset()}
             className="rounded-lg border border-neutral-200/80 bg-white/85 px-2 py-1 text-[10px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-white"
           >
             Reset view
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const dataUrl = sceneRef.current?.snapshot();
-              if (!dataUrl) return;
-              const link = document.createElement('a');
-              link.href = dataUrl;
-              const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-              link.download = `odon-office-${stamp}.png`;
-              link.click();
-            }}
-            className="rounded-lg border border-neutral-200/80 bg-white/85 px-2 py-1 text-[10px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-white"
-            title="Download a PNG of the office"
-          >
-            📷 Snapshot
           </button>
           <button
             type="button"
@@ -425,9 +419,9 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
               }
             }}
             className="rounded-lg border border-neutral-200/80 bg-white/85 px-2 py-1 text-[10px] font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-white"
-            title="Download a PNG snapshot of the office"
+            title="Preview / download a PNG snapshot of the office"
           >
-            Snapshot
+            📷 Snapshot
           </button>
         </div>
 
@@ -637,12 +631,7 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  // Keep the toggle state and the scene flag in sync; setting
-                  // only the scene left the button showing "☀ Day".
-                  setNightMode(true);
-                  sceneRef.current?.setNight(true);
-                }}
+                onClick={() => applyLightMode('night')}
                 className="flex-1 rounded-lg border border-amber-300/70 bg-white/80 px-2 py-1 text-[10px] font-semibold text-amber-900 transition-colors hover:bg-white"
               >
                 Lights on
@@ -665,7 +654,7 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
                         row.sessionId === approval.session_id ||
                         row.id === approval.session_id,
                     );
-                  return (
+                    return (
                     <div
                       key={approval.id}
                       className="flex items-center gap-1.5 rounded-lg bg-white/80 px-1.5 py-1"

@@ -35,8 +35,8 @@ export interface OfficeScene {
   select(id: string): void;
   focus(id: string): void;
   reset(): void;
-  /** Toggle the forced night mode; returns the new state. */
-  setNight(active: boolean): boolean;
+  /** Force the office lighting: 'auto' follows the clock, 'day'/'night' pin it. */
+  setLightMode(mode: 'auto' | 'day' | 'night'): 'auto' | 'day' | 'night';
   /** Render one frame and return the canvas data URL for a PNG snapshot. */
   snapshot(): string;
   dispose(): void;
@@ -1414,7 +1414,7 @@ export function createOfficeScene(
   let hourOfDay = new Date().getHours() + new Date().getMinutes() / 60;
   let lastDaylightAt = 0;
   let lastDaylight = -1;
-  let nightForced = false;
+  let forcedMode: 'auto' | 'day' | 'night' = 'auto';
   let currentDarkness = 0;
 
   /**
@@ -1435,11 +1435,19 @@ export function createOfficeScene(
       0.05,
       1,
     );
-    const targetDarkness = nightForced ? 1 : 1 - daylight;
-    if (Math.abs(targetDarkness - currentDarkness) < 0.002 && Math.abs(daylight - lastDaylight) < 0.005) {
+    // 'day'/'night' pin the lighting regardless of the operator's clock; 'auto'
+    // follows it. Evaluating a single effective value keeps every downstream
+    // colour/intensity consistent with the chosen mode.
+    const effectiveDaylight =
+      forcedMode === 'day' ? 1 : forcedMode === 'night' ? 0 : daylight;
+    const targetDarkness = 1 - effectiveDaylight;
+    if (
+      Math.abs(targetDarkness - currentDarkness) < 0.002
+      && Math.abs(effectiveDaylight - lastDaylight) < 0.005
+    ) {
       return;
     }
-    lastDaylight = daylight;
+    lastDaylight = effectiveDaylight;
     currentDarkness = targetDarkness;
     const dark = currentDarkness;
     const isNight = dark > 0.55;
@@ -1448,21 +1456,21 @@ export function createOfficeScene(
     skyMaterial.needsUpdate = true;
 
     // At night the office is lit almost entirely by the warm lamps.
-    hemi.intensity = isNight ? 0.18 : 0.3 + daylight * 0.75;
-    sun.intensity = isNight ? 0.08 : 0.25 + daylight * 1.75;
-    sun.color.set(daylight > 0.45 ? '#fff0d8' : '#a9bed6');
-    fill.intensity = isNight ? 0.08 : 0.2 + daylight * 0.35;
+    hemi.intensity = isNight ? 0.18 : 0.3 + effectiveDaylight * 0.75;
+    sun.intensity = isNight ? 0.08 : 0.25 + effectiveDaylight * 1.75;
+    sun.color.set(effectiveDaylight > 0.45 ? '#fff0d8' : '#a9bed6');
+    fill.intensity = isNight ? 0.08 : 0.2 + effectiveDaylight * 0.35;
     skyMaterial.color.setRGB(
-      0.58 + daylight * 0.42,
-      0.64 + daylight * 0.36,
-      0.74 + daylight * 0.26,
+      0.58 + effectiveDaylight * 0.42,
+      0.64 + effectiveDaylight * 0.36,
+      0.74 + effectiveDaylight * 0.26,
     );
-    renderer.toneMappingExposure = isNight ? 0.9 : 0.84 + daylight * 0.24;
+    renderer.toneMappingExposure = isNight ? 0.9 : 0.84 + effectiveDaylight * 0.24;
     if (scene.background instanceof THREE.Color) {
       scene.background.setRGB(
-        0.28 + daylight * 0.27,
-        0.32 + daylight * 0.21,
-        0.38 + daylight * 0.1,
+        0.28 + effectiveDaylight * 0.27,
+        0.32 + effectiveDaylight * 0.21,
+        0.38 + effectiveDaylight * 0.1,
       );
     }
 
@@ -1584,11 +1592,11 @@ export function createOfficeScene(
     select,
     focus,
     reset,
-    setNight(active: boolean): boolean {
-      nightForced = active;
+    setLightMode(mode: 'auto' | 'day' | 'night'): 'auto' | 'day' | 'night' {
+      forcedMode = mode;
       // Force a fresh evaluation next frame.
       lastDaylight = -1;
-      return nightForced;
+      return forcedMode;
     },
     snapshot(): string {
       renderer.render(scene, camera);
