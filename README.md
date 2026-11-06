@@ -125,11 +125,9 @@ A live isometric 3D office rendered over real sessions — desks are conversatio
 </p>
 
 <p align="center">
-  <a href="assets/agent-office/demo.mp4">
-    <img src="assets/agent-office/demo-poster.png" alt="Agents Office demo in night mode with warm lamps" width="720" />
-  </a>
+  <img src="assets/agent-office/demo.gif" alt="Agents Office demo in night mode with warm lamps" width="720" />
   <br />
-  <em>▶ Click the preview to watch the short demo (night mode with the lamps on).</em>
+  <em>Agents Office demo — night mode with the lamps on. <a href="assets/agent-office/demo.mp4">Download the full-quality MP4</a>.</em>
 </p>
 
 - **Persisted agents**: give each teammate a name, role, desk color, system prompt, model (`provider::model`), optional workspace, and skills picked from the catalogue as chips. Agents persist in SQLite (`agents`) and their desks update live from the daemon event stream.
