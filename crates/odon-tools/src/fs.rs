@@ -89,6 +89,22 @@ impl Tool for FsReadTool {
                 })?;
 
         let full_path = resolve_path(&ctx.workspace_root, path_str)?;
+        // Bound the read: a huge file inside the workspace would otherwise be
+        // slurped fully into memory by the daemon.
+        const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
+        if let Ok(meta) = tokio::fs::metadata(&full_path).await {
+            if meta.is_file() && meta.len() > MAX_READ_BYTES {
+                return Err(OdonError::Tool {
+                    tool: self.name().to_string(),
+                    message: format!(
+                        "{} is {} MB; read up to {} MB at a time (use grep or fs_find to locate a section)",
+                        path_str,
+                        meta.len().div_ceil(1024 * 1024),
+                        MAX_READ_BYTES / (1024 * 1024)
+                    ),
+                });
+            }
+        }
         let content = tokio::fs::read_to_string(&full_path)
             .await
             .map_err(|e| OdonError::Tool {

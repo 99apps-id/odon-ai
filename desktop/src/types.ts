@@ -122,6 +122,14 @@ export interface AgentWebhookStatus {
   configured: boolean;
   url: string;
   method: string;
+  /** Public/tunnel base URL used in `url` (empty = local 127.0.0.1). */
+  base_url?: string;
+  /** A custom inbound API key is stored (the raw key is never returned). */
+  api_key_configured?: boolean;
+  outbound_enabled?: boolean;
+  outbound_configured?: boolean;
+  outbound_url?: string;
+  outbound_api_key_configured?: boolean;
 }
 
 export interface ToolSchema {

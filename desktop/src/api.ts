@@ -387,11 +387,11 @@ export const api = {
     return data;
   },
 
-  async browserOpenSession(url: string): Promise<BrowserSessionInfo> {
+  async browserOpenSession(url: string, headful?: boolean): Promise<BrowserSessionInfo> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/browser/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(headful === undefined ? { url } : { url, headful }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP error ${res.status}`);
@@ -627,6 +627,40 @@ export const api = {
       `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/webhook`,
       { method: 'DELETE' },
     );
+  },
+
+  async saveAgentWebhookConfig(
+    agentId: string,
+    input: {
+      api_key?: string;
+      base_url?: string;
+      outbound_url?: string;
+      outbound_api_key?: string;
+      outbound_enabled?: boolean;
+    },
+  ): Promise<AgentWebhookStatus> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/webhook/config`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to save webhook settings: ${res.statusText}`);
+    return data;
+  },
+
+  async testAgentWebhook(
+    agentId: string,
+  ): Promise<{ ok: boolean; status?: number; error?: string }> {
+    const res = await this.fetchApi(
+      `${this.getBaseUrl()}/api/agents/${encodeURIComponent(agentId)}/webhook/test`,
+      { method: 'POST' },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok && data.ok !== false, status: data.status, error: data.error };
   },
 
   async createAgentSession(agentId: string, title?: string): Promise<Session> {

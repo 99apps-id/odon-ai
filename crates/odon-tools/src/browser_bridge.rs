@@ -61,7 +61,7 @@ pub async fn list_sessions(workspace_root: &str) -> Result<Value> {
 }
 
 /// Create a session for the panel and return its metadata.
-pub async fn open_session(workspace_root: &str, url: &str) -> Result<Value> {
+pub async fn open_session(workspace_root: &str, url: &str, headful: Option<bool>) -> Result<Value> {
     let url = if url.trim().is_empty() {
         "about:blank"
     } else {
@@ -70,7 +70,13 @@ pub async fn open_session(workspace_root: &str, url: &str) -> Result<Value> {
     if !url.starts_with("about:") {
         crate::net_guard::validate_url_allow_loopback(url).await?;
     }
-    let meta = create_session(workspace_root, url).await?;
+    let meta = match headful {
+        Some(headful) => {
+            crate::browser_session::create_session_with_headful(workspace_root, url, headful)
+                .await?
+        }
+        None => create_session(workspace_root, url).await?,
+    };
     Ok(json!({
         "session_id": meta.session_id,
         "url": meta.url,

@@ -54,25 +54,26 @@ impl AgentSchedule {
             Some(tz) => now.with_timezone(&tz).naive_local(),
             None => now.with_timezone(&Local).naive_local(),
         };
-        if !self.days.is_empty() {
-            let weekday = local.weekday().number_from_monday() as u8;
-            if !self.days.contains(&weekday) {
-                return false;
-            }
-        }
-        let Some(start) = parse_hhmm(&self.start) else {
-            return true;
-        };
-        let Some(end) = parse_hhmm(&self.end) else {
-            return true;
-        };
         let minutes = local.hour() * 60 + local.minute();
-        if start <= end {
-            minutes >= start && minutes < end
-        } else {
-            // Overnight shifts (e.g. 22:00 → 06:00).
-            minutes >= start || minutes < end
+        let today = local.weekday().number_from_monday() as u8;
+        let start = parse_hhmm(&self.start);
+        let end = parse_hhmm(&self.end);
+        // A shift that runs past midnight is attributed to the day it *started*
+        // on. At 02:00 on Tuesday the tail of a Monday 22:00–06:00 shift is
+        // still active, so a Monday-only schedule must match.
+        let (in_window, shift_day) = match (start, end) {
+            (Some(start), Some(end)) if start <= end => (minutes >= start && minutes < end, today),
+            (Some(start), Some(_end)) if minutes >= start => (true, today),
+            (Some(_), Some(end)) if minutes < end => (true, if today == 1 { 7 } else { today - 1 }),
+            (Some(_), Some(_)) => (false, today),
+            // An unparseable time keeps the old "always on shift" behavior
+            // instead of silently parking every message forever.
+            _ => (true, today),
+        };
+        if !self.days.is_empty() && !self.days.contains(&shift_day) {
+            return false;
         }
+        in_window
     }
 }
 
@@ -231,5 +232,22 @@ mod tests {
         assert!(sat_only.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 6, 20, 0, 0).unwrap()));
         // 12:00 UTC Friday is 19:00 WIB Friday: no match.
         assert!(!sat_only.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 6, 12, 0, 0).unwrap()));
+    }
+
+    #[test]
+    fn overnight_shift_belongs_to_the_day_it_started() {
+        // Monday 22:00 → Tuesday 06:00 in Jakarta, scheduled for Monday only.
+        // 2026-11-02 is a Monday; 19:00 UTC is Tuesday 02:00 WIB, the tail of
+        // Monday's shift, so it must still count as on shift.
+        let monday_overnight = schedule("22:00", "06:00", vec![1], Some("Asia/Jakarta"));
+        assert!(monday_overnight.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 2, 19, 0, 0).unwrap()));
+        // Monday 23:00 WIB (16:00 UTC) is the evening half: on shift.
+        assert!(monday_overnight.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 2, 16, 0, 0).unwrap()));
+        // Tuesday 12:00 WIB (05:00 UTC) is outside the window.
+        assert!(!monday_overnight.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 3, 5, 0, 0).unwrap()));
+        // Tuesday 02:00 WIB when *Tuesday* is not scheduled belongs to Monday,
+        // but a Tue-only schedule must not claim that tail.
+        let tuesday_only = schedule("22:00", "06:00", vec![2], Some("Asia/Jakarta"));
+        assert!(!tuesday_only.is_on_shift(Utc.with_ymd_and_hms(2026, 11, 2, 19, 0, 0).unwrap()));
     }
 }

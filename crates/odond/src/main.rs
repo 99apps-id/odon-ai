@@ -15,7 +15,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Json,
     },
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
@@ -346,6 +346,19 @@ struct TelegramRelayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AgentWebhookConfig {
     token: String,
+    /// Optional caller-supplied key. When set, an inbound call must present it
+    /// as `Authorization: Bearer <key>` or `X-Api-Key: <key>` in addition to
+    /// the unguessable path token.
+    #[serde(default)]
+    api_key: Option<String>,
+    /// When the agent finishes an inbound request, POST the reply here.
+    #[serde(default)]
+    outbound_url: Option<String>,
+    /// Bearer key sent to `outbound_url`.
+    #[serde(default)]
+    outbound_api_key: Option<String>,
+    #[serde(default)]
+    outbound_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -370,6 +383,11 @@ struct RelayConfig {
     /// Secret path token for each agent's inbound webhook.
     #[serde(default)]
     agent_webhooks: HashMap<String, AgentWebhookConfig>,
+    /// Optional public/tunnel base URL used when displaying an agent webhook
+    /// URL, so an external N8N can reach a daemon that is otherwise loopback
+    /// only. Empty/None keeps the local `http://127.0.0.1:4096`.
+    #[serde(default)]
+    webhook_base_url: Option<String>,
     whatsapp_web: Option<WhatsAppWebConfig>,
 }
 
@@ -414,13 +432,21 @@ fn generate_webhook_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn webhook_url(token: &str) -> String {
-    let base = std::env::var("ODON_DAEMON_URL")
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
+fn webhook_base(base: Option<&str>) -> String {
+    base.map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string());
-    format!("{base}/hooks/agents/{token}")
+        .map(|value| value.trim_end_matches('/').to_string())
+        .or_else(|| {
+            std::env::var("ODON_DAEMON_URL")
+                .ok()
+                .map(|value| value.trim().trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "http://127.0.0.1:4096".to_string())
+}
+
+fn webhook_url_for(base: Option<&str>, token: &str) -> String {
+    format!("{}/hooks/agents/{token}", webhook_base(base))
 }
 
 fn sanitize_relay_fragment(value: &str) -> String {
@@ -1999,17 +2025,25 @@ async fn release_off_shift_queue(state: AppState) {
                 agent.id,
                 queued.len()
             );
-            for parked in queued {
-                let incoming = IncomingChannelMessage {
-                    channel: parked.channel,
-                    sender_id: parked.sender_id,
-                    session_id: parked.session_id,
-                    text: parked.text,
-                    attachments: Vec::new(),
-                    agent_id: Some(agent.id.clone()),
-                };
-                tokio::spawn(handle_relay_message(state.clone(), incoming));
-            }
+            // Answer parked messages in order, one turn at a time. Spawning them
+            // all at once let a later turn cancel the earlier one (the runtime
+            // cancels the previous turn for the same session), so only the last
+            // reply survived.
+            let release_state = state.clone();
+            let release_agent = agent.id.clone();
+            tokio::spawn(async move {
+                for parked in queued {
+                    let incoming = IncomingChannelMessage {
+                        channel: parked.channel,
+                        sender_id: parked.sender_id,
+                        session_id: parked.session_id,
+                        text: parked.text,
+                        attachments: Vec::new(),
+                        agent_id: Some(release_agent.clone()),
+                    };
+                    handle_relay_message(release_state.clone(), incoming).await;
+                }
+            });
         }
     }
 }
@@ -2989,7 +3023,14 @@ async fn main() -> anyhow::Result<()> {
                     is_first_party_origin(&lower)
                         || allowed_origins.iter().any(|allowed| allowed == &lower)
                 }))
-                .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::PATCH,
+                    Method::DELETE,
+                    Method::OPTIONS,
+                ])
                 .allow_headers([
                     header::CONTENT_TYPE,
                     header::AUTHORIZATION,
@@ -3041,6 +3082,11 @@ async fn main() -> anyhow::Result<()> {
                         .put(save_agent_webhook)
                         .delete(delete_agent_webhook),
                 )
+                .route(
+                    "/api/agents/{id}/webhook/config",
+                    put(save_agent_webhook_config),
+                )
+                .route("/api/agents/{id}/webhook/test", post(test_agent_webhook))
                 // Inbound automation hook. The path secret is the credential;
                 // the daemon-token middleware already exempts non-/api paths.
                 .route("/hooks/agents/{token}", post(agent_webhook))
@@ -4347,26 +4393,56 @@ async fn delete_agent_telegram(
     Json(json!({ "configured": false, "online": false }))
 }
 
+/// Serialize an agent webhook for the UI without ever returning the raw keys.
+fn webhook_status_json(base: Option<&str>, webhook: &AgentWebhookConfig) -> Value {
+    let configured_key = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+    };
+    json!({
+        "configured": true,
+        "url": webhook_url_for(base, &webhook.token),
+        "method": "POST",
+        "base_url": base.unwrap_or(""),
+        "api_key_configured": configured_key(&webhook.api_key),
+        "outbound_enabled": webhook.outbound_enabled,
+        "outbound_configured": configured_key(&webhook.outbound_url),
+        "outbound_url": webhook.outbound_url.clone().unwrap_or_default(),
+        "outbound_api_key_configured": configured_key(&webhook.outbound_api_key),
+    })
+}
+
+fn empty_webhook_status() -> Value {
+    json!({
+        "configured": false,
+        "url": "",
+        "method": "POST",
+        "base_url": "",
+        "api_key_configured": false,
+        "outbound_enabled": false,
+        "outbound_configured": false,
+        "outbound_url": "",
+        "outbound_api_key_configured": false,
+    })
+}
+
 async fn get_agent_webhook(
     Path(agent_id): Path<String>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let config = state.relay_config.read().await;
+    let base = config.webhook_base_url.as_deref();
     match config.agent_webhooks.get(&agent_id) {
-        Some(webhook) => Json(json!({
-            "configured": true,
-            "url": webhook_url(&webhook.token),
-            "method": "POST",
-        })),
-        None => Json(json!({
-            "configured": false,
-            "url": "",
-            "method": "POST",
-        })),
+        Some(webhook) => Json(webhook_status_json(base, webhook)),
+        None => Json(empty_webhook_status()),
     }
 }
 
-/// Create or rotate the agent's webhook secret.
+/// Create or rotate the agent's webhook secret, preserving the custom API key
+/// and outbound settings.
 async fn save_agent_webhook(
     Path(agent_id): Path<String>,
     State(state): State<AppState>,
@@ -4378,24 +4454,26 @@ async fn save_agent_webhook(
         );
     }
     let token = generate_webhook_token();
-    {
-        let mut config = state.relay_config.write().await;
-        config.agent_webhooks.insert(
-            agent_id.clone(),
-            AgentWebhookConfig {
-                token: token.clone(),
-            },
-        );
-        save_relay_config(&config);
-    }
-    (
-        StatusCode::OK,
-        Json(json!({
-            "configured": true,
-            "url": webhook_url(&token),
-            "method": "POST",
-        })),
-    )
+    let mut config = state.relay_config.write().await;
+    let entry = config
+        .agent_webhooks
+        .entry(agent_id.clone())
+        .or_insert_with(|| AgentWebhookConfig {
+            token: token.clone(),
+            api_key: None,
+            outbound_url: None,
+            outbound_api_key: None,
+            outbound_enabled: false,
+        });
+    entry.token = token;
+    let base = config.webhook_base_url.clone();
+    let status = config
+        .agent_webhooks
+        .get(&agent_id)
+        .map(|webhook| webhook_status_json(base.as_deref(), webhook))
+        .unwrap_or_else(empty_webhook_status);
+    save_relay_config(&config);
+    (StatusCode::OK, Json(status))
 }
 
 async fn delete_agent_webhook(
@@ -4407,7 +4485,162 @@ async fn delete_agent_webhook(
         config.agent_webhooks.remove(&agent_id);
         save_relay_config(&config);
     }
-    Json(json!({ "configured": false }))
+    Json(empty_webhook_status())
+}
+
+#[derive(Deserialize, Default)]
+struct AgentWebhookConfigRequest {
+    /// Inbound caller key. Empty string clears it.
+    #[serde(default)]
+    api_key: Option<String>,
+    /// Public/tunnel base URL shown for the inbound webhook. Empty clears it.
+    #[serde(default)]
+    base_url: Option<String>,
+    /// Outbound target called after an inbound turn completes. Empty clears it.
+    #[serde(default)]
+    outbound_url: Option<String>,
+    /// Bearer key sent to `outbound_url`. Empty clears it.
+    #[serde(default)]
+    outbound_api_key: Option<String>,
+    #[serde(default)]
+    outbound_enabled: Option<bool>,
+}
+
+fn valid_webhook_url(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed.starts_with("http://") || trimmed.starts_with("https://")
+}
+
+/// Save the manual inbound key / base URL and outbound webhook settings.
+async fn save_agent_webhook_config(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+    Json(req): Json<AgentWebhookConfigRequest>,
+) -> impl IntoResponse {
+    if state.storage.get_agent(&agent_id).is_err() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("Unknown agent '{agent_id}'") })),
+        );
+    }
+    for (label, value) in [
+        ("base_url", req.base_url.as_deref()),
+        ("outbound_url", req.outbound_url.as_deref()),
+    ] {
+        if let Some(value) = value {
+            if !value.trim().is_empty() && !valid_webhook_url(value) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": format!("{label} must be an http(s) URL") })),
+                );
+            }
+        }
+    }
+
+    let mut config = state.relay_config.write().await;
+    if let Some(base) = &req.base_url {
+        config.webhook_base_url = Some(base.trim().to_string()).filter(|value| !value.is_empty());
+    }
+    let entry = config
+        .agent_webhooks
+        .entry(agent_id.clone())
+        .or_insert_with(|| AgentWebhookConfig {
+            token: generate_webhook_token(),
+            api_key: None,
+            outbound_url: None,
+            outbound_api_key: None,
+            outbound_enabled: false,
+        });
+    if let Some(key) = &req.api_key {
+        entry.api_key = Some(key.trim().to_string()).filter(|value| !value.is_empty());
+    }
+    if let Some(url) = &req.outbound_url {
+        entry.outbound_url = Some(url.trim().to_string()).filter(|value| !value.is_empty());
+    }
+    if let Some(key) = &req.outbound_api_key {
+        entry.outbound_api_key = Some(key.trim().to_string()).filter(|value| !value.is_empty());
+    }
+    if let Some(enabled) = req.outbound_enabled {
+        entry.outbound_enabled = enabled;
+    }
+    let base = config.webhook_base_url.clone();
+    let status = config
+        .agent_webhooks
+        .get(&agent_id)
+        .map(|webhook| webhook_status_json(base.as_deref(), webhook))
+        .unwrap_or_else(empty_webhook_status);
+    save_relay_config(&config);
+    (StatusCode::OK, Json(status))
+}
+
+fn spawn_outbound_webhook(url: String, api_key: Option<String>, payload: Value) {
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let mut request = client.post(&url).json(&payload);
+        if let Some(key) = api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+        {
+            request = request.header("Authorization", format!("Bearer {key}"));
+        }
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), request.send()).await;
+    });
+}
+
+/// Send a test payload to the configured outbound webhook so the operator can
+/// verify their N8N endpoint without waiting for a real turn.
+async fn test_agent_webhook(
+    Path(agent_id): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let (url, key) = {
+        let config = state.relay_config.read().await;
+        match config.agent_webhooks.get(&agent_id) {
+            Some(webhook) => (
+                webhook.outbound_url.clone(),
+                webhook.outbound_api_key.clone(),
+            ),
+            None => (None, None),
+        }
+    };
+    let Some(url) = url.filter(|value| !value.trim().is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "No outbound URL configured for this agent" })),
+        );
+    };
+    let payload = json!({
+        "agent_id": agent_id,
+        "event": "test",
+        "ok": true,
+        "reply": "ODON outbound webhook test",
+        "sent_at": chrono::Utc::now().to_rfc3339(),
+    });
+    let client = reqwest::Client::new();
+    let mut request = client.post(&url).json(&payload);
+    if let Some(key) = key.as_deref().map(str::trim).filter(|key| !key.is_empty()) {
+        request = request.header("Authorization", format!("Bearer {key}"));
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(10), request.send()).await {
+        Ok(Ok(response)) => (
+            StatusCode::OK,
+            Json(
+                json!({ "ok": response.status().is_success(), "status": response.status().as_u16() }),
+            ),
+        ),
+        Ok(Err(error)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("Outbound request failed: {error}") })),
+        ),
+        Err(_) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "Outbound request timed out after 10s" })),
+        ),
+    }
 }
 
 #[derive(Deserialize)]
@@ -4434,22 +4667,58 @@ struct AgentWebhookRequest {
 async fn agent_webhook(
     Path(token): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<AgentWebhookRequest>,
 ) -> impl IntoResponse {
-    let agent_id = {
+    let found = {
         let config = state.relay_config.read().await;
         config
             .agent_webhooks
             .iter()
             .find(|(_, webhook)| constant_time_eq(&webhook.token, &token))
-            .map(|(id, _)| id.clone())
+            .map(|(id, webhook)| {
+                (
+                    id.clone(),
+                    webhook.api_key.clone(),
+                    webhook.outbound_url.clone(),
+                    webhook.outbound_api_key.clone(),
+                    webhook.outbound_enabled,
+                )
+            })
     };
-    let Some(agent_id) = agent_id else {
+    let Some((agent_id, required_key, outbound_url, outbound_key, outbound_enabled)) = found else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "Webhook not found" })),
         );
     };
+    // A user-set API key is a second credential on top of the path token.
+    if let Some(expected) = required_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+    {
+        let provided = headers
+            .get("x-api-key")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .or_else(|| {
+                headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().strip_prefix("Bearer "))
+                    .map(str::trim)
+            });
+        match provided {
+            Some(value) if constant_time_eq(value, expected) => {}
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "error": "Invalid or missing API key" })),
+                )
+            }
+        }
+    }
     let agent = match state.storage.get_agent(&agent_id) {
         Ok(agent) => agent,
         Err(_) => {
@@ -4584,20 +4853,57 @@ async fn agent_webhook(
         retire_turn_handle(&mut turns, &session_id, &turn_id);
     }
     match result {
-        Ok(message) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": true,
-                "session_id": session_id,
-                "model": agent.model,
-                "reply": message.content.text,
-                "artifact_ids": message.content.artifact_ids,
-            })),
-        ),
-        Err(error) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "ok": false, "error": error.to_string() })),
-        ),
+        Ok(message) => {
+            if outbound_enabled {
+                if let Some(url) = outbound_url.clone().filter(|url| !url.trim().is_empty()) {
+                    spawn_outbound_webhook(
+                        url,
+                        outbound_key.clone(),
+                        json!({
+                            "agent_id": agent.id.clone(),
+                            "session_id": session_id.clone(),
+                            "ok": true,
+                            "event": "turn.completed",
+                            "reply": message.content.text.clone(),
+                            "artifact_ids": message.content.artifact_ids.clone(),
+                            "source": req.source.clone().unwrap_or_else(|| "webhook".to_string()),
+                        }),
+                    );
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "session_id": session_id,
+                    "model": agent.model,
+                    "reply": message.content.text,
+                    "artifact_ids": message.content.artifact_ids,
+                })),
+            )
+        }
+        Err(error) => {
+            if outbound_enabled {
+                if let Some(url) = outbound_url.clone().filter(|url| !url.trim().is_empty()) {
+                    spawn_outbound_webhook(
+                        url,
+                        outbound_key.clone(),
+                        json!({
+                            "agent_id": agent.id.clone(),
+                            "session_id": session_id.clone(),
+                            "ok": false,
+                            "event": "turn.failed",
+                            "error": error.to_string(),
+                            "source": req.source.clone().unwrap_or_else(|| "webhook".to_string()),
+                        }),
+                    );
+                }
+            }
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "ok": false, "error": error.to_string() })),
+            )
+        }
     }
 }
 
@@ -8145,13 +8451,19 @@ async fn browser_sessions_list(State(state): State<AppState>) -> impl IntoRespon
 struct BrowserOpenRequest {
     #[serde(default)]
     url: String,
+    /// Show the browser window instead of headless. Omit to use the daemon
+    /// default (`ODON_BROWSER_HEADFUL`).
+    #[serde(default)]
+    headful: Option<bool>,
 }
 
 async fn browser_session_open(
     State(state): State<AppState>,
     Json(req): Json<BrowserOpenRequest>,
 ) -> impl IntoResponse {
-    match odon_tools::browser_bridge::open_session(&state.workspace_root, &req.url).await {
+    match odon_tools::browser_bridge::open_session(&state.workspace_root, &req.url, req.headful)
+        .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => bridge_error(e),
     }
@@ -8542,15 +8854,16 @@ async fn sse_events(
                         yield Ok::<Event, Infallible>(Event::default().data(data));
                     }
                 }
-                // A slow client missed events. Skipping silently used to hide the
-                // reason a turn appeared to hang, so log the gap; the enlarged bus
-                // above makes reaching this branch rare.
+                // A slow client missed events. Skipping them left the live view
+                // permanently stale (a dropped terminal event kept the spinner
+                // running). Ending the stream makes EventSource reconnect, and
+                // both clients resync from the daemon on reconnect.
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
                     tracing::warn!(
                         missed,
-                        "SSE subscriber lagged and dropped events; client may need to resync"
+                        "SSE subscriber lagged; ending the stream so the client resyncs"
                     );
-                    continue;
+                    break;
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -8892,6 +9205,7 @@ async fn get_github_prs(
             // HTTP 200 made the UI render "0 pull requests" for a repo that
             // could not be read at all.
             let status = resp.status();
+            let rate = github_rate_limit_hint(resp.headers(), status.as_u16());
             let data: Value = resp.json().await.unwrap_or(json!([]));
             if status.is_success() {
                 (StatusCode::OK, Json(data))
@@ -8899,7 +9213,13 @@ async fn get_github_prs(
                 let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 (
                     code,
-                    Json(github_error_body(&owner, &repo, status.as_u16(), &data)),
+                    Json(github_error_body(
+                        &owner,
+                        &repo,
+                        status.as_u16(),
+                        &data,
+                        rate,
+                    )),
                 )
             }
         }
@@ -8922,17 +9242,55 @@ fn valid_github_slug(value: &str) -> bool {
         && !value.contains("..")
 }
 
+/// A clear rate-limit hint from GitHub's headers. GitHub uses 403 for both an
+/// exhausted quota and a permission error, so the headers decide.
+fn github_rate_limit_hint(headers: &HeaderMap, status: u16) -> Option<String> {
+    if status != 429 && status != 403 {
+        return None;
+    }
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    if let Some(retry) = header("retry-after").and_then(|value| value.trim().parse::<i64>().ok()) {
+        return Some(format!("Rate limited; coba lagi dalam {retry} detik."));
+    }
+    if header("x-ratelimit-remaining") == Some("0") {
+        if let Some(reset) =
+            header("x-ratelimit-reset").and_then(|value| value.trim().parse::<i64>().ok())
+        {
+            let wait = (reset - chrono::Utc::now().timestamp()).max(0);
+            return Some(if wait > 0 {
+                format!("Kuota rate limit habis; reset dalam {wait} detik.")
+            } else {
+                "Kuota rate limit habis; reset sebentar lagi.".to_string()
+            });
+        }
+        return Some("Kuota rate limit habis.".to_string());
+    }
+    None
+}
+
 /// Normalises a GitHub error payload so the UI always gets `{ error: "..." }`.
-fn github_error_body(owner: &str, repo: &str, http_status: u16, data: &Value) -> Value {
+fn github_error_body(
+    owner: &str,
+    repo: &str,
+    http_status: u16,
+    data: &Value,
+    rate: Option<String>,
+) -> Value {
     let message = data
         .get("message")
         .and_then(|m| m.as_str())
         .unwrap_or("GitHub request failed");
-    let hint = match http_status {
-        401 => " Token GitHub tidak valid atau kedaluwarsa; jalankan `gh auth login`.",
-        403 => " Kemungkinan rate limit atau token tanpa izin repository.",
-        404 => " Repository tidak ditemukan, bukan milik akun ini, atau privat.",
-        _ => "",
+    let hint = if let Some(rate) = rate {
+        format!(" {rate}")
+    } else {
+        match http_status {
+            401 => {
+                " Token GitHub tidak valid atau kedaluwarsa; jalankan `gh auth login`.".to_string()
+            }
+            403 => " Kemungkinan rate limit atau token tanpa izin repository.".to_string(),
+            404 => " Repository tidak ditemukan, bukan milik akun ini, atau privat.".to_string(),
+            _ => String::new(),
+        }
     };
     // A caller may pass the repository as `owner/repo` in either field, so
     // normalise once instead of rendering `owner/owner/repo`.
@@ -8978,6 +9336,7 @@ async fn get_github_issues(
     match req.send().await {
         Ok(resp) => {
             let status = resp.status();
+            let rate = github_rate_limit_hint(resp.headers(), status.as_u16());
             let data: Value = resp.json().await.unwrap_or(json!([]));
             if status.is_success() {
                 (StatusCode::OK, Json(data))
@@ -8985,7 +9344,13 @@ async fn get_github_issues(
                 let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 (
                     code,
-                    Json(github_error_body(&owner, &repo, status.as_u16(), &data)),
+                    Json(github_error_body(
+                        &owner,
+                        &repo,
+                        status.as_u16(),
+                        &data,
+                        rate,
+                    )),
                 )
             }
         }
@@ -9046,6 +9411,7 @@ async fn create_github_issue(
             // Pass GitHub's status through: swallowing it made a 401/403/422
             // look like a created issue and the UI closed the dialog.
             let status = resp.status();
+            let rate = github_rate_limit_hint(resp.headers(), status.as_u16());
             let data: Value = resp.json().await.unwrap_or(json!({}));
             if status.is_success() {
                 (StatusCode::OK, Json(data))
@@ -9053,7 +9419,13 @@ async fn create_github_issue(
                 let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 (
                     code,
-                    Json(github_error_body(&owner, &repo, status.as_u16(), &data)),
+                    Json(github_error_body(
+                        &owner,
+                        &repo,
+                        status.as_u16(),
+                        &data,
+                        rate,
+                    )),
                 )
             }
         }
@@ -9171,9 +9543,15 @@ async fn fs_list_dir(
     match read_res {
         Ok(entries) => {
             let mut list = Vec::new();
-            for entry in entries.flatten() {
+            // Bound the response: a directory with millions of entries would
+            // otherwise be buffered whole (with a few stat calls per entry).
+            const MAX_ENTRIES: usize = 5_000;
+            for entry in entries.flatten().take(MAX_ENTRIES) {
                 let p = entry.path();
-                let is_dir = p.is_dir();
+                // `Path::is_dir` follows symlinks, so a link to an outside
+                // directory was advertised as a folder and navigating into it
+                // dead-ended at the containment check. Use the entry's own type.
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 let name = p
                     .file_name()
                     .unwrap_or_default()
@@ -10422,7 +10800,7 @@ mod tests {
         // appeared, so an expired token surfaced as a bare "Not Found".
         let body = json!({ "message": "Not Found" });
 
-        let unauthorized = github_error_body("acme", "app", 401, &body);
+        let unauthorized = github_error_body("acme", "app", 401, &body, None);
         let text = unauthorized["error"].as_str().unwrap();
         assert!(text.contains("acme/app"), "got {text}");
         assert!(
@@ -10431,14 +10809,25 @@ mod tests {
         );
         assert_eq!(unauthorized["github_status"], json!(401));
 
-        let missing = github_error_body("acme", "app", 404, &body);
+        let missing = github_error_body("acme", "app", 404, &body, None);
         let text = missing["error"].as_str().unwrap();
         assert!(text.contains("tidak ditemukan"), "404 hint missing: {text}");
 
         // A generic failure still carries the upstream status for the UI.
-        let other = github_error_body("acme", "app", 500, &json!({}));
+        let other = github_error_body("acme", "app", 500, &json!({}), None);
         assert_eq!(other["github_status"], json!(500));
         assert!(other["error"].as_str().unwrap().contains("acme/app"));
+
+        // A rate-limit hint replaces the generic 403 wording.
+        let limited = github_error_body(
+            "acme",
+            "app",
+            403,
+            &body,
+            Some("Rate limited; coba lagi dalam 30 detik.".to_string()),
+        );
+        let text = limited["error"].as_str().unwrap();
+        assert!(text.contains("coba lagi dalam 30 detik"), "got {text}");
     }
 
     #[test]
@@ -10655,7 +11044,11 @@ mod tests {
         assert_eq!(first.len(), 48, "24 random bytes as hex");
         assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_ne!(first, second);
-        assert!(webhook_url("abc").ends_with("/hooks/agents/abc"));
+        assert!(webhook_url_for(None, "abc").ends_with("/hooks/agents/abc"));
+        assert_eq!(
+            webhook_url_for(Some("https://n8n.example.com/"), "abc"),
+            "https://n8n.example.com/hooks/agents/abc"
+        );
     }
 
     #[test]

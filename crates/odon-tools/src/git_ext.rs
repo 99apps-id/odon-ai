@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::github::github_repo_api;
+use crate::github::{github_repo_api, rate_limit_hint};
 use crate::registry::{Tool, ToolContext};
 
 const GIT_EXT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -143,6 +143,7 @@ impl GitHubApiClient {
 
     async fn response_json(tool: &str, response: reqwest::Response) -> Result<Value> {
         let status = response.status();
+        let rate = rate_limit_hint(response.headers(), status.as_u16());
         let text = response.text().await.map_err(|e| OdonError::Tool {
             tool: tool.to_string(),
             message: format!("Failed to read GitHub response: {e}"),
@@ -158,9 +159,10 @@ impl GitHubApiClient {
                         .map(str::to_owned)
                 })
                 .unwrap_or_else(|| text.chars().take(300).collect());
+            let suffix = rate.map(|hint| format!(" {hint}")).unwrap_or_default();
             return Err(OdonError::Tool {
                 tool: tool.to_string(),
-                message: format!("GitHub API returned HTTP {status}: {detail}"),
+                message: format!("GitHub API returned HTTP {status}: {detail}{suffix}"),
             });
         }
         serde_json::from_str(&text).map_err(|e| OdonError::Tool {

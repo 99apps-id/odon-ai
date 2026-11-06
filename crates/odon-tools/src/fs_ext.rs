@@ -181,7 +181,14 @@ impl Tool for FsChmodTool {
         RiskTier::Tier1WorkspaceMutating
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
-        let rel = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let rel = args
+            .get("path")
+            .and_then(|p| p.as_str())
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "Missing 'path' parameter".to_string(),
+            })?;
         let readonly = args
             .get("readonly")
             .and_then(|r| r.as_bool())

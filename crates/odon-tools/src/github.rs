@@ -23,6 +23,34 @@ pub(crate) fn github_repo_api(owner: &str, repo: &str) -> String {
     )
 }
 
+/// A human hint for a GitHub rate-limit response (403/429), read from the
+/// standard headers so callers can tell "slow down" from "bad token". GitHub
+/// returns 403 for both an exhausted rate limit and a permission error, so the
+/// headers — not the status alone — decide.
+pub(crate) fn rate_limit_hint(headers: &HeaderMap, status: u16) -> Option<String> {
+    if status != 429 && status != 403 {
+        return None;
+    }
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    if let Some(retry) = header("retry-after").and_then(|value| value.trim().parse::<i64>().ok()) {
+        return Some(format!("Rate limited; retry in {retry}s."));
+    }
+    if header("x-ratelimit-remaining") == Some("0") {
+        if let Some(reset) =
+            header("x-ratelimit-reset").and_then(|value| value.trim().parse::<i64>().ok())
+        {
+            let wait = (reset - chrono::Utc::now().timestamp()).max(0);
+            return Some(if wait > 0 {
+                format!("Rate limit exhausted; resets in {wait}s.")
+            } else {
+                "Rate limit exhausted; resets shortly.".to_string()
+            });
+        }
+        return Some("Rate limit exhausted.".to_string());
+    }
+    None
+}
+
 impl GitHubClient {
     pub fn new() -> Self {
         let token = std::env::var("GITHUB_TOKEN").ok();
@@ -49,6 +77,7 @@ impl GitHubClient {
 
     async fn response_json(tool: &str, response: reqwest::Response) -> Result<Value> {
         let status = response.status();
+        let rate = rate_limit_hint(response.headers(), status.as_u16());
         let text = response.text().await.map_err(|e| OdonError::Tool {
             tool: tool.to_string(),
             message: format!("Failed to read GitHub response: {}", e),
@@ -63,9 +92,10 @@ impl GitHubClient {
                         .map(str::to_owned)
                 })
                 .unwrap_or_else(|| text.chars().take(300).collect());
+            let suffix = rate.map(|hint| format!(" {hint}")).unwrap_or_default();
             return Err(OdonError::Tool {
                 tool: tool.to_string(),
-                message: format!("GitHub API returned {}: {}", status, detail),
+                message: format!("GitHub API returned {}: {}{suffix}", status, detail),
             });
         }
 

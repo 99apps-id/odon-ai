@@ -58,6 +58,25 @@ export function BrowserPreviewView({
   const [seedTitle, setSeedTitle] = useState<string>('');
   const [mode, setMode] = useState<'iframe' | 'reader' | 'html' | 'markdown' | 'live'>('iframe');
   const [viewportMode, setViewportMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  // Headful = show the Chromium window. Less likely to be flagged as
+  // automation (useful for site logins). Applies when a live session is created.
+  const [headful, setHeadful] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('odon_browser_headful') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleHeadful = () =>
+    setHeadful((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem('odon_browser_headful', String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [history, setHistory] = useState<string[]>([initialUrl]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
@@ -320,7 +339,7 @@ export function BrowserPreviewView({
       let id = liveSessionId || list.sessions?.[0]?.session_id || null;
       if (!id) {
         const target = /^https?:/i.test(url) ? url : 'about:blank';
-        const created = await api.browserOpenSession(target);
+        const created = await api.browserOpenSession(target, headful);
         id = created.session_id;
       }
       setLiveSessionId(id);
@@ -554,6 +573,21 @@ export function BrowserPreviewView({
               <Smartphone className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Headful toggle: show the Chromium window (reduces automation detection) */}
+          <button
+            type="button"
+            onClick={toggleHeadful}
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+              headful
+                ? 'bg-blue-600 text-white shadow-2xs'
+                : 'bg-neutral-200/70 text-neutral-600 hover:text-neutral-800'
+            }`}
+            title="Show the Chromium window (headful). Applies to a newly created live session."
+          >
+            <Globe className="w-3 h-3" />
+            <span className="hidden sm:inline">Headful</span>
+          </button>
 
           {/* Artifact-backed page label */}
           {seedTitle && (mode === 'html' || mode === 'markdown') && (

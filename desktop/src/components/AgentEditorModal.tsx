@@ -91,6 +91,13 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
   const [webhookBusy, setWebhookBusy] = useState(false);
   const [webhookError, setWebhookError] = useState('');
   const [webhookCopied, setWebhookCopied] = useState(false);
+  // Manual webhook settings (custom inbound key / public base / outbound N8N).
+  const [webhookApiKey, setWebhookApiKey] = useState('');
+  const [webhookBaseUrl, setWebhookBaseUrl] = useState('');
+  const [webhookOutboundUrl, setWebhookOutboundUrl] = useState('');
+  const [webhookOutboundKey, setWebhookOutboundKey] = useState('');
+  const [webhookOutboundEnabled, setWebhookOutboundEnabled] = useState(false);
+  const [webhookTestResult, setWebhookTestResult] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -137,6 +144,12 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
       setTelegramError('');
       setWebhook(null);
       setWebhookError('');
+      setWebhookApiKey('');
+      setWebhookBaseUrl('');
+      setWebhookOutboundUrl('');
+      setWebhookOutboundKey('');
+      setWebhookOutboundEnabled(false);
+      setWebhookTestResult('');
       return;
     }
     let cancelled = false;
@@ -158,10 +171,15 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
     api
       .getAgentWebhook(draft.id)
       .then((status) => {
-        if (!cancelled) {
-          setWebhook(status);
-          setWebhookError('');
-        }
+        if (cancelled) return;
+        setWebhook(status);
+        setWebhookBaseUrl(status.base_url || '');
+        setWebhookOutboundUrl(status.outbound_url || '');
+        setWebhookOutboundEnabled(Boolean(status.outbound_enabled));
+        setWebhookApiKey('');
+        setWebhookOutboundKey('');
+        setWebhookTestResult('');
+        setWebhookError('');
       })
       .catch(() => {
         if (!cancelled) setWebhook(null);
@@ -238,7 +256,7 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
     try {
       setWebhook(await api.saveAgentWebhook(draft.id));
     } catch (e: any) {
-      setWebhookError(e?.message || 'Could not create the webhook.');
+      setWebhookError(api.describeError(e, 'Could not create the webhook.'));
     } finally {
       setWebhookBusy(false);
     }
@@ -252,7 +270,7 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
       await api.deleteAgentWebhook(draft.id);
       setWebhook({ configured: false, url: '', method: 'POST' });
     } catch (e: any) {
-      setWebhookError(e?.message || 'Could not remove the webhook.');
+      setWebhookError(api.describeError(e, 'Could not remove the webhook.'));
     } finally {
       setWebhookBusy(false);
     }
@@ -263,6 +281,57 @@ export function AgentEditorModal({ agent, open, onClose, onSaved }: AgentEditorM
     void navigator.clipboard.writeText(webhook.url);
     setWebhookCopied(true);
     window.setTimeout(() => setWebhookCopied(false), 2000);
+  };
+
+  const saveWebhookConfig = async () => {
+    if (!draft.id) return;
+    setWebhookBusy(true);
+    setWebhookError('');
+    setWebhookTestResult('');
+    try {
+      const input: {
+        api_key?: string;
+        base_url: string;
+        outbound_url: string;
+        outbound_api_key?: string;
+        outbound_enabled: boolean;
+      } = {
+        base_url: webhookBaseUrl,
+        outbound_url: webhookOutboundUrl,
+        outbound_enabled: webhookOutboundEnabled,
+      };
+      // Only send the keys when the operator typed one, so an empty field
+      // preserves the stored secret instead of wiping it.
+      if (webhookApiKey.trim()) input.api_key = webhookApiKey.trim();
+      if (webhookOutboundKey.trim()) input.outbound_api_key = webhookOutboundKey.trim();
+      const status = await api.saveAgentWebhookConfig(draft.id, input);
+      setWebhook(status);
+      setWebhookApiKey('');
+      setWebhookOutboundKey('');
+    } catch (e: any) {
+      setWebhookError(api.describeError(e, 'Could not save the webhook settings.'));
+    } finally {
+      setWebhookBusy(false);
+    }
+  };
+
+  const testWebhook = async () => {
+    if (!draft.id) return;
+    setWebhookBusy(true);
+    setWebhookError('');
+    setWebhookTestResult('');
+    try {
+      const result = await api.testAgentWebhook(draft.id);
+      setWebhookTestResult(
+        result.ok
+          ? `OK${result.status ? ` (HTTP ${result.status})` : ''}`
+          : result.error || `Failed${result.status ? ` (HTTP ${result.status})` : ''}`,
+      );
+    } catch (e: any) {
+      setWebhookError(api.describeError(e, 'Could not test the outbound webhook.'));
+    } finally {
+      setWebhookBusy(false);
+    }
   };
 
   const save = async () => {
@@ -676,6 +745,80 @@ Content-Type: application/json
                     Remove
                   </button>
                 </div>
+
+                {/* Manual config: custom inbound key, public base URL, outbound N8N */}
+                <div className="mt-2 space-y-1.5 border-t border-violet-200 pt-2">
+                  <div className="text-[10px] font-semibold text-neutral-600">Manual / custom</div>
+                  <label className="block text-[10px] text-neutral-500">
+                    Public base URL (for external N8N / tunnel)
+                    <input
+                      value={webhookBaseUrl}
+                      onChange={(e) => setWebhookBaseUrl(e.target.value)}
+                      placeholder="https://tunnel.example.com"
+                      className="mt-0.5 w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 font-mono text-[10px] text-neutral-700"
+                    />
+                  </label>
+                  <label className="block text-[10px] text-neutral-500">
+                    Inbound API key {webhook.api_key_configured ? '(stored — blank keeps it)' : '(optional)'}
+                    <input
+                      type="password"
+                      value={webhookApiKey}
+                      onChange={(e) => setWebhookApiKey(e.target.value)}
+                      placeholder="X-Api-Key / Authorization: Bearer"
+                      className="mt-0.5 w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 font-mono text-[10px] text-neutral-700"
+                    />
+                  </label>
+                  <label className="block text-[10px] text-neutral-500">
+                    Outbound webhook URL (N8N)
+                    <input
+                      value={webhookOutboundUrl}
+                      onChange={(e) => setWebhookOutboundUrl(e.target.value)}
+                      placeholder="https://n8n.example.com/webhook/..."
+                      className="mt-0.5 w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 font-mono text-[10px] text-neutral-700"
+                    />
+                  </label>
+                  <label className="block text-[10px] text-neutral-500">
+                    Outbound API key {webhook.outbound_api_key_configured ? '(stored — blank keeps it)' : '(optional)'}
+                    <input
+                      type="password"
+                      value={webhookOutboundKey}
+                      onChange={(e) => setWebhookOutboundKey(e.target.value)}
+                      placeholder="Bearer token for the outbound call"
+                      className="mt-0.5 w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 font-mono text-[10px] text-neutral-700"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-[10px] text-neutral-600">
+                    <input
+                      type="checkbox"
+                      checked={webhookOutboundEnabled}
+                      onChange={(e) => setWebhookOutboundEnabled(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-neutral-300"
+                    />
+                    POST turn results to the outbound webhook
+                  </label>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={saveWebhookConfig}
+                      disabled={webhookBusy}
+                      className="rounded-lg bg-violet-600 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      Save settings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={testWebhook}
+                      disabled={webhookBusy || !webhookOutboundUrl.trim()}
+                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+                    >
+                      Test outbound
+                    </button>
+                  </div>
+                  {webhookTestResult && (
+                    <div className="text-[10px] text-neutral-600">{webhookTestResult}</div>
+                  )}
+                </div>
+
                 <p className="mt-1 text-[10px] leading-snug text-neutral-500">
                   Rotating invalidates the old URL immediately. Optional fields:
                   <code> session_id</code> (your own conversation id), <code>source</code>,

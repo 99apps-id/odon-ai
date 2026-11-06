@@ -27,6 +27,10 @@ pub(crate) struct Meta {
     pub(crate) url: String,
     pub(crate) created_at: String,
     pub(crate) last_used_at: String,
+    /// Launch with a visible window instead of `--headless`. Remembered so a
+    /// resumed profile keeps the same (less automation-detectable) mode.
+    #[serde(default)]
+    pub(crate) headful: bool,
 }
 
 pub(crate) struct Live {
@@ -125,6 +129,59 @@ pub(crate) fn sid() -> String {
         chrono::Utc::now().timestamp_millis(),
         &unique[..8]
     )
+}
+
+/// Whether new sessions default to a visible window. Opt in with
+/// `ODON_BROWSER_HEADFUL=1`; a per-call `headful` argument overrides it.
+pub(crate) fn browser_headful_default() -> bool {
+    std::env::var("ODON_BROWSER_HEADFUL")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Base delay (ms) before each human-facing browser action (click/type/select).
+/// Opt in with `ODON_BROWSER_ACTION_DELAY_MS` (default 0 = no added delay). A
+/// per-call `delay_ms` overrides it.
+pub(crate) fn browser_action_delay_default() -> u64 {
+    std::env::var("ODON_BROWSER_ACTION_DELAY_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(60_000)
+}
+
+/// Randomise the delay by roughly ±20% so actions do not run on a fixed,
+/// machine-obvious cadence.
+fn jittered_delay_ms(base: u64) -> u64 {
+    if base == 0 {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64)
+        .unwrap_or(0);
+    let spread = (base / 5).max(1);
+    base.saturating_sub(spread) + (nanos % (spread * 2 + 1))
+}
+
+async fn human_pause(base: u64) {
+    let ms = jittered_delay_ms(base);
+    if ms > 0 {
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+}
+
+fn action_delay(a: &Value) -> u64 {
+    a.get("delay_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(browser_action_delay_default)
+        .min(60_000)
 }
 
 pub(crate) fn validate_session_id(id: &str) -> Result<&str> {
@@ -314,11 +371,15 @@ impl Tool for BrowserSessionCreateTool {
         "browser_session_create"
     }
     fn description(&self) -> &str {
-        "Create a persistent Chromium profile session for reusable cookies and localStorage"
+        "Create or reuse a persistent Chromium profile session for reusable cookies and localStorage. Pass the same `name` on later runs to keep the login instead of signing in again. Set `headful` to show the browser window (less likely to be flagged as automation)."
     }
     fn parameters_schema(&self) -> Value {
         schema(
-            json!({ "name": { "type": "string" }, "url": { "type": "string" } }),
+            json!({
+                "name": { "type": "string", "description": "Stable profile name (e.g. 'instagram'); the same name reuses the saved cookies/login" },
+                "url": { "type": "string" },
+                "headful": { "type": "boolean", "description": "Show the browser window instead of headless (default from ODON_BROWSER_HEADFUL)" }
+            }),
             json!([]),
         )
     }
@@ -343,7 +404,12 @@ impl Tool for BrowserSessionCreateTool {
             .and_then(Value::as_str)
             .unwrap_or("about:blank");
         validate_session_url(url).await?;
-        let m = create_session(&ctx.workspace_root, url).await?;
+        let name = a.get("name").and_then(Value::as_str);
+        let headful = a
+            .get("headful")
+            .and_then(Value::as_bool)
+            .unwrap_or_else(browser_headful_default);
+        let m = create_session_named(&ctx.workspace_root, name, url, headful).await?;
         Ok(json!(m))
     }
 }
@@ -369,14 +435,17 @@ async fn validate_session_url(url: &str) -> Result<()> {
 /// fails to bind and dies silently. Waiting for `/json/version` and retrying
 /// turns that race into a slow-but-correct start instead of a dead session
 /// that the panel shows as blank.
-pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(Child, u16)> {
+pub(crate) async fn spawn_browser(
+    root: &std::path::Path,
+    url: &str,
+    headful: bool,
+) -> Result<(Child, u16)> {
     let exe = browser()?;
     let mut last = String::from("browser did not start");
     for _ in 0..3 {
         let p = port().await?;
         let mut c = Command::new(&exe);
         c.args([
-            "--headless=new",
             "--disable-gpu",
             "--hide-scrollbars",
             "--window-size=1280,800",
@@ -386,6 +455,13 @@ pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(
             &format!("--remote-debugging-port={p}"),
             &format!("--user-data-dir={}", root.display()),
         ]);
+        if headful {
+            // A visible window is far less likely to be flagged as an automated
+            // client, and this also clears the `navigator.webdriver` signal.
+            c.arg("--disable-blink-features=AutomationControlled");
+        } else {
+            c.arg("--headless=new");
+        }
         // Pin the validated address for the landing page. Chromium has its own
         // resolver, so an un-pinned launch would re-resolve the hostname after
         // the guard already approved a different answer.
@@ -434,15 +510,79 @@ pub(crate) async fn spawn_browser(root: &std::path::Path, url: &str) -> Result<(
     Err(err(format!("could not start a browser session: {last}")))
 }
 
-/// Spawn a Chromium session and register it in the shared live store.
-///
-/// Shared by the `browser_session_create` tool and the daemon bridge so the
-/// panel and the agent drive the exact same browser.
-pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Meta> {
-    let id = sid();
+/// Derive a stable session id from a user-supplied profile name so the same
+/// name always maps to the same Chromium profile directory (kept cookies /
+/// logins). Falls back to a random id when the name is unusable.
+fn profile_session_id(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch.to_ascii_lowercase());
+        } else if (ch.is_whitespace() || matches!(ch, '.' | '/')) && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    let out: String = out.chars().take(80).collect();
+    if out.is_empty() {
+        sid()
+    } else {
+        format!("profile-{out}")
+    }
+}
+
+/// Create (or reuse) a persistent session. A `name` maps to a stable profile
+/// so an agent can log in once and reuse the cookies on later runs instead of
+/// logging in from scratch every time.
+pub(crate) async fn create_session_named(
+    workspace_root: &str,
+    name: Option<&str>,
+    url: &str,
+    headful: bool,
+) -> Result<Meta> {
+    let Some(name) = name.map(str::trim).filter(|value| !value.is_empty()) else {
+        return create_session_with_headful(workspace_root, url, headful).await;
+    };
+    let id = profile_session_id(name);
+
+    // Already running: hand back the same live browser.
+    if let Some(existing) = live().lock().await.get(&id).cloned() {
+        let mut live = existing.lock().await;
+        live.meta.last_used_at = chrono::Utc::now().to_rfc3339();
+        return Ok(live.meta.clone());
+    }
+
+    // Persisted from an earlier run: relaunch with the saved profile directory
+    // so the login state is still there, then open the requested URL.
+    if let Ok(meta) = find_persisted_meta(workspace_root, &id) {
+        validate_session_url(url).await?;
+        let (mut child, p) =
+            spawn_browser(std::path::Path::new(&meta.profile_dir), url, headful).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut updated = meta.clone();
+        updated.port = p;
+        updated.pid = child.id().unwrap_or(0);
+        updated.url = url.into();
+        updated.last_used_at = now;
+        updated.headful = headful;
+        if let Err(error) = save_meta(workspace_root, &updated) {
+            let _ = child.kill().await;
+            return Err(error);
+        }
+        live().lock().await.insert(
+            id.clone(),
+            Arc::new(Mutex::new(Live {
+                meta: updated.clone(),
+                child,
+            })),
+        );
+        return Ok(updated);
+    }
+
+    // Fresh named profile.
     let root = session_dir(workspace_root, &id);
     std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
-    let (mut child, p) = spawn_browser(&root, url).await?;
+    let (mut child, p) = spawn_browser(&root, url, headful).await?;
     let now = chrono::Utc::now().to_rfc3339();
     let m = Meta {
         session_id: id.clone(),
@@ -452,6 +592,49 @@ pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Me
         url: url.into(),
         created_at: now.clone(),
         last_used_at: now,
+        headful,
+    };
+    if let Err(error) = save_meta(workspace_root, &m) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    live().lock().await.insert(
+        id.clone(),
+        Arc::new(Mutex::new(Live {
+            meta: m.clone(),
+            child,
+        })),
+    );
+    Ok(m)
+}
+
+/// Spawn a Chromium session and register it in the shared live store.
+///
+/// Shared by the `browser_session_create` tool and the daemon bridge so the
+/// panel and the agent drive the exact same browser.
+pub(crate) async fn create_session(workspace_root: &str, url: &str) -> Result<Meta> {
+    create_session_with_headful(workspace_root, url, browser_headful_default()).await
+}
+
+pub(crate) async fn create_session_with_headful(
+    workspace_root: &str,
+    url: &str,
+    headful: bool,
+) -> Result<Meta> {
+    let id = sid();
+    let root = session_dir(workspace_root, &id);
+    std::fs::create_dir_all(&root).map_err(|e| err(e.to_string()))?;
+    let (mut child, p) = spawn_browser(&root, url, headful).await?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let m = Meta {
+        session_id: id.clone(),
+        profile_dir: root.display().to_string(),
+        port: p,
+        pid: child.id().unwrap_or(0),
+        url: url.into(),
+        created_at: now.clone(),
+        last_used_at: now,
+        headful,
     };
     // Persist metadata so the session survives a process restart. If this
     // fails, kill the browser we just spawned instead of leaking it.
@@ -544,7 +727,8 @@ impl Tool for BrowserSessionResumeTool {
         // that reuses the saved profile directory.
         let m = find_persisted_meta(&ctx.workspace_root, id)?;
         validate_session_url(&m.url).await?;
-        let (child, p) = spawn_browser(std::path::Path::new(&m.profile_dir), &m.url).await?;
+        let (child, p) =
+            spawn_browser(std::path::Path::new(&m.profile_dir), &m.url, m.headful).await?;
         let now = chrono::Utc::now().to_rfc3339();
         let mut n = m.clone();
         n.port = p;
@@ -671,7 +855,8 @@ impl Tool for BrowserSessionClickTool {
             json!({
                 "session_id": { "type": "string" },
                 "selector": { "type": "string" },
-                "timeout_ms": { "type": "integer", "description": "Wait for the element to be visible before clicking (default 5000, max 30000)" }
+                "timeout_ms": { "type": "integer", "description": "Wait for the element to be visible before clicking (default 5000, max 30000)" },
+                "delay_ms": { "type": "integer", "description": "Human-like pause before clicking, in ms (default from ODON_BROWSER_ACTION_DELAY_MS, max 60000)" }
             }),
             json!(["session_id", "selector"]),
         )
@@ -700,6 +885,10 @@ impl Tool for BrowserSessionClickTool {
                 "selector '{s}' did not become visible within {timeout_ms} ms"
             )));
         }
+        // A short, jittered pause before the click reads far less like a bot
+        // than clicking the instant the element appears.
+        let delay = action_delay(&a);
+        human_pause(delay).await;
         let encoded = serde_json::to_string(s).unwrap();
         let js = format!(
             "(()=>{{const e=document.querySelector({encoded});if(!e)throw new Error('selector not found');if(e instanceof HTMLButtonElement||e instanceof HTMLInputElement)e.disabled&&(()=>{{throw new Error('element is disabled')}})();e.scrollIntoView({{block:'center',inline:'nearest'}});e.click();return true}})()",
@@ -710,7 +899,8 @@ impl Tool for BrowserSessionClickTool {
             "session_id": id,
             "selector": s,
             "clicked": value.get("value").and_then(Value::as_bool).unwrap_or(false),
-            "waited_ms": timeout_ms
+            "waited_ms": timeout_ms,
+            "delay_ms": delay
         }))
     }
 }
@@ -766,7 +956,7 @@ impl Tool for BrowserSessionTypeTool {
     }
     fn parameters_schema(&self) -> Value {
         schema(
-            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" } }),
+            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "text": { "type": "string" }, "delay_ms": { "type": "integer", "description": "Human-like pause before typing, in ms (default from ODON_BROWSER_ACTION_DELAY_MS)" } }),
             json!(["session_id", "selector", "text"]),
         )
     }
@@ -783,18 +973,26 @@ impl Tool for BrowserSessionTypeTool {
             .and_then(Value::as_str)
             .ok_or_else(|| err("selector is required"))?;
         let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+        let delay = action_delay(&args);
+        human_pause(delay).await;
         let js = format!(
             "(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');if(e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement){{e.focus();e.value={};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));}}else{{e.focus();e.textContent={};e.dispatchEvent(new InputEvent('input',{{bubbles:true}}));}}return true}})()",
             serde_json::to_string(selector).unwrap(),
             serde_json::to_string(text).unwrap(),
             serde_json::to_string(text).unwrap()
         );
-        Ok(cdp(
+        let _ = cdp(
             id,
             "Runtime.evaluate",
             json!({ "expression": js, "returnByValue": true }),
         )
-        .await?)
+        .await?;
+        Ok(json!({
+            "session_id": id,
+            "selector": selector,
+            "typed": text.chars().count(),
+            "delay_ms": delay
+        }))
     }
 }
 
@@ -942,7 +1140,7 @@ impl Tool for BrowserSessionSelectTool {
     }
     fn parameters_schema(&self) -> Value {
         schema(
-            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "value": { "type": "string" } }),
+            json!({ "session_id": { "type": "string" }, "selector": { "type": "string" }, "value": { "type": "string" }, "delay_ms": { "type": "integer", "description": "Human-like pause before selecting, in ms (default from ODON_BROWSER_ACTION_DELAY_MS)" } }),
             json!(["session_id", "selector", "value"]),
         )
     }
@@ -962,6 +1160,8 @@ impl Tool for BrowserSessionSelectTool {
             .get("value")
             .and_then(Value::as_str)
             .ok_or_else(|| err("value is required"))?;
+        let delay = action_delay(&args);
+        human_pause(delay).await;
         let js = format!(
             "(()=>{{const e=document.querySelector({});if(!e)throw new Error('selector not found');if(!(e instanceof HTMLSelectElement))throw new Error('selector is not a select element');e.value={};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));return e.value}})()",
             serde_json::to_string(selector).unwrap(),
@@ -981,6 +1181,7 @@ impl Tool for BrowserSessionSelectTool {
             "session_id": id,
             "selector": selector,
             "value": selected,
+            "delay_ms": delay,
             "status": "selected"
         }))
     }
@@ -1071,6 +1272,7 @@ mod tests {
             url: "https://example.com".into(),
             created_at: "2025-01-01T00:00:00Z".into(),
             last_used_at: "2025-01-02T00:00:00Z".into(),
+            headful: false,
         };
 
         // Serialise to disk.

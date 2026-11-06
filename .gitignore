@@ -56,3 +56,4 @@ scripts/whatsapp-bridge/auth/
 rt_*.txt
 runtime_chunk_*.txt
 temp_runtime*.txt
+.audit/
