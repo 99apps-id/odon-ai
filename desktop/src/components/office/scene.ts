@@ -608,24 +608,29 @@ export function createOfficeScene(
   scene.add(skyLeft);
 
   // Base slab and floor.
-  const slab = box(49, 0.4, 43, '#d9d0c1', 0, -0.21, -1);
+  const slab = box(49, 0.4, 43, '#8e8678', 0, -0.21, -1);
   slab.castShadow = false;
   slab.receiveShadow = true;
   scene.add(slab);
-  // A canvas floor texture gives the slab a warm plywood/terrazzo read
-  // instead of a flat fill.
+  // An office ceramic / porcelain tile canvas floor texture gives the office
+  // a realistic, anti-glare architectural tile ground.
   const floorTexture = makeFloorTexture();
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(48, 42),
-    new THREE.MeshStandardMaterial({ map: floorTexture, color: '#ffffff', roughness: 0.9 }),
+    new THREE.MeshStandardMaterial({
+      map: floorTexture,
+      color: '#ded8cc',
+      roughness: 0.95,
+      metalness: 0.02,
+    }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(0, 0, -1);
   floor.receiveShadow = true;
   scene.add(floor);
-  const grid = new THREE.GridHelper(48, 12, '#d9d0c1', '#e7dfd3');
+  const grid = new THREE.GridHelper(48, 12, '#9c9284', '#bbb1a2');
   grid.position.set(0, 0.006, -1);
-  (grid.material as THREE.Material).opacity = 0.15;
+  (grid.material as THREE.Material).opacity = 0.06;
   (grid.material as THREE.Material).transparent = true;
   scene.add(grid);
 
@@ -1584,32 +1589,41 @@ export function createOfficeScene(
     skyMaterial.needsUpdate = true;
 
     // At night the office is lit almost entirely by the warm lamps.
-    hemi.intensity = isNight ? 0.18 : 0.3 + effectiveDaylight * 0.75;
-    sun.intensity = isNight ? 0.08 : 0.25 + effectiveDaylight * 1.75;
-    sun.color.set(effectiveDaylight > 0.45 ? '#fff0d8' : '#a9bed6');
-    fill.intensity = isNight ? 0.08 : 0.2 + effectiveDaylight * 0.35;
+    hemi.intensity = isNight ? 0.05 : 0.22 + effectiveDaylight * 0.58;
+    sun.intensity = isNight ? 0.02 : 0.15 + effectiveDaylight * 1.2;
+    sun.color.set(effectiveDaylight > 0.45 ? '#fff0d8' : '#7d95b0');
+    fill.intensity = isNight ? 0.02 : 0.1 + effectiveDaylight * 0.25;
     skyMaterial.color.setRGB(
-      0.58 + effectiveDaylight * 0.42,
-      0.64 + effectiveDaylight * 0.36,
-      0.74 + effectiveDaylight * 0.26,
+      0.35 + effectiveDaylight * 0.65,
+      0.40 + effectiveDaylight * 0.60,
+      0.50 + effectiveDaylight * 0.50,
     );
-    renderer.toneMappingExposure = isNight ? 0.9 : 0.84 + effectiveDaylight * 0.24;
+    renderer.toneMappingExposure = isNight ? 0.82 : 0.88 + effectiveDaylight * 0.08;
     if (scene.background instanceof THREE.Color) {
-      scene.background.setRGB(
-        0.28 + effectiveDaylight * 0.27,
-        0.32 + effectiveDaylight * 0.21,
-        0.38 + effectiveDaylight * 0.1,
-      );
+      if (isNight) {
+        scene.background.setRGB(0.05, 0.07, 0.12);
+      } else {
+        scene.background.setRGB(
+          0.26 + effectiveDaylight * 0.22,
+          0.28 + effectiveDaylight * 0.18,
+          0.32 + effectiveDaylight * 0.12,
+        );
+      }
+    }
+
+    // Crucial: reduce environment map intensity at night so studio lighting does not overpower the darkness
+    if ('environmentIntensity' in scene) {
+      (scene as any).environmentIntensity = isNight ? 0.02 : 0.20 + effectiveDaylight * 0.08;
     }
 
     // Warm lamps fade in as it gets dark; they never fully die.
     const lampLevel = THREE.MathUtils.clamp(dark * 1.9, 0, 1);
-    for (const light of lampLights) light.intensity = lampLevel * 38;
-    for (const light of ceilingLights) light.intensity = lampLevel * 13;
+    for (const light of lampLights) light.intensity = lampLevel * 45;
+    for (const light of ceilingLights) light.intensity = lampLevel * 16;
 
     // Light pools ride the darkness level: strongest directly under each
     // pendant, gone by day, so the glow follows the fixtures.
-    poolMaterial.opacity = lampLevel * 0.85;
+    poolMaterial.opacity = lampLevel * 0.9;
     for (const [index, pool] of pools.entries()) {
       const zone = lampZones[index];
       pool.position.set(zone.x, 0.035, zone.z);
