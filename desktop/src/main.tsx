@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { installCrashRecorder } from './lib/crashReport.ts';
+import './lib/webglPolyfill.ts';
 import './index.css';
 
 // Faults thrown outside the render path (async rejections, stray errors) never

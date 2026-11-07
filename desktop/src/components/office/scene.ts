@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { installWebGLPrecisionPolyfill } from '../../lib/webglPolyfill';
 import {
   ACTIVE_STATES,
   AREA_SUBAGENT,
@@ -25,6 +27,7 @@ import {
   createWhiteboard,
   createWindowWall,
   cylinder,
+  disposeScreenTexture,
   makeLabel,
   type DeskVisual,
   type Person,
@@ -190,6 +193,51 @@ function makeThoughtBubble(kind: 'thinking' | 'approval' | 'tool'): ThoughtBubbl
   return { sprite, material, kind, until: 0 };
 }
 
+function makeFloorTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#efe6d8';
+    ctx.fillRect(0, 0, 512, 512);
+    // Warm plank seams.
+    ctx.strokeStyle = 'rgba(140, 118, 92, 0.16)';
+    ctx.lineWidth = 1.5;
+    for (let step = 0; step <= 8; step += 1) {
+      const y = step * 64;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(512, y);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(140, 118, 92, 0.10)';
+    for (let step = 0; step <= 8; step += 1) {
+      const x = step * 64;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 512);
+      ctx.stroke();
+    }
+    // Subtle warm speckle so the large fill is not dead flat.
+    let speckSeed = 20240117;
+    const speck = () => {
+      speckSeed = (speckSeed * 1664525 + 1013904223) >>> 0;
+      return speckSeed / 0xffffffff;
+    };
+    for (let index = 0; index < 320; index += 1) {
+      ctx.fillStyle = `rgba(120, 96, 70, ${0.04 + speck() * 0.05})`;
+      ctx.fillRect(speck() * 512, speck() * 512, 1.4, 1.4);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
+
 /**
  * A soft radial pool directly under each pendant, so the brightest area sits
  * beneath the bulb rather than sideways from it.
@@ -288,7 +336,7 @@ function animateStanding(person: Person, now: number, moving: boolean) {
   person.rightArm.rotation.x = 0.12 + swing * 0.7;
 }
 
-  function disposeObject(root: THREE.Object3D) {
+function disposeObject(root: THREE.Object3D) {
   root.traverse((node) => {
     if (node instanceof THREE.Mesh) {
       node.geometry.dispose();
@@ -339,15 +387,46 @@ export function createOfficeScene(
   onSelect: (id: string) => void,
   onHover?: (id: string, clientX: number, clientY: number) => void,
 ): OfficeScene {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  installWebGLPrecisionPolyfill();
+
+  let renderer: THREE.WebGLRenderer;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      powerPreference: 'default',
+    });
+  } catch (err) {
+    console.warn('[ODON 3D] Failed to create antialiased WebGLRenderer, retrying with fallback:', err);
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      precision: 'mediump',
+      powerPreference: 'default',
+    });
+  }
+
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.08;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#e9e2d6');
+
+  // Image-based lighting gives the flat primitives a believable ambient
+  // bounce so whites are not blown and wood/plastic read as materials.
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const environment = new RoomEnvironment();
+    scene.environment = pmrem.fromScene(environment, 0.04).texture;
+    environment.dispose();
+    pmrem.dispose();
+  } catch (envErr) {
+    console.warn('[ODON 3D] RoomEnvironment PMREM skipped (unsupported by GPU/WebGL context):', envErr);
+  }
 
   const camera = new THREE.OrthographicCamera(-22, 22, 22, -22, 0.1, 260);
   camera.position.set(31, 29, 37);
@@ -499,17 +578,20 @@ export function createOfficeScene(
   slab.castShadow = false;
   slab.receiveShadow = true;
   scene.add(slab);
+  // A canvas floor texture gives the slab a warm plywood/terrazzo read
+  // instead of a flat fill.
+  const floorTexture = makeFloorTexture();
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(48, 42),
-    new THREE.MeshStandardMaterial({ color: PALETTE.floor, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ map: floorTexture, color: '#ffffff', roughness: 0.9 }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(0, 0, -1);
   floor.receiveShadow = true;
   scene.add(floor);
-  const grid = new THREE.GridHelper(48, 24, '#d9d0c1', '#e7dfd3');
+  const grid = new THREE.GridHelper(48, 12, '#d9d0c1', '#e7dfd3');
   grid.position.set(0, 0.006, -1);
-  (grid.material as THREE.Material).opacity = 0.22;
+  (grid.material as THREE.Material).opacity = 0.15;
   (grid.material as THREE.Material).transparent = true;
   scene.add(grid);
 
@@ -899,15 +981,22 @@ export function createOfficeScene(
   const walkCounts = new Map<string, number>();
   const lastReportAt = new Map<string, number>();
   let selectedId = '';
+  let hoveredId = '';
   let nextWalkAt = performance.now() + 4000;
+
+  function deskGlowColor(entry: Entry): string {
+    if (entry.id === selectedId) return '#3f5b70';
+    if (entry.id === hoveredId) return '#557a95';
+    if (ACTIVE_STATES.has(entry.state)) return STATE_COLORS[entry.state];
+    return '#b7b2a6';
+  }
 
   function applySelection() {
     for (const entry of entries.values()) {
       const base = entry.small ? 0.78 : 1;
-      entry.group.scale.setScalar(base * (entry.id === selectedId ? 1.06 : 1));
-      entry.ringMaterial.color.set(
-        entry.id === selectedId ? '#3f5b70' : STATE_COLORS[entry.state],
-      );
+      const highlighted = entry.id === selectedId || entry.id === hoveredId;
+      entry.group.scale.setScalar(base * (highlighted ? 1.08 : 1));
+      entry.ringMaterial.color.set(deskGlowColor(entry));
     }
   }
 
@@ -1251,10 +1340,7 @@ export function createOfficeScene(
       entry.group.position.set(x, FLOOR_Y, z);
       entry.torsoMaterial.color.set(shirtFor(desk));
       entry.ledMaterial.color.set(STATE_COLORS[desk.state]);
-      const ringColor = ACTIVE_STATES.has(desk.state)
-        ? STATE_COLORS[desk.state]
-        : desk.color || STATE_COLORS[desk.state];
-      entry.ringMaterial.color.set(desk.id === selectedId ? '#3f5b70' : ringColor);
+      entry.ringMaterial.color.set(deskGlowColor(entry));
       // Thought / approval / tool bubbles float above the agent, visible
       // even when an agent sits behind a partition.
       const bubbleKind =
@@ -1302,6 +1388,12 @@ export function createOfficeScene(
 
   function select(id: string) {
     selectedId = id;
+    applySelection();
+  }
+
+  function hover(id: string) {
+    if (hoveredId === id) return;
+    hoveredId = id;
     applySelection();
   }
 
@@ -1361,10 +1453,12 @@ export function createOfficeScene(
   };
   const onPointerMove = (event: PointerEvent) => {
     const id = pick(event);
+    hover(id);
     canvas.style.cursor = id ? 'pointer' : 'grab';
     onHover?.(id, event.clientX, event.clientY);
   };
   const onPointerLeave = () => {
+    hover('');
     canvas.style.cursor = 'grab';
     onHover?.('', 0, 0);
   };
@@ -1611,23 +1705,19 @@ export function createOfficeScene(
       canvas.removeEventListener('dblclick', onDoubleClick);
       cancelAllWalks(false);
       controls.dispose();
-      scene.traverse((node) => {
-        if (node instanceof THREE.Mesh) {
-          node.geometry.dispose();
-          const material = node.material;
-          if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
-          else material.dispose();
-        } else if (node instanceof THREE.Sprite) {
-          (node.material as THREE.SpriteMaterial).map?.dispose();
-          node.material.dispose();
-        }
-      });
+      disposeObject(scene);
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
+      floorTexture.dispose();
       skyTexture.dispose();
       skyNightTexture.dispose();
       poolTexture.dispose();
       poolMaterial.dispose();
+      disposeScreenTexture();
+      if (scene.environment) {
+        (scene.environment as THREE.Texture).dispose();
+        scene.environment = null;
+      }
       renderer.dispose();
       renderer.forceContextLoss?.();
     },

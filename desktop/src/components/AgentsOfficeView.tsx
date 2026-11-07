@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AgentEvent, Agent, ApprovalRequest, Session } from '../types';
 import { api } from '../api';
 import { AgentEditorModal } from './AgentEditorModal';
+import { MarkdownView } from './MarkdownView';
 import {
   ACTIVE_STATES,
   AREA_AGENT,
@@ -135,7 +136,9 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
         },
         handleHover,
       );
+      setWebglError('');
     } catch (error: any) {
+      console.error('[AgentsOfficeView] WebGL creation error:', error);
       setWebglError(error?.message || 'WebGL is not available in this window.');
     }
     return () => {
@@ -215,7 +218,10 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
   const selectedSessionId = selected?.sessionId || selected?.id || '';
   const hoveredDesk = desks.find((desk) => desk.id === hoveredId) || null;
   const hoveredIsDirector = hoveredId === DIRECTOR_ID;
-  const hoveredLiveId = hoveredDesk?.sessionId || hoveredDesk?.id;
+  // `desks` is a fresh array every render, but the live event map mutates in
+  // place as tokens stream. Look up through both ids so the rAF / tick
+  // re-render picks up the newest snippet.
+  const hoveredLiveId = hoveredDesk?.sessionId || hoveredDesk?.id || '';
   const hoveredLive = hoveredLiveId ? eventsRef.current.get(hoveredLiveId) : undefined;
   const hoveredThought = (hoveredLive?.thought || '').trim();
   const hoveredAnswer = (hoveredLive?.answer || '').trim();
@@ -874,7 +880,7 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
         }`}
       >
         {hoveredIsDirector && (
-          <>
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
             <div className="flex items-center gap-1.5">
               <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
               <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-neutral-900">
@@ -884,9 +890,9 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
                 operator
               </span>
             </div>
-            <div className="mt-0.5 text-[10px] leading-snug text-neutral-500">
+            <p className="mt-0.5 text-[10px] leading-snug text-neutral-500">
               The operator's desk. Watch the floor: agents keep the Office moving.
-            </div>
+            </p>
             <div className="mt-1.5 flex flex-wrap gap-1">
               <span className="rounded-md border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 font-mono text-[9px] text-neutral-600">
                 camera + approvals
@@ -895,44 +901,80 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
                 director's office
               </span>
             </div>
-            <div className="mt-2 text-[9px] text-neutral-400">
-              Click the desk to focus it.
-            </div>
-          </>
+            <p className="mt-2 text-[9px] text-neutral-400">Click the desk to focus it.</p>
+          </div>
         )}
         {hoveredDesk && (
-          <>
-            <div className="flex items-center gap-1.5">
+          <div>
+            <div className="flex items-start gap-1.5">
               <span
-                className="h-2 w-2 shrink-0 rounded-full"
+                className="mt-0.5 h-2 w-2 shrink-0 rounded-full ring-2 ring-white"
                 style={{ backgroundColor: STATE_COLORS[hoveredDesk.state] }}
               />
-              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-neutral-900">
-                {hoveredDesk.title}
-              </span>
-              <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-neutral-400">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[11px] font-semibold text-neutral-900">
+                  {hoveredDesk.title}
+                </div>
+                <div className="mt-0.5 truncate text-[10px] text-neutral-500">
+                  {areaFor(hoveredDesk)} · {hoveredDesk.role || roomFor(hoveredDesk.mode)}
+                  {hoveredDesk.model ? ` · ${hoveredDesk.model}` : ''}
+                  {hoveredDesk.workHours ? ` · ${hoveredDesk.workHours}` : ''}
+                  {hoveredDesk.children
+                    ? ` · ${hoveredDesk.children} active delegation${hoveredDesk.children === 1 ? '' : 's'}`
+                    : ''}
+                </div>
+              </div>
+              <span
+                className="shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
+                style={{
+                  color: STATE_COLORS[hoveredDesk.state],
+                  borderColor: STATE_COLORS[hoveredDesk.state] + '55',
+                  backgroundColor: STATE_COLORS[hoveredDesk.state] + '14',
+                }}
+              >
                 {STATE_LABELS[hoveredDesk.state]}
               </span>
             </div>
-            <div className="mt-0.5 truncate text-[10px] text-neutral-500">
-              {areaFor(hoveredDesk)} · {hoveredDesk.role || roomFor(hoveredDesk.mode)}
-              {hoveredDesk.model ? ` · ${hoveredDesk.model}` : ''}
-              {hoveredDesk.workHours ? ` · ${hoveredDesk.workHours}` : ''}
-              {hoveredDesk.children
-                ? ` · ${hoveredDesk.children} active delegation${hoveredDesk.children === 1 ? '' : 's'}`
-                : ''}
-            </div>
-            {(hoveredDesk.tool || hoveredDesk.approval) && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {hoveredDesk.tool && (
-                  <span className="rounded-md border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 font-mono text-[9px] text-neutral-600">
-                    {hoveredDesk.tool}
+
+            {(hoveredDesk.tool || hoveredDesk.approval || (hoveredDesk.log?.length || 0) > 0) && (
+              <div className="mt-2 rounded-lg border border-neutral-100 bg-neutral-50/70 p-2">
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-neutral-400">
+                    Activity
                   </span>
+                  {ACTIVE_STATES.has(hoveredDesk.state) && (
+                    <span className="ml-auto inline-flex items-center gap-1 font-mono text-[9px] text-emerald-700">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-600" />
+                      </span>
+                      Live
+                    </span>
+                  )}
+                </div>
+                {hoveredDesk.tool && (
+                  <div className="mt-1 flex items-center gap-1">
+                    <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 font-mono text-[9px] text-blue-700">
+                      {hoveredDesk.tool}
+                    </span>
+                  </div>
                 )}
                 {hoveredDesk.approval && (
-                  <span className="rounded-md border border-clay-200 bg-clay-50 px-1.5 py-0.5 text-[9px] font-semibold text-clay-800">
+                  <div className="mt-1 inline-block rounded-md border border-clay-200 bg-clay-50 px-1.5 py-0.5 text-[9px] font-semibold text-clay-800">
                     approval: {hoveredDesk.approval}
-                  </span>
+                  </div>
+                )}
+                {(hoveredDesk.log?.length || 0) > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {(hoveredDesk.log || []).slice(0, 3).map((entry, index) => (
+                      <div
+                        key={`${index}-${entry}`}
+                        className="font-mono text-[9.5px] leading-snug text-neutral-500"
+                      >
+                        {entry}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -960,35 +1002,49 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
               </div>
             )}
 
-            {hoveredThought && (
-              <div className="mt-2">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-neutral-400">
-                  Reasoning
+            <div className="mt-2 space-y-2">
+              {hoveredThought && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] font-semibold uppercase tracking-wider text-blue-700">
+                      Reasoning
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-mono text-[9px] text-blue-600">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+                      Streaming
+                    </span>
+                  </div>
+                  <div className="mt-0.5 max-h-20 overflow-y-auto text-[10.5px] leading-snug text-blue-950/80">
+                    <MarkdownView content={hoveredThought} dense preserveLineBreaks />
+                  </div>
                 </div>
-                <p className="mt-0.5 max-h-16 overflow-hidden whitespace-pre-wrap break-words text-[10px] leading-snug text-neutral-600">
-                  {hoveredThought.slice(-220)}
-                </p>
-              </div>
-            )}
-            {hoveredAnswer && (
-              <div className="mt-2">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-neutral-400">
-                  Reply
+              )}
+              {hoveredAnswer && (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 p-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-700">
+                      Reply
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-mono text-[9px] text-emerald-600">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                      Streaming
+                    </span>
+                  </div>
+                  <div className="mt-0.5 max-h-20 overflow-y-auto text-[10.5px] leading-snug text-emerald-950/80">
+                    <MarkdownView content={hoveredAnswer} dense preserveLineBreaks />
+                  </div>
                 </div>
-                <p className="mt-0.5 max-h-16 overflow-hidden whitespace-pre-wrap break-words text-[10px] leading-snug text-neutral-700">
-                  {hoveredAnswer.slice(-220)}
-                </p>
-              </div>
-            )}
-            {!hoveredThought && !hoveredAnswer && (
-              <p className="mt-2 text-[10px] text-neutral-400">
-                No reasoning or reply captured yet.
-              </p>
-            )}
+              )}
+              {!hoveredThought && !hoveredAnswer && (
+                <div className="rounded-lg border border-neutral-100 bg-neutral-50/60 px-2.5 py-2 text-center text-[10px] text-neutral-400">
+                  No reasoning or reply captured yet.
+                </div>
+              )}
+            </div>
             <div className="mt-2 text-[9px] text-neutral-400">
               Click the desk to open it in chat.
             </div>
-          </>
+          </div>
         )}
       </div>
 

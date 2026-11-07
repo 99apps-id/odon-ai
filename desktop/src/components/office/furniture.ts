@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 /**
  * Small, dependency-free furniture builders for the office. Everything is
@@ -28,8 +29,8 @@ export const PALETTE = {
   white: '#fffaf2',
 } as const;
 
-export function material(color: string, roughness = 0.9): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness });
+export function material(color: string, roughness = 0.9, metalness = 0): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
 export function box(
@@ -460,6 +461,12 @@ function getScreenTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+/** Release the shared screen texture. Call from the scene dispose path. */
+export function disposeScreenTexture(): void {
+  screenTexture?.dispose();
+  screenTexture = null;
+}
+
 /** A desk with a seated agent, monitor, keyboard, mug and papers. */
 export function createDesk(color: string, small: boolean, director = false): DeskVisual {
   const group = new THREE.Group();
@@ -468,9 +475,24 @@ export function createDesk(color: string, small: boolean, director = false): Des
   const wood = PALETTE.wood;
   const width = director ? 2.3 : 1.7;
   const depth = director ? 1.25 : 0.95;
-  const top = box(width, 0.1, depth, wood, 0, 0.74, 0);
+  // Rounded, slightly glossy top slab — reads as finished wood rather than a
+  // raw box edge.
+  const top = new THREE.Mesh(
+    new RoundedBoxGeometry(width, 0.09, depth, 3, 0.04),
+    new THREE.MeshStandardMaterial({ color: wood, roughness: 0.55, metalness: 0.06 }),
+  );
+  top.position.set(0, 0.74, 0);
+  top.castShadow = true;
+  top.receiveShadow = true;
   group.add(top);
-  for (const x of [-width / 2 + 0.1, width / 2 - 0.1]) {
+  // Slim two-drawer pedestal under the work side and a cable raceway so the
+  // legs are not four bare posts.
+  const pedestal = box(0.55, 0.62, depth - 0.12, '#cbb99d', -width / 2 + 0.33, 0.38, 0);
+  group.add(pedestal);
+  for (const drawerY of [0.5, 0.28]) {
+    group.add(box(0.42, 0.05, 0.02, PALETTE.woodDark, -width / 2 + 0.33, drawerY, depth / 2 - 0.085));
+  }
+  for (const x of [width / 2 - 0.1]) {
     for (const z of [-depth / 2 + 0.08, depth / 2 - 0.08]) {
       group.add(box(0.08, 0.72, 0.08, PALETTE.woodDark, x, 0.36, z));
     }
@@ -515,7 +537,10 @@ export function createDesk(color: string, small: boolean, director = false): Des
   const drink = cylinder(0.048, 0.048, 0.015, director ? '#6b4a2f' : '#8d5f49', 12);
   drink.position.set(mug.position.x, 0.923, mug.position.z);
   group.add(drink);
+  // Paper stack with a coloured sheet so it reads as a document, not a blank.
   group.add(box(0.34, 0.015, 0.24, PALETTE.white, director ? -0.1 : -0.55, 0.8, 0.18));
+  group.add(box(0.3, 0.012, 0.2, '#cfe2ee', director ? -0.1 : -0.55, 0.814, 0.18));
+  group.add(box(0.24, 0.005, 0.02, '#557a95', director ? -0.1 : -0.55, 0.822, 0.24));
   const deskPlant = createDeskPlant();
   deskPlant.position.set(director ? 0.95 : 0.7, 0.79, 0.26);
   group.add(deskPlant);
@@ -528,10 +553,18 @@ export function createDesk(color: string, small: boolean, director = false): Des
   group.add(person.group);
 
   const ringMaterial = new THREE.MeshBasicMaterial({ color });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.035, 6, 18), ringMaterial);
+  // A flatter, softer ellipse reads as a floor pad rather than a hard ring.
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.028, 6, 18), ringMaterial);
   ring.rotation.x = Math.PI / 2;
   ring.position.set(0, 0.03, director ? -0.62 : 0.56);
   group.add(ring);
+  const pad = new THREE.Mesh(
+    new THREE.CircleGeometry(0.33, 18),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.14, depthWrite: false }),
+  );
+  pad.rotation.x = -Math.PI / 2;
+  pad.position.set(0, 0.035, director ? -0.62 : 0.56);
+  group.add(pad);
 
   const ledMaterial = new THREE.MeshBasicMaterial({ color });
   const led = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), ledMaterial);
@@ -645,10 +678,16 @@ export function createPlant(scale = 1): THREE.Group {
 /** Office water cooler with two taps and a cup stack. */
 export function createDispenser(): THREE.Group {
   const group = new THREE.Group();
-  const base = box(0.55, 0.95, 0.48, '#d6d2c8', 0, 0.48, 0);
+  // Rounded body with a glossy front panel, taps and a tray.
+  const base = new THREE.Mesh(
+    new RoundedBoxGeometry(0.55, 0.95, 0.48, 3, 0.05),
+    new THREE.MeshStandardMaterial({ color: '#e4e0d8', roughness: 0.45, metalness: 0.08 }),
+  );
+  base.position.set(0, 0.48, 0);
+  base.castShadow = true;
+  base.receiveShadow = true;
   group.add(base);
-  const front = box(0.42, 0.36, 0.03, '#b7b2a6', 0, 0.62, 0.25);
-  group.add(front);
+  group.add(box(0.42, 0.36, 0.03, '#b7b2a6', 0, 0.62, 0.25));
   for (const x of [-0.1, 0.1]) {
     const tap = cylinder(0.02, 0.02, 0.08, PALETTE.blue, 8);
     tap.rotation.x = Math.PI / 2;
@@ -685,12 +724,18 @@ export function createWhiteboard(): THREE.Group {
   const group = new THREE.Group();
   const width = 3.0;
   const height = 1.65;
-  const board = box(width, height, 0.06, '#f7f4ee', 0, 1.55, 0);
+  // Thin aluminium frame around the board, then the legs.
+  const board = new THREE.Mesh(
+    new RoundedBoxGeometry(width, height, 0.045, 2, 0.03),
+    new THREE.MeshStandardMaterial({ color: '#d7d2c8', roughness: 0.35, metalness: 0.55 }),
+  );
+  board.position.set(0, 1.55, 0);
+  board.castShadow = true;
+  board.receiveShadow = true;
   group.add(board);
-  group.add(box(width + 0.1, 0.06, 0.1, PALETTE.wallTrim, 0, 2.4, 0));
-  group.add(box(width + 0.1, 0.06, 0.1, PALETTE.wallTrim, 0, 0.7, 0));
+  group.add(box(width + 0.1, 0.05, 0.08, '#b7b2a6', 0, 2.4, 0));
   for (const x of [-width / 2 + 0.2, width / 2 - 0.2]) {
-    group.add(box(0.08, 2.4, 0.08, '#8d8578', x, 1.2, -0.05));
+    group.add(box(0.07, 2.4, 0.07, '#8d8578', x, 1.2, -0.05));
   }
 
   const canvas = document.createElement('canvas');
@@ -727,7 +772,7 @@ export function createWhiteboard(): THREE.Group {
     new THREE.PlaneGeometry(width - 0.14, height - 0.14),
     new THREE.MeshBasicMaterial({ map: texture }),
   );
-  drawing.position.set(0, 1.55, 0.035);
+  drawing.position.set(0, 1.55, 0.03);
   group.add(drawing);
   return group;
 }
@@ -736,6 +781,8 @@ export function createWhiteboard(): THREE.Group {
 export function createPicture(color: string): THREE.Group {
   const group = new THREE.Group();
   group.add(box(0.95, 0.72, 0.05, PALETTE.woodDark, 0, 0, 0));
+  // A small palette-tinted matte so the print floats inside the frame.
+  group.add(box(0.85, 0.62, 0.012, PALETTE.wall, 0, 0, 0.028));
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 192;
@@ -758,7 +805,7 @@ export function createPicture(color: string): THREE.Group {
     new THREE.PlaneGeometry(0.82, 0.59),
     new THREE.MeshBasicMaterial({ map: texture }),
   );
-  print.position.z = 0.031;
+  print.position.z = 0.034;
   group.add(print);
   return group;
 }
@@ -891,17 +938,26 @@ export function createSittingFigure(
 /** Meeting table with four chairs. */
 export function createMeetingTable(): THREE.Group {
   const group = new THREE.Group();
-  group.add(box(3.6, 0.12, 1.3, PALETTE.wood, 0, 0.74, 0));
-  for (const x of [-1.55, 1.55]) {
-    for (const z of [-0.48, 0.48]) {
-      group.add(box(0.1, 0.7, 0.1, PALETTE.woodDark, x, 0.35, z));
-    }
+  // Rounded oak top with a darker under-panel; the old four square posts read
+  // as a card table at office scale.
+  const top = new THREE.Mesh(
+    new RoundedBoxGeometry(3.8, 0.12, 1.4, 3, 0.04),
+    new THREE.MeshStandardMaterial({ color: PALETTE.wood, roughness: 0.5, metalness: 0.05 }),
+  );
+  top.position.set(0, 0.74, 0);
+  top.castShadow = true;
+  top.receiveShadow = true;
+  group.add(top);
+  group.add(box(3.4, 0.06, 1.1, '#5d3d30', 0, 0.66, 0));
+  for (const x of [-1.6, 1.6]) {
+    group.add(box(0.12, 0.64, 1.0, PALETTE.woodDark, x, 0.32, 0));
   }
+  // Glazed side of the table, not a black cube.
   group.add(box(0.5, 0.03, 0.36, '#2b2721', -0.9, 0.81, 0.1));
   group.add(box(0.34, 0.02, 0.24, PALETTE.white, 0.7, 0.81, -0.15));
   // A monitor in the middle, papers and a snack plate.
   group.add(box(0.42, 0.28, 0.03, '#2b2721', 0.35, 0.96, -0.18));
-  group.add(box(0.38, 0.24, 0.01, '#3f5b70', 0.35, 0.96, -0.165));
+  group.add(box(0.38, 0.24, 0.015, '#3f5b70', 0.35, 0.96, -0.165));
   const snack = cylinder(0.11, 0.09, 0.03, '#fffaf2', 12);
   snack.position.set(-0.1, 0.8, 0.28);
   group.add(snack);
@@ -933,18 +989,24 @@ export function createMeetingTable(): THREE.Group {
 /** Small lounge sofa with two seated people and a throw pillow. */
 export function createSofa(): THREE.Group {
   const group = new THREE.Group();
-  group.add(box(1.8, 0.28, 0.75, PALETTE.terracotta, 0, 0.28, 0));
-  group.add(box(1.8, 0.5, 0.18, PALETTE.terracotta, 0, 0.55, -0.3));
-  group.add(box(0.16, 0.42, 0.75, PALETTE.terracotta, -0.82, 0.46, 0));
-  group.add(box(0.16, 0.42, 0.75, PALETTE.terracotta, 0.82, 0.46, 0));
+  // Soft fabric upholstery: a deeper terracotta seat, cushions and a low
+  // wooden frame so the sofa reads as textile rather than stacked boxes.
+  group.add(box(1.9, 0.3, 0.78, PALETTE.terracotta, 0, 0.3, 0));
+  group.add(box(1.9, 0.44, 0.18, PALETTE.terracotta, 0, 0.58, -0.3));
+  group.add(box(0.16, 0.42, 0.78, PALETTE.terracotta, -0.87, 0.48, 0));
+  group.add(box(0.16, 0.42, 0.78, PALETTE.terracotta, 0.87, 0.48, 0));
+  group.add(box(1.7, 0.07, 0.7, PALETTE.woodDark, 0, 0.11, 0.02));
   group.add(box(0.7, 0.06, 0.42, '#5d3d30', 0, 0.09, 0.55));
-  group.add(box(0.5, 0.26, 0.03, PALETTE.white, -0.5, 0.5, 0.08));
+  group.add(box(0.46, 0.26, 0.03, PALETTE.white, -0.52, 0.52, 0.08));
+  group.add(box(0.4, 0.24, 0.03, '#cfe2ee', 0.55, 0.52, 0.08));
 
   // Two people sunk into the sofa, facing the coffee table.
   for (const [index, x] of [-0.42, 0.42].entries()) {
     group.add(createSittingFigure(index === 0 ? '#557a95' : '#8d6e63', [x, 0.2, 0.05], 0));
   }
-  // Cushions.
+  // Seat cushions.
+  group.add(box(0.8, 0.09, 0.62, '#bd9480', -0.44, 0.49, 0.04));
+  group.add(box(0.8, 0.09, 0.62, '#bd9480', 0.44, 0.49, 0.04));
   group.add(box(0.38, 0.12, 0.38, '#d9cbb8', 0, 0.42, 0.05));
   return group;
 }
