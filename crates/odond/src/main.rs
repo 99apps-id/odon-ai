@@ -11816,4 +11816,43 @@ mod gateway_catalogue_tests {
         assert!(parse_saved_models("[\"  \"]").is_empty());
         assert!(parse_saved_models("[{\"id\":\"  \"},42,null]").is_empty());
     }
+
+    #[tokio::test]
+    async fn test_inspect_antigravity_token() {
+        let tokens = load_oauth_tokens();
+        if let Some(tok) = tokens.get("antigravity") {
+            println!("ANTIGRAVITY TOKEN EMAIL: {:?}", tok.email);
+            println!("ANTIGRAVITY TOKEN ACCOUNT_ID: {:?}", tok.account_id);
+            println!("ANTIGRAVITY TOKEN EXPIRES_AT: {:?}", tok.expires_at);
+
+            let metadata = serde_json::json!({
+                "ideType": 9,
+                "platform": 5,
+                "pluginType": 2
+            });
+
+            let client = reqwest::Client::new();
+            let load_url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+            let resp = client
+                .post(load_url)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", tok.access_token))
+                .header("user-agent", "antigravity/ide/2.11.0 windows/x64")
+                .json(&serde_json::json!({ "metadata": metadata }))
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    let text = r.text().await.unwrap_or_default();
+                    println!("LOAD_CODE_ASSIST STATUS: {status}");
+                    println!("LOAD_CODE_ASSIST BODY: {text}");
+                }
+                Err(e) => println!("LOAD_CODE_ASSIST ERR: {e}"),
+            }
+        } else {
+            println!("NO ANTIGRAVITY TOKEN FOUND");
+        }
+    }
 }

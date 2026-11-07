@@ -504,7 +504,7 @@ export function createOfficeScene(
 
   // Ceiling pendants across the whole floor; their bulbs glow as it gets dark.
   const lampZones: Array<{ x: number; z: number; y: number; on: number }> = [];
-  for (const z of [-10.6, -3.5, 3.5, 9.6]) {
+  for (const z of [-10.6, -3.5, 3.5, 9.6, 14.5]) {
     for (const x of [-13.5, -4.5, 4.5, 13.5]) {
       lampZones.push({ x, z, y: 3.15, on: 0 });
     }
@@ -547,26 +547,39 @@ export function createOfficeScene(
     bulbMaterials.push(bulbMaterial);
     bulbMeshes.push(bulb);
   }
-  // Real room lights: warm, low intensity, one per named room + aisle pools.
+  // Real room lights: warm, low intensity, one per named room + aisle pools + left/right wings.
   for (const [x, z] of [
-    [0, -13],
-    [-15, -13],
-    [15, -13],
-    [0, -1],
-    [0, 11.8],
+    [0, -13],      // Director's office
+    [-15, -13],    // Meeting room
+    [15, -13],     // Lounge
+    [0, -1],       // Center main aisle
+    [0, 11.8],     // Center subagent wing
+    [-13.5, -1],   // Sisi kiri karyawan
+    [13.5, -1],    // Sisi kanan karyawan
+    [-13.5, 11.8], // Sisi kiri subagent
+    [13.5, 11.8],  // Sisi kanan subagent
   ] as const) {
-    const light = new THREE.PointLight('#ffd9a0', 0, 15, 1.8);
+    const light = new THREE.PointLight('#ffd9a0', 0, 14, 1.8);
     light.position.set(x, 2.9, z);
     scene.add(light);
     lampLights.push(light);
   }
-  // Sconce lights in the director's glass/ meeting room/ lounge/ subagent wing.
+  // Sconce lights in the director's glass/ meeting room/ lounge/ subagent wing
+  // and warm flanking sconces on the left and right walls of employee desks.
   for (const [x, y, z] of [
     [-2.5, 2.2, -8.3],
     [2.5, 2.2, -8.3],
     [-18.5, 2.05, -17.15],
     [18.5, 2.05, -17.15],
     [0, 1.6, 7.1],
+    // Dinding sisi kiri karyawan (left wall)
+    [-22.7, 2.1, -4.5],
+    [-22.7, 2.1, 3.5],
+    [-22.7, 2.1, 11.5],
+    // Perimeter sisi kanan karyawan (right perimeter)
+    [20.8, 2.1, -4.5],
+    [20.8, 2.1, 3.5],
+    [20.8, 2.1, 11.5],
   ] as const) {
     const sconce = new THREE.Mesh(
       new THREE.SphereGeometry(0.09, 10, 8),
@@ -578,19 +591,39 @@ export function createOfficeScene(
     const rod = cylinder(0.015, 0.015, 0.3, '#5d3d30', 6);
     rod.position.set(x, y + 0.2, z);
     scene.add(rod);
+
+    // Warm ambient glow from wall sconces to keep side walls cozy and not dark
+    const sLight = new THREE.PointLight('#ffd59e', 0, 9, 2.0);
+    sLight.position.set(x > 0 ? x - 0.3 : x + 0.3, y, z);
+    scene.add(sLight);
+    ceilingLights.push(sLight);
   }
-  // Soft pools over the desks so monitors read at night. These sit exactly
-  // under four of the pendants, matching the floor pools below.
+  // Soft pools over the desks so employees are gently lit at night.
+  // Covers left, center-left, center-right, and right desk columns.
   for (const [x, z] of [
+    // Sisi kiri karyawan
+    [-13.5, -3.5],
+    [-13.5, 3.5],
+    [-13.5, 9.6],
+    [-13.5, 14.5],
+    // Tengah kiri karyawan
     [-4.5, -3.5],
-    [4.5, -3.5],
     [-4.5, 3.5],
-    [4.5, 3.5],
     [-4.5, 9.6],
+    [-4.5, 14.5],
+    // Tengah kanan karyawan
+    [4.5, -3.5],
+    [4.5, 3.5],
     [4.5, 9.6],
+    [4.5, 14.5],
+    // Sisi kanan karyawan
+    [13.5, -3.5],
+    [13.5, 3.5],
+    [13.5, 9.6],
+    [13.5, 14.5],
   ] as const) {
-    const light = new THREE.PointLight('#cfe2ee', 0, 7, 2.0);
-    light.position.set(x, 1.9, z);
+    const light = new THREE.PointLight('#ffe4be', 0, 8, 1.8);
+    light.position.set(x, 2.0, z);
     scene.add(light);
     ceilingLights.push(light);
   }
