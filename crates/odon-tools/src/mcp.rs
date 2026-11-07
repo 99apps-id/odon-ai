@@ -293,6 +293,16 @@ impl StdioMcpClient {
                 message: format!("Failed reading MCP response: {error}"),
             })?
         {
+            // A server that never writes a newline would otherwise grow one
+            // String without bound inside the request timeout.
+            if line.chars().count() > MAX_STDIO_LINE_CHARS {
+                return Err(OdonError::Tool {
+                    tool: "mcp".to_string(),
+                    message: format!(
+                        "MCP server sent a line longer than {MAX_STDIO_LINE_CHARS} characters"
+                    ),
+                });
+            }
             let Ok(response) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
@@ -335,6 +345,18 @@ struct SseMcpClient {
     next_id: u64,
 }
 
+/// Largest SSE event the client will buffer.
+///
+/// A server that never sends the blank line that terminates an event - or one
+/// that emits a single endless line - grows the buffer without bound until the
+/// request timeout fires. Bounding it turns that into a diagnosable error.
+const MAX_SSE_BUFFER_CHARS: usize = 2_000_000;
+
+/// Largest single stdio response line the client will accept. A tool result
+/// larger than this is a server misbehaving, and buffering it is how a
+/// misbehaving server takes the daemon's heap with it.
+const MAX_STDIO_LINE_CHARS: usize = 4_000_000;
+
 async fn next_sse_event(
     stream: &mut SseByteStream,
     buffer: &mut String,
@@ -357,8 +379,20 @@ async fn next_sse_event(
         match stream.next().await {
             Some(Ok(chunk)) => {
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
+                // SSE permits CRLF, LF and a bare CR as line terminators.
+                // Normalising all three keeps the `\n\n` scan honest for a
+                // CR-only server, whose buffer would otherwise grow until the
+                // timeout.
                 if buffer.contains('\r') {
-                    *buffer = buffer.replace("\r\n", "\n");
+                    *buffer = buffer.replace("\r\n", "\n").replace('\r', "\n");
+                }
+                if buffer.chars().count() > MAX_SSE_BUFFER_CHARS {
+                    return Err(OdonError::Tool {
+                        tool: "mcp".to_string(),
+                        message: format!(
+                            "MCP SSE server sent more than {MAX_SSE_BUFFER_CHARS} characters without completing an event"
+                        ),
+                    });
                 }
             }
             Some(Err(error)) => {
@@ -413,7 +447,8 @@ impl SseMcpClient {
         }
         let mut stream: SseByteStream = Box::pin(response.bytes_stream());
         let mut buffer = String::new();
-        let endpoint = timeout(MCP_REQUEST_TIMEOUT, async {
+        // (endpoint url, client pinned to it)
+        let (endpoint, http) = timeout(MCP_REQUEST_TIMEOUT, async {
             loop {
                 let Some((event, data)) = next_sse_event(&mut stream, &mut buffer).await? else {
                     return Err(OdonError::Tool {
@@ -422,14 +457,32 @@ impl SseMcpClient {
                     });
                 };
                 if event == "endpoint" && !data.trim().is_empty() {
+                    let joined = base.url().join(data.trim()).map_err(|error| {
+                        OdonError::Tool {
+                            tool: "mcp".to_string(),
+                            message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
+                        }
+                    })?;
+                    // `Url::join` replaces scheme, host and port outright when
+                    // the server sends an absolute URL, so the POST target can
+                    // be a different machine from the one that was validated.
+                    // Re-validate the resolved endpoint and pin a client to it:
+                    // otherwise a hostile (or MITM'd) SSE server has ODON POST
+                    // every subsequent JSON-RPC request - tool arguments and
+                    // configured secrets included - to an address the guard
+                    // never saw.
                     let resolved =
-                        base.url()
-                            .join(data.trim())
+                        net_guard::validate_url(joined.as_str())
+                            .await
                             .map_err(|error| OdonError::Tool {
                                 tool: "mcp".to_string(),
-                                message: format!("Invalid MCP SSE endpoint '{}': {error}", data),
+                                message: format!(
+                                    "MCP SSE server '{}' redirected to a refused endpoint '{}': {error}",
+                                    config.name, joined
+                                ),
                             })?;
-                    return Ok(resolved.to_string());
+                    let client = resolved.client(reqwest::Client::builder())?;
+                    return Ok((resolved.as_str().to_string(), client));
                 }
             }
         })
@@ -467,16 +520,22 @@ impl SseMcpClient {
     }
 
     async fn post(&mut self, payload: &Value) -> Result<()> {
-        let response = self
-            .http
-            .post(&self.endpoint)
-            .json(payload)
-            .send()
-            .await
-            .map_err(|error| OdonError::Tool {
-                tool: "mcp".to_string(),
-                message: format!("Failed to POST MCP request: {error}"),
-            })?;
+        // The POST sits outside `request`'s timeout in the old shape, so a
+        // server that accepted the connection and then went silent held the
+        // tool open until the runtime's 950s ceiling.
+        let response = timeout(
+            MCP_REQUEST_TIMEOUT,
+            self.http.post(&self.endpoint).json(payload).send(),
+        )
+        .await
+        .map_err(|_| OdonError::Tool {
+            tool: "mcp".to_string(),
+            message: format!("MCP POST to {} timed out after 30 seconds", self.endpoint),
+        })?
+        .map_err(|error| OdonError::Tool {
+            tool: "mcp".to_string(),
+            message: format!("Failed to POST MCP request: {error}"),
+        })?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();

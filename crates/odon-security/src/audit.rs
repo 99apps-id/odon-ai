@@ -31,6 +31,11 @@ pub struct AuditEvent {
 pub struct AuditLogger {
     events: Arc<RwLock<Vec<AuditEvent>>>,
     path: PathBuf,
+    /// Serialises the append. Tool calls run concurrently, and each used to
+    /// open the file and write on its own: interleaved `writeln!` calls
+    /// produced lines with two JSON records glued together, which the loader
+    /// then silently discarded.
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 fn audit_home() -> PathBuf {
@@ -69,6 +74,7 @@ impl AuditLogger {
         Self {
             events: Arc::new(RwLock::new(loaded)),
             path,
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -98,7 +104,11 @@ impl AuditLogger {
             timestamp: Utc::now(),
         };
 
-        // Persist first so a crash cannot lose the latest event.
+        // Persist first so a crash cannot lose the latest event. The whole
+        // open-write-sync sequence runs under the write lock so concurrent
+        // tool calls cannot interleave their lines, and `sync_all` makes the
+        // record survive a power loss instead of sitting in the page cache.
+        let _write_guard = self.write_lock.lock().await;
         if let Some(parent) = self.path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -111,6 +121,7 @@ impl AuditLogger {
             {
                 let _ = writeln!(file, "{line}");
                 let _ = file.flush();
+                let _ = file.sync_all();
             }
             #[cfg(unix)]
             {
@@ -119,6 +130,7 @@ impl AuditLogger {
                     std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
             }
         }
+        drop(_write_guard);
 
         let mut events = self.events.write().await;
         events.insert(0, event.clone());

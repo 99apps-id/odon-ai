@@ -142,6 +142,7 @@ mod tests {
         MessageContent {
             text: text.to_string(),
             thought: None,
+            thought_signature: None,
             tool_calls: Vec::new(),
             artifact_ids: Vec::new(),
             action_chips: Vec::new(),

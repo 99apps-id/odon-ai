@@ -294,7 +294,11 @@ impl Tool for TodoUpdateTool {
         })
     }
     fn risk_tier(&self) -> RiskTier {
-        RiskTier::Tier1WorkspaceMutating
+        // Plan bookkeeping is session-local scratch state, not a workspace
+        // mutation. It used to be Tier 1 while `todo_write` - which can rewrite
+        // every item's status - was Tier 0, so in plan mode the instructed
+        // `todo_update` path was the one that got refused.
+        RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let storage = ctx
@@ -305,10 +309,19 @@ impl Tool for TodoUpdateTool {
         if id.trim().is_empty() {
             return Err(tool_err(self.name(), "Missing 'id' parameter"));
         }
+        // The status is required by the schema; defaulting it to `completed`
+        // turned a sloppy `{"id":"t1"}` into a silent "done".
         let new_status = args
             .get("status")
             .and_then(|s| s.as_str())
-            .unwrap_or("completed");
+            .map(str::trim)
+            .filter(|status| !status.is_empty())
+            .ok_or_else(|| {
+                tool_err(
+                    self.name(),
+                    "Missing 'status' parameter (pending, in_progress or completed)",
+                )
+            })?;
 
         // Read the same store `todo_write`/`todo_read` use. This used to read a
         // `todos:{session_id}` memory key that `todo_write` never wrote, so

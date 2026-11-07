@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 pub enum StreamEvent {
     TextDelta(String),
     ThoughtDelta(String),
+    /// The opaque signature that belongs with the reasoning streamed so far.
+    /// Providers that sign their reasoning (Anthropic extended thinking,
+    /// Gemini thought signatures) refuse a replayed turn whose signature is
+    /// missing, so the runtime keeps it beside the thought it signs.
+    ThoughtSignature(String),
     ToolCallDelta {
         index: usize,
         id: Option<String>,

@@ -225,6 +225,11 @@ impl StorageEngine {
                 "ALTER TABLE provider_configs ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'",
             ),
             (
+                "provider_configs",
+                "context_tokens",
+                "ALTER TABLE provider_configs ADD COLUMN context_tokens INTEGER",
+            ),
+            (
                 "sessions",
                 "metadata",
                 "ALTER TABLE sessions ADD COLUMN metadata TEXT",
@@ -497,6 +502,7 @@ impl StorageEngine {
                 serde_json::from_str(&content_json).unwrap_or(MessageContent {
                     text: String::new(),
                     thought: None,
+                    thought_signature: None,
                     tool_calls: Vec::new(),
                     artifact_ids: Vec::new(),
                     action_chips: Vec::new(),
@@ -1066,6 +1072,10 @@ impl StorageEngine {
 
     // --- Provider Config Operations (BYOK persistence) ---
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "provider config is stored as one row; the context window is part of that row"
+    )]
     pub fn save_provider_config(
         &self,
         provider_id: &str,
@@ -1074,6 +1084,7 @@ impl StorageEngine {
         is_default: bool,
         name: Option<&str>,
         models_json: &str,
+        context_tokens: Option<i64>,
     ) -> Result<()> {
         let conn = self.lock_conn()?;
         let now = Utc::now().to_rfc3339();
@@ -1084,14 +1095,15 @@ impl StorageEngine {
             )?;
         }
         conn.execute(
-            "INSERT INTO provider_configs (provider_id, api_key, base_url, is_default, name, models_json, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO provider_configs (provider_id, api_key, base_url, is_default, name, models_json, context_tokens, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(provider_id) DO UPDATE SET
                 api_key = excluded.api_key,
                 base_url = excluded.base_url,
                 is_default = excluded.is_default,
                 name = excluded.name,
                 models_json = excluded.models_json,
+                context_tokens = excluded.context_tokens,
                 updated_at = excluded.updated_at",
             params![
                 provider_id,
@@ -1100,6 +1112,7 @@ impl StorageEngine {
                 if is_default { 1 } else { 0 },
                 name,
                 models_json,
+                context_tokens,
                 now
             ],
         )?;
@@ -1109,7 +1122,7 @@ impl StorageEngine {
     pub fn get_provider_config(&self, provider_id: &str) -> Result<Option<ProviderConfigRecord>> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT provider_id, api_key, base_url, is_default, name, models_json, updated_at
+            "SELECT provider_id, api_key, base_url, is_default, name, models_json, context_tokens, updated_at
              FROM provider_configs WHERE provider_id = ?1",
         )?;
         let mut rows = stmt.query_map(params![provider_id], |row| {
@@ -1121,7 +1134,8 @@ impl StorageEngine {
                 is_default: def_int != 0,
                 name: row.get(4)?,
                 models_json: row.get(5)?,
-                updated_at: row.get(6)?,
+                context_tokens: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })?;
         if let Some(r) = rows.next() {
@@ -1134,7 +1148,7 @@ impl StorageEngine {
     pub fn list_provider_configs(&self) -> Result<Vec<ProviderConfigRecord>> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT provider_id, api_key, base_url, is_default, name, models_json, updated_at
+            "SELECT provider_id, api_key, base_url, is_default, name, models_json, context_tokens, updated_at
              FROM provider_configs ORDER BY provider_id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -1146,7 +1160,8 @@ impl StorageEngine {
                 is_default: def_int != 0,
                 name: row.get(4)?,
                 models_json: row.get(5)?,
-                updated_at: row.get(6)?,
+                context_tokens: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })?;
         let mut list = Vec::new();
@@ -1335,6 +1350,10 @@ pub struct ProviderConfigRecord {
     pub is_default: bool,
     pub name: Option<String>,
     pub models_json: String,
+    /// Context window (tokens) the operator declared for this endpoint. Used
+    /// for models that carry no per-model value, so a gateway serving more
+    /// than the conservative fallback is not capped by it.
+    pub context_tokens: Option<i64>,
     pub updated_at: String,
 }
 
@@ -1560,6 +1579,7 @@ mod tests {
                 true,
                 Some("First Gateway"),
                 r#"["model-a","model-b"]"#,
+                Some(200_000),
             )
             .unwrap();
         storage
@@ -1570,6 +1590,7 @@ mod tests {
                 false,
                 Some("Second Gateway"),
                 r#"["model-c"]"#,
+                None,
             )
             .unwrap();
 
@@ -1581,6 +1602,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.name.as_deref(), Some("First Gateway"));
         assert_eq!(first.models_json, r#"["model-a","model-b"]"#);
+        assert_eq!(first.context_tokens, Some(200_000));
         assert!(first.is_default);
         assert!(
             !configs
@@ -1598,6 +1620,7 @@ mod tests {
                 true,
                 Some("Second Gateway"),
                 r#"["model-c"]"#,
+                None,
             )
             .unwrap();
         let configs = storage.list_provider_configs().unwrap();

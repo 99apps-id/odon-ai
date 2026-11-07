@@ -45,6 +45,14 @@ pub struct MessageAttachment {
 pub struct MessageContent {
     pub text: String,
     pub thought: Option<String>,
+    /// Opaque provider signature that must accompany `thought` when the
+    /// history is replayed (Anthropic extended thinking, Gemini thought
+    /// signatures). Providers that sign their reasoning refuse a replayed
+    /// turn whose signature is missing or fabricated, so the runtime stores
+    /// the value it received and the request builders either replay it
+    /// verbatim or drop the reasoning block entirely.
+    #[serde(default)]
+    pub thought_signature: Option<String>,
     pub tool_calls: Vec<ToolCallInfo>,
     pub artifact_ids: Vec<String>,
     pub action_chips: Vec<OutputActionChip>,
@@ -79,6 +87,7 @@ impl Message {
             content: MessageContent {
                 text: text.into(),
                 thought: None,
+                thought_signature: None,
                 tool_calls: Vec::new(),
                 artifact_ids: Vec::new(),
                 action_chips: Vec::new(),
@@ -95,6 +104,18 @@ impl Message {
         thought: Option<String>,
         model: Option<String>,
     ) -> Self {
+        Self::new_assistant_signed(session_id, text, thought, None, model)
+    }
+
+    /// [`Message::new_assistant`], carrying the provider signature that belongs
+    /// with `thought` so a replaying provider can accept the reasoning block.
+    pub fn new_assistant_signed(
+        session_id: impl Into<String>,
+        text: impl Into<String>,
+        thought: Option<String>,
+        thought_signature: Option<String>,
+        model: Option<String>,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.into(),
@@ -102,6 +123,7 @@ impl Message {
             content: MessageContent {
                 text: text.into(),
                 thought,
+                thought_signature,
                 tool_calls: Vec::new(),
                 artifact_ids: Vec::new(),
                 action_chips: Vec::new(),
@@ -125,6 +147,7 @@ impl Message {
             content: MessageContent {
                 text: content.into(),
                 thought: None,
+                thought_signature: None,
                 tool_calls: vec![ToolCallInfo {
                     call_id: cid,
                     tool_name: String::new(),

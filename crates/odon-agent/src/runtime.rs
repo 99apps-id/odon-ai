@@ -62,7 +62,14 @@ pub const UNLIMITED_TURN_ITERATIONS: usize = usize::MAX;
 /// Default context budget in estimated tokens for one provider request.
 /// History beyond it is compacted (see `compact_history`). Override with
 /// `ODON_CONTEXT_BUDGET_TOKENS` or `set_context_budget_tokens`.
-pub const DEFAULT_CONTEXT_BUDGET_TOKENS: usize = 120_000;
+///
+/// This is a ceiling, not a target: [`budget_for_model_context`] always takes
+/// the smaller of this value and the model's own window, so a 32k local model
+/// is still protected. It is deliberately above every common window (128k
+/// gateways, 131k Groq, 200k Claude) because a 120k default silently capped
+/// models that could take far more, and the operator could not raise it
+/// anywhere in the UI.
+pub const DEFAULT_CONTEXT_BUDGET_TOKENS: usize = 240_000;
 
 /// Most tool schemas one request may carry inline. Past this the runtime
 /// sends a core set plus `find_tools` and loads the rest on demand; the
@@ -634,6 +641,15 @@ impl AgentRuntime {
         let Some(items) = todos.as_array().filter(|items| !items.is_empty()) else {
             return String::new();
         };
+        // A plan with nothing left to do is history, not work: printing it into
+        // every later turn's harness is noise the model cannot act on. The
+        // panel still shows it, so the operator keeps the record.
+        if items
+            .iter()
+            .all(|item| item.get("status").and_then(|v| v.as_str()) == Some("completed"))
+        {
+            return String::new();
+        }
         let mut out = String::from(
             "\n### Current Session Plan (your todo list; keep it updated with todo_write):\n",
         );
@@ -963,6 +979,11 @@ impl AgentRuntime {
         let mut active_artifacts = Vec::new();
         let mut total_accumulated_text = String::new();
         let mut total_accumulated_thought = String::new();
+        // The signature that belongs with the reasoning streamed this turn.
+        // Providers that sign their reasoning refuse a replay whose signature
+        // is missing, so it is kept beside the thought it signs and stored
+        // with the assistant message.
+        let mut total_thought_signature: Option<String> = None;
 
         // Tool schemas for this turn: the registry catalogue, capped at
         // MAX_INLINE_TOOL_SCHEMAS. Past the cap a core set goes inline
@@ -1155,6 +1176,7 @@ impl AgentRuntime {
             let mut tool_accumulator: HashMap<usize, AccumulatedToolCall> = HashMap::new();
             let mut stream_error = None;
             let mut output_truncated = false;
+            let mut step_thought_signature: Option<String> = None;
 
             // Process stream deltas. Steer messages are deliberately observed
             // at iteration boundaries, never by cancelling this stream: the
@@ -1198,6 +1220,13 @@ impl AgentRuntime {
                             delta,
                         });
                     }
+                    StreamEvent::ThoughtSignature(signature) => {
+                        // Only the signature of the reasoning streamed in the
+                        // current step is kept: it signs that step's thought,
+                        // and an older one would be replayed against text it
+                        // does not cover.
+                        step_thought_signature = Some(signature);
+                    }
                     StreamEvent::ToolCallDelta {
                         index,
                         id,
@@ -1234,6 +1263,14 @@ impl AgentRuntime {
             // Drop the receiver so a cancelled provider never blocks on a full
             // event channel while it is shutting down.
             drop(stream_rx);
+
+            // The signature signs the reasoning streamed in this step, so it is
+            // only kept when that step actually produced thought. A step that
+            // streamed no reasoning leaves the previous signature alone: it
+            // does not cover this step's text.
+            if step_thought_signature.is_some() && !step_thought.is_empty() {
+                total_thought_signature = step_thought_signature.take();
+            }
 
             // Backstop: a provider that ignores cancellation must not be able
             // to hold the turn open indefinitely.
@@ -1396,6 +1433,15 @@ impl AgentRuntime {
                 break;
             }
 
+            // A step that the output budget cut but that also issued tool
+            // calls cannot be resumed with a nudge - the calls have to run
+            // first, and the loop continues into the tool branch below. Record
+            // the seam anyway so the next step's repeated tail is dropped
+            // instead of being appended to the answer a second time.
+            if output_truncated && !step_text.trim().is_empty() && !grace_call {
+                truncation_seam = Some(step_text.clone());
+            }
+
             // Execute Tools. The runtime's own tools (find_tools,
             // run_subagent) run inline; registry tools run with bounded
             // parallelism, because the calls in one step are independent
@@ -1413,19 +1459,11 @@ impl AgentRuntime {
                 name: String,
                 args: serde_json::Value,
             }
-            struct ExecutedCall {
-                index: usize,
-                call_id: String,
-                name: String,
-                args: serde_json::Value,
-                output: serde_json::Value,
-                is_error: bool,
-            }
 
             let mut sorted_indices: Vec<_> = tool_accumulator.keys().cloned().collect();
             sorted_indices.sort_unstable();
             let mut pending: Vec<PendingCall> = Vec::new();
-            let mut executed: Vec<ExecutedCall> = Vec::new();
+            let mut executed: Vec<ExecutedToolCall> = Vec::new();
             for idx in sorted_indices {
                 if let Some(tool_call) = tool_accumulator.get(&idx) {
                     let call_id = if tool_call.id.is_empty() {
@@ -1446,7 +1484,7 @@ impl AgentRuntime {
                                 .or_insert(1);
                             if *seen > MAX_IDENTICAL_CALLS {
                                 blocked_repeats += 1;
-                                executed.push(ExecutedCall {
+                                executed.push(ExecutedToolCall {
                                     index: idx,
                                     call_id,
                                     name: tool_call.name.clone(),
@@ -1468,7 +1506,7 @@ impl AgentRuntime {
                                 });
                             }
                         }
-                        Err(e) => executed.push(ExecutedCall {
+                        Err(e) => executed.push(ExecutedToolCall {
                             index: idx,
                             call_id,
                             name: tool_call.name.clone(),
@@ -1492,10 +1530,27 @@ impl AgentRuntime {
 
             let mut registry_calls: Vec<PendingCall> = Vec::new();
             for call in pending {
+                // Security-perimeter tools are reserved for the host UI: they
+                // can resolve another session's approval or plant a standing
+                // grant, so a model turn must never reach them even though the
+                // registry would execute the name.
+                if self.tools.is_security_perimeter_tool(&call.name) {
+                    executed.push(ExecutedToolCall {
+                        index: call.index,
+                        call_id: call.call_id,
+                        name: call.name,
+                        args: call.args,
+                        output: serde_json::json!({
+                            "error": "This tool is reserved for the operator UI and cannot be called by an agent. Ask the operator to review the pending approval in the desktop app."
+                        }),
+                        is_error: true,
+                    });
+                    continue;
+                }
                 match call.name.as_str() {
                     "find_tools" => {
                         let output = self.handle_find_tools(&call.args, &mut active_tools);
-                        executed.push(ExecutedCall {
+                        executed.push(ExecutedToolCall {
                             index: call.index,
                             call_id: call.call_id,
                             name: call.name,
@@ -1515,7 +1570,7 @@ impl AgentRuntime {
                                 cancellation.clone(),
                             )
                             .await;
-                        executed.push(ExecutedCall {
+                        executed.push(ExecutedToolCall {
                             index: call.index,
                             call_id: call.call_id,
                             name: call.name,
@@ -1532,7 +1587,7 @@ impl AgentRuntime {
                 let registry_meta = registry_calls.clone();
                 if cancellation.is_cancelled() {
                     for call in registry_calls {
-                        executed.push(ExecutedCall {
+                        executed.push(ExecutedToolCall {
                             index: call.index,
                             call_id: call.call_id,
                             name: call.name,
@@ -1544,6 +1599,20 @@ impl AgentRuntime {
                         });
                     }
                 } else {
+                    // Bound each tool call. Without a ceiling, any block inside
+                    // a tool - a child process holding an inherited pipe, a
+                    // wedged HTTP client - leaves the turn waiting with no error
+                    // while the UI keeps spinning. Generous by default,
+                    // overridable for long builds. The default must exceed
+                    // shell_exec's own 900s ceiling, or a long build is aborted
+                    // by the outer timeout before the tool's own deadline can
+                    // fire.
+                    let tool_timeout = std::time::Duration::from_secs(
+                        std::env::var("ODON_TOOL_TIMEOUT_SECS")
+                            .ok()
+                            .and_then(|value| value.trim().parse().ok())
+                            .unwrap_or(950),
+                    );
                     let mut join_set = tokio::task::JoinSet::new();
                     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_TOOLS));
                     for call in registry_calls {
@@ -1556,52 +1625,29 @@ impl AgentRuntime {
                             storage: Some(self.storage.clone()),
                         };
                         let semaphore = semaphore.clone();
+                        // Tool tasks are spawned, and tokio task-locals do not
+                        // cross `spawn`. Without this scope the approval and
+                        // artifact events a tool emits would carry no session
+                        // id, and the session-filtered SSE stream would drop
+                        // them - so every approval-gated tool would time out
+                        // with the desk never showing the prompt.
+                        let scoped_session = session_id.to_string();
                         join_set.spawn(async move {
                             let _permit = semaphore.acquire_owned().await;
-                            // Bound each tool call. Without a ceiling, any block
-                            // inside a tool - a child process holding an inherited
-                            // pipe, a wedged HTTP client - leaves the turn waiting
-                            // with no error while the UI keeps spinning. Generous
-                            // by default, overridable for long builds. The default
-                            // must exceed shell_exec's own 900s ceiling, or a long
-                            // build is aborted by the outer timeout before the
-                            // tool's own deadline can fire.
-                            let tool_timeout = std::time::Duration::from_secs(
-                                std::env::var("ODON_TOOL_TIMEOUT_SECS")
-                                    .ok()
-                                    .and_then(|value| value.trim().parse().ok())
-                                    .unwrap_or(950),
-                            );
-                            let outcome = match tokio::time::timeout(
-                                tool_timeout,
-                                tools.execute_tool(&call.name, &tool_ctx, call.args.clone()),
-                            )
-                            .await
-                            {
-                                Ok(result) => result,
-                                Err(_) => Err(OdonError::Tool {
-                                    tool: call.name.clone(),
-                                    message: format!(
-                                        "returned nothing after {}s",
-                                        tool_timeout.as_secs()
-                                    ),
-                                }),
-                            };
-                            let (output, is_error) = match outcome {
-                                Ok(val) => (val, false),
-                                Err(e) => {
-                                    error!("Tool {} execution failed: {}", call.name, e);
-                                    (serde_json::json!({ "error": e.to_string() }), true)
-                                }
-                            };
-                            ExecutedCall {
-                                index: call.index,
-                                call_id: call.call_id,
-                                name: call.name,
-                                args: call.args,
-                                output,
-                                is_error,
-                            }
+                            ACTIVE_SESSION_ID
+                                .scope(scoped_session, async move {
+                                    run_registry_tool(
+                                        &tools,
+                                        &tool_ctx,
+                                        call.index,
+                                        call.call_id,
+                                        call.name,
+                                        call.args,
+                                        tool_timeout,
+                                    )
+                                    .await
+                                })
+                                .await
                         });
                     }
                     loop {
@@ -1629,7 +1675,7 @@ impl AgentRuntime {
                     let cancelled = cancellation.is_cancelled();
                     for meta in &registry_meta {
                         if !executed.iter().any(|done| done.index == meta.index) {
-                            executed.push(ExecutedCall {
+                            executed.push(ExecutedToolCall {
                                 index: meta.index,
                                 call_id: meta.call_id.clone(),
                                 name: meta.name.clone(),
@@ -1695,14 +1741,19 @@ impl AgentRuntime {
 
             // Persist the assistant step with its tool_calls FIRST so history order
             // (assistant tool_calls, then tool results) is valid for every provider.
-            let mut intermediate_assistant = Message::new_assistant(
+            //
+            // The step's prose is deliberately NOT stored here: the closing
+            // assistant row already carries the whole turn's answer, and
+            // keeping the per-step text as well replayed every earlier
+            // sentence to the provider twice (and printed it twice in any
+            // transcript view). The intermediate row exists only to declare
+            // the calls, which is exactly what the wire format and the
+            // desktop's transcript rebuild expect.
+            let mut intermediate_assistant = Message::new_assistant_signed(
                 session_id,
-                step_text,
-                if step_thought.is_empty() {
-                    None
-                } else {
-                    Some(step_thought)
-                },
+                String::new(),
+                None,
+                None,
                 Some(requested_model.to_string()),
             );
             intermediate_assistant.content.tool_calls = executed_tools_info;
@@ -1712,8 +1763,8 @@ impl AgentRuntime {
             // rejects the whole array over that one row ("content or tool_calls
             // must be set"), which is what the operator saw after switching
             // model or workspace mid-session.
-            if intermediate_assistant.content.text.trim().is_empty()
-                && intermediate_assistant.content.tool_calls.is_empty()
+            if intermediate_assistant.content.tool_calls.is_empty()
+                && intermediate_assistant.content.text.trim().is_empty()
             {
                 debug!(
                     session_id = %session_id,
@@ -1804,10 +1855,11 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
             Some(total_accumulated_thought)
         };
 
-        let mut assistant_msg = Message::new_assistant(
+        let mut assistant_msg = Message::new_assistant_signed(
             session_id,
             total_accumulated_text,
             thought_opt,
+            total_thought_signature,
             Some(requested_model.to_string()),
         );
         assistant_msg.content.artifact_ids = active_artifacts;
@@ -1822,6 +1874,12 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         // any remaining plan items here. Paused turns must remain resumable,
         // and so must a turn the operator stopped: closing its items would
         // claim work that never ran.
+        //
+        // Items closed this way are marked `auto`, and the plan itself is kept:
+        // deleting it turned "the model forgot to tick two boxes" into "5/5
+        // done, no record", which is a false success claim the operator cannot
+        // see through. The harness hides a fully closed plan, so a finished
+        // list stops being re-printed into every later turn.
         if !hit_step_cap && !hit_turn_budget && !stopped_by_operator {
             let todos = self
                 .storage
@@ -1833,24 +1891,13 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
                 for item in &mut finalized {
                     if item.get("status").and_then(|status| status.as_str()) != Some("completed") {
                         item["status"] = serde_json::Value::String("completed".to_string());
+                        item["auto"] = serde_json::Value::Bool(true);
                         changed = true;
                     }
                 }
                 if changed {
                     self.storage
-                        .set_todos(session_id, &serde_json::Value::Array(finalized.clone()))
-                        .map_err(|e| OdonError::Storage(e.to_string()))?;
-                }
-                // Once nothing is left to do, drop the plan: the UI hides a
-                // completed list anyway, and keeping it would print a finished
-                // plan into every later turn's harness.
-                let all_done = !finalized.is_empty()
-                    && finalized.iter().all(|item| {
-                        item.get("status").and_then(|s| s.as_str()) == Some("completed")
-                    });
-                if all_done {
-                    self.storage
-                        .clear_todos(session_id)
+                        .set_todos(session_id, &serde_json::Value::Array(finalized))
                         .map_err(|e| OdonError::Storage(e.to_string()))?;
                 }
             }
@@ -1889,6 +1936,15 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
         for schema in self.tools.schemas() {
             if active.iter().any(|tool| tool.name == schema.name) {
                 continue;
+            }
+            // The inline catalogue is capped: a request carrying hundreds of
+            // schemas breaks the documented function-calling limit of the
+            // strictest provider family and squeezes the transcript out of the
+            // context window. `find_tools` may only load up to the cap, so the
+            // oldest discoveries are evicted first - the model re-loads what it
+            // still needs.
+            if active.len() + matches.len() >= MAX_INLINE_TOOL_SCHEMAS {
+                break;
             }
             let haystack = format!("{} {}", schema.name, schema.description).to_lowercase();
             let score = terms
@@ -2067,6 +2123,16 @@ ODON_TURN_TIMEOUT_SECS (0 = no limit) for longer autonomous runs.]",
                 }
             }
             let _ = self.storage.save_session(&session);
+            // A child session is created fresh, so nothing carries the parent's
+            // plan-mode flag into it — and plan mode is the operator's
+            // instruction not to mutate anything yet. Without this an agent in
+            // plan mode could delegate the mutating work to a child that is
+            // free to run it.
+            let parent_plan_mode =
+                odon_tools::harness::is_plan_mode(&self.storage, parent_session_id);
+            if parent_plan_mode {
+                let _ = odon_tools::harness::set_plan_mode(&self.storage, &child_session_id, true);
+            }
         }
 
         let mut join_set = JoinSet::new();
@@ -2886,10 +2952,27 @@ fn compact_history(messages: Vec<Message>, budget_tokens: usize) -> Vec<Message>
                 message.content.text =
                     trim_long_text(&message.content.text, COMPACT_TOOL_OUTPUT_CHARS);
             }
+            // Reasoning is charged against the budget by
+            // `message_estimated_tokens`, so it has to be trimmable too:
+            // otherwise one long thinking block keeps its full cost while
+            // compaction is powerless to reduce it, and the elision pass is
+            // skipped for a request that still overflows the window.
+            if let Some(thought) = message.content.thought.as_deref() {
+                if thought.chars().count() > COMPACT_TOOL_OUTPUT_CHARS {
+                    message.content.thought =
+                        Some(trim_long_text(thought, COMPACT_TOOL_OUTPUT_CHARS));
+                }
+            }
             for call in &mut message.content.tool_calls {
-                if let Some(serde_json::Value::String(output)) = &mut call.output {
-                    if output.chars().count() > COMPACT_TOOL_OUTPUT_CHARS {
-                        *output = trim_long_text(output, COMPACT_TOOL_OUTPUT_CHARS);
+                // The declaring assistant row stores the result as a JSON
+                // object, not a string, so the `Value::String` guard never
+                // fired and every oversized output was stored twice: trimmed
+                // in the tool row and untrimmed here.
+                if let Some(output) = call.output.as_ref() {
+                    let rendered = output.to_string();
+                    if rendered.chars().count() > COMPACT_TOOL_OUTPUT_CHARS {
+                        let trimmed = trim_long_text(&rendered, COMPACT_TOOL_OUTPUT_CHARS);
+                        call.output = Some(serde_json::Value::String(trimmed));
                     }
                 }
             }
@@ -3082,6 +3165,67 @@ fn value_looks_like_error(value: &serde_json::Value) -> bool {
 fn text_looks_like_error(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("error") || lower.contains("failed") || lower.contains("not found")
+}
+
+/// Runs one registry tool with a wall-clock ceiling, returning the value the
+/// turn loop records for the call.
+///
+/// This lives at module level (rather than inline in the `JoinSet` closure) so
+/// the spawned task body stays small; the caller wraps it in
+/// `ACTIVE_SESSION_ID.scope(..)` because tokio task-locals do not cross
+/// `tokio::spawn`, and the approval engine stamps its events from that scope.
+async fn run_registry_tool(
+    tools: &ToolRegistry,
+    tool_ctx: &ToolContext,
+    index: usize,
+    call_id: String,
+    name: String,
+    args: serde_json::Value,
+    tool_timeout: Duration,
+) -> ExecutedToolCall {
+    // Bound each tool call. Without a ceiling, any block inside a tool - a
+    // child process holding an inherited pipe, a wedged HTTP client - leaves
+    // the turn waiting with no error while the UI keeps spinning. Generous
+    // by default, overridable for long builds. The default must exceed
+    // shell_exec's own 900s ceiling, or a long build is aborted by the outer
+    // timeout before the tool's own deadline can fire.
+    let outcome = match tokio::time::timeout(
+        tool_timeout,
+        tools.execute_tool(&name, tool_ctx, args.clone()),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(OdonError::Tool {
+            tool: name.clone(),
+            message: format!("returned nothing after {}s", tool_timeout.as_secs()),
+        }),
+    };
+    let (output, is_error) = match outcome {
+        Ok(val) => (val, false),
+        Err(e) => {
+            error!("Tool {} execution failed: {}", name, e);
+            (serde_json::json!({ "error": e.to_string() }), true)
+        }
+    };
+    ExecutedToolCall {
+        index,
+        call_id,
+        name,
+        args,
+        output,
+        is_error,
+    }
+}
+
+/// One tool call plus its result, in the shape the turn loop persists.
+struct ExecutedToolCall {
+    index: usize,
+    call_id: String,
+    name: String,
+    args: serde_json::Value,
+    output: serde_json::Value,
+    is_error: bool,
 }
 
 /// Tools that stay inline when the catalogue exceeds the inline cap:

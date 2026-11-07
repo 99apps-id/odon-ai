@@ -714,6 +714,7 @@ async fn main() -> anyhow::Result<()> {
                                 existing.as_ref().and_then(|config| config.name.as_deref())
                             }),
                             &models_json,
+                            existing.as_ref().and_then(|config| config.context_tokens),
                         )?;
                         println!(
                             "Saved {provider_id} to local storage ({error}). Restart odond to load it."

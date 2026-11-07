@@ -388,6 +388,11 @@ struct RelayConfig {
     /// only. Empty/None keeps the local `http://127.0.0.1:4096`.
     #[serde(default)]
     webhook_base_url: Option<String>,
+    /// Relay peer → session id overrides, written by `/new`. Persisted because
+    /// an in-memory map is lost on restart, which resurrected the very
+    /// conversation the operator asked to leave behind.
+    #[serde(default)]
+    relay_sessions: HashMap<String, String>,
     whatsapp_web: Option<WhatsAppWebConfig>,
 }
 
@@ -420,6 +425,26 @@ fn save_relay_config(config: &RelayConfig) {
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
     }
+}
+
+/// Persist one relay peer → session override.
+///
+/// `/new` swaps a peer's deterministic session id for a fresh UUID. The map
+/// holding that swap used to live only in memory, so a restart dropped it and
+/// the peer fell back to the pre-`/new` conversation the operator had just
+/// asked to leave. The stored file is the same `relays.json` the relay config
+/// already uses, so there is one place to look.
+fn persist_relay_session(key: &str, session_id: &str) {
+    let mut config = load_relay_config();
+    config
+        .relay_sessions
+        .insert(key.to_string(), session_id.to_string());
+    save_relay_config(&config);
+}
+
+/// The persisted peer → session overrides, loaded once at startup.
+fn load_relay_sessions() -> HashMap<String, String> {
+    load_relay_config().relay_sessions
 }
 
 /// A 192-bit secret for one agent's inbound webhook.
@@ -2055,6 +2080,29 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
         .agent_id
         .as_deref()
         .and_then(|id| state.storage.get_agent(id).ok());
+    // A message tagged for an agent whose row no longer resolves (the agent was
+    // deleted, or relays.json outlived the database) must fail closed. Falling
+    // back to the operator's session used to fold the bot's traffic - and the
+    // operator's - into one transcript with no persona and no agent model.
+    if message.agent_id.is_some() && agent.is_none() {
+        warn!(
+            "Dropping a {} relay message tagged for missing agent {:?}: the session it belongs to cannot be resolved",
+            message.channel,
+            message.agent_id.as_deref().unwrap_or_default()
+        );
+        if let Some(sender) = state.approval.event_sender() {
+            let _ = sender.send(odon_core::AgentEvent::RelayLog {
+                channel: message.channel.clone(),
+                message: format!(
+                    "Dropped a message for agent {} because that agent no longer exists",
+                    message.agent_id.as_deref().unwrap_or_default()
+                ),
+                is_ok: false,
+                timestamp: chrono::Utc::now().timestamp(),
+            });
+        }
+        return;
+    }
     let key = match message.agent_id.as_deref() {
         Some(id) if agent.is_some() => {
             format!("{}:{}:{}", message.channel, id, message.sender_id)
@@ -2095,6 +2143,7 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
             .write()
             .await
             .insert(key.clone(), session_id.clone());
+        persist_relay_session(&key, &session_id);
     }
     info!(
         "Relay message from {} [{}] in session {} (agent: {})",
@@ -2140,7 +2189,10 @@ async fn handle_relay_message(state: AppState, message: IncomingChannelMessage) 
                     .relay_sessions
                     .write()
                     .await
-                    .insert(key, session.id.clone());
+                    .insert(key.clone(), session.id.clone());
+                // The override must outlive the process, or the next start
+                // falls back to the deterministic id and reopens the old chat.
+                persist_relay_session(&key, &session.id);
                 format!("🆕 New ODON session: `{}`", session.id)
             }
             "/models" => relay_models_text(&state, &session_id).await,
@@ -2938,7 +2990,10 @@ async fn main() -> anyhow::Result<()> {
                     None
                 },
                 active_turns: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-                relay_sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                // `/new` overrides are persisted, so a restart keeps the
+                // conversation the operator moved to instead of reopening the
+                // one they left.
+                relay_sessions: Arc::new(tokio::sync::RwLock::new(load_relay_sessions())),
                 relay_model: Arc::new(tokio::sync::RwLock::new(
                     std::env::var("ODON_RELAY_MODEL")
                         .ok()
@@ -4506,12 +4561,38 @@ struct AgentWebhookConfigRequest {
     outbound_enabled: Option<bool>,
 }
 
+/// Hosts an outbound webhook may never point at, whatever the scheme.
+///
+/// The URL is operator-supplied, but the daemon attaches the outbound bearer
+/// key to it and posts the agent's reply, so a metadata or internal address
+/// turns one settings field into a credential reader. `net_guard` enforces the
+/// same rule at send time; this catches it at save time so the operator gets
+/// immediate feedback instead of a silent failure later.
 fn valid_webhook_url(value: &str) -> bool {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return false;
     }
-    trimmed.starts_with("http://") || trimmed.starts_with("https://")
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return false;
+    }
+    let Ok(url) = reqwest::Url::parse(trimmed) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host.eq_ignore_ascii_case("localhost")
+        || host == "::1"
+        || host.split('.').next() == Some("127")
+    {
+        return false;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return !odon_tools::net_guard::is_blocked_ip(ip);
+    }
+    true
 }
 
 /// Save the manual inbound key / base URL and outbound webhook settings.
@@ -4576,10 +4657,29 @@ async fn save_agent_webhook_config(
     (StatusCode::OK, Json(status))
 }
 
-fn spawn_outbound_webhook(url: String, api_key: Option<String>, payload: Value) {
+/// Fire the outbound webhook after an inbound turn completes.
+///
+/// The URL is re-validated here rather than trusted from the settings save:
+/// DNS can change, an operator can hand-edit `relays.json`, and the payload
+/// carries the agent's reply plus the outbound bearer key. A refused target is
+/// logged and dropped instead of being posted to.
+async fn spawn_outbound_webhook(url: String, api_key: Option<String>, payload: Value) {
+    let validated = match validate_gateway_url(&url).await {
+        Ok(validated) => validated,
+        Err(error) => {
+            warn!("Refusing to POST the outbound webhook to {url}: {error}");
+            return;
+        }
+    };
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let mut request = client.post(&url).json(&payload);
+        let client = match validated.client(reqwest::Client::builder()) {
+            Ok(client) => client,
+            Err(error) => {
+                warn!("Outbound webhook client for {url} failed: {error}");
+                return;
+            }
+        };
+        let mut request = client.post(validated.as_str()).json(&payload);
         if let Some(key) = api_key
             .as_deref()
             .map(str::trim)
@@ -4613,6 +4713,20 @@ async fn test_agent_webhook(
             Json(json!({ "error": "No outbound URL configured for this agent" })),
         );
     };
+    // The test posts to a stored URL with the outbound key attached, so it goes
+    // through the same guard as the real send. Without it the button doubled as
+    // an internal port scanner for anyone holding the daemon token.
+    let validated = match validate_gateway_url(&url).await {
+        Ok(validated) => validated,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Refusing to reach {url}: {error}. Fix the outbound URL in Settings, or set ODON_ALLOW_PRIVATE_NETWORK=1 to allow private addresses.")
+                })),
+            )
+        }
+    };
     let payload = json!({
         "agent_id": agent_id,
         "event": "test",
@@ -4620,8 +4734,16 @@ async fn test_agent_webhook(
         "reply": "ODON outbound webhook test",
         "sent_at": chrono::Utc::now().to_rfc3339(),
     });
-    let client = reqwest::Client::new();
-    let mut request = client.post(&url).json(&payload);
+    let client = match validated.client(reqwest::Client::builder()) {
+        Ok(client) => client,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": error.to_string() })),
+            )
+        }
+    };
+    let mut request = client.post(validated.as_str()).json(&payload);
     if let Some(key) = key.as_deref().map(str::trim).filter(|key| !key.is_empty()) {
         request = request.header("Authorization", format!("Bearer {key}"));
     }
@@ -4747,6 +4869,16 @@ async fn agent_webhook(
         .as_deref()
         .map(sanitize_relay_fragment)
         .filter(|id| !id.is_empty());
+    // Without an explicit id, the caller's `source` namespaces the session.
+    // Two independent systems (an N8N workflow and a script, say) holding the
+    // same token used to share one transcript, so each call replayed the
+    // other's prompts and replies back to the model.
+    let source_key = req
+        .source
+        .as_deref()
+        .map(sanitize_relay_fragment)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "default".to_string());
     let session_id = match requested_session {
         Some(id) => match state.storage.get_session(&id) {
             Ok(session) if session.agent_id.as_deref() == Some(agent.id.as_str()) => id,
@@ -4759,7 +4891,11 @@ async fn agent_webhook(
             // The caller manages its own conversation id; bind it to the agent.
             Err(_) => id,
         },
-        None => format!("agent_webhook_{}", sanitize_relay_fragment(&agent.id)),
+        None => format!(
+            "agent_webhook_{}_{}",
+            sanitize_relay_fragment(&agent.id),
+            source_key
+        ),
     };
 
     // A webhook caller waits synchronously for its reply, so there is nothing
@@ -4868,7 +5004,8 @@ async fn agent_webhook(
                             "artifact_ids": message.content.artifact_ids.clone(),
                             "source": req.source.clone().unwrap_or_else(|| "webhook".to_string()),
                         }),
-                    );
+                    )
+                    .await;
                 }
             }
             (
@@ -4896,7 +5033,8 @@ async fn agent_webhook(
                             "error": error.to_string(),
                             "source": req.source.clone().unwrap_or_else(|| "webhook".to_string()),
                         }),
-                    );
+                    )
+                    .await;
                 }
             }
             (
@@ -4913,9 +5051,14 @@ async fn list_agent_sessions(
 ) -> impl IntoResponse {
     match state.storage.list_sessions() {
         Ok(sessions) => {
+            // Delegated child sessions inherit the delegating agent's
+            // `agent_id`, so without this filter every `run_subagent` task
+            // showed up in the agent's own history list as if the operator had
+            // opened it. They stay reachable by id, like in `list_sessions`.
             let rows: Vec<Session> = sessions
                 .into_iter()
                 .filter(|session| session.agent_id.as_deref() == Some(id.as_str()))
+                .filter(|session| !is_subagent_session(session))
                 .collect();
             (StatusCode::OK, Json(json!(rows)))
         }
@@ -5416,6 +5559,12 @@ struct SendMessageRequest {
     /// Composer execution mode: `chat`, `auto`, `agent` or `plan`.
     #[serde(default)]
     mode: Option<String>,
+    /// Agent that owns the conversation. Only honoured when the session does
+    /// not exist yet (a client recovering from a deleted session row): it binds
+    /// the new transcript to the agent so the persona, model and desk history
+    /// keep working instead of silently creating an agent-less session.
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 /// What a composer execution mode actually changes for one turn. Kept as a pure
@@ -5522,6 +5671,53 @@ async fn send_message(
     // final fallback. Forcing the agent model here sent a composer selection
     // for StepFun to the default Anthropic provider instead.
     let session = state.storage.get_session(&session_id).ok();
+    // An unknown session id used to be minted by the runtime as a plain,
+    // agent-less session: the turn then ran without the desk's persona and
+    // model, and the transcript never showed up under the agent again. Either
+    // bind the new session to the caller's agent, or refuse the turn.
+    let session = match session {
+        Some(session) => Some(session),
+        None => {
+            let bound = req
+                .agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .and_then(|id| state.storage.get_agent(id).ok());
+            match bound {
+                Some(agent) => {
+                    let mut created = Session::new(
+                        format!("Chat with {}", agent.name),
+                        SessionMode::General,
+                        if agent.model.trim().is_empty() {
+                            "odon-auto".to_string()
+                        } else {
+                            agent.model.clone()
+                        },
+                    );
+                    created.id = session_id.clone();
+                    created.agent_id = Some(agent.id.clone());
+                    created.workspace_root =
+                        resolve_allowed_workspace(&state, agent.workspace_root.as_deref()).await;
+                    if state.storage.save_session(&created).is_err() {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": "failed to create the session" })),
+                        );
+                    }
+                    Some(created)
+                }
+                None => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({
+                            "error": "unknown session; create it with POST /api/sessions or POST /api/agents/{id}/sessions first"
+                        })),
+                    );
+                }
+            }
+        }
+    };
     let agent = session
         .as_ref()
         .and_then(|session| session.agent_id.as_deref())
@@ -6032,6 +6228,32 @@ async fn test_provider(
             }));
         }
     };
+
+    // A stored custom Base URL is an attacker-controlled destination as far as
+    // the daemon is concerned: the test streams a real completion request to it
+    // and echoes the upstream body back. Validate it through the same guard the
+    // tool surface uses before anything is sent. Built-in providers keep their
+    // default (public) endpoints untouched.
+    if let Ok(Some(config)) = state
+        .storage
+        .get_provider_config(&req.provider_id.to_lowercase())
+    {
+        if let Some(base) = config
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+        {
+            let probe = format!("{}/models", base.trim_end_matches('/'));
+            if let Err(error) = validate_gateway_url(&probe).await {
+                return Json(json!({
+                    "ok": false,
+                    "provider": req.provider_id,
+                    "error": format!("Refusing to test {base}: {error}. Fix the endpoint in Settings, or set ODON_ALLOW_PRIVATE_NETWORK=1 to allow private addresses.")
+                }));
+            }
+        }
+    }
 
     let model = req
         .model
@@ -6793,12 +7015,25 @@ async fn init_providers(
                 has_default = true;
             }
             // Index the models this provider lists, so a bare model id reaches
-            // the provider that serves it instead of the default slot.
-            let listed: Vec<String> =
-                serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default();
+            // the provider that serves it instead of the default slot. The
+            // per-model context (or the endpoint's) rides along, so a restart
+            // does not drop a hand-set window back to the conservative
+            // fallback.
+            let listed = parse_saved_models(&c.models_json);
+            let endpoint_context = c
+                .context_tokens
+                .filter(|value| *value > 0)
+                .map(|value| value as usize);
             let catalogue = listed.len();
-            for model in listed {
-                runtime.register_model_route(&model, &pid, catalogue).await;
+            for (model, context) in listed {
+                runtime
+                    .register_model_route_with_context(
+                        &model,
+                        &pid,
+                        catalogue,
+                        context.or(endpoint_context),
+                    )
+                    .await;
             }
         }
     }
@@ -6865,8 +7100,57 @@ struct SaveProviderConfigRequest {
     is_default: Option<bool>,
     #[serde(default)]
     name: Option<String>,
+    /// Either a bare list of model ids (`["a","b"]`) or a list of objects that
+    /// also carries the context window the operator declared for each model
+    /// (`[{"id":"a","context":200000}]`). Both spellings are accepted because
+    /// the endpoints tab sends ids and the model manager sends objects.
     #[serde(default)]
-    models: Option<Vec<String>>,
+    models: Option<Vec<serde_json::Value>>,
+    /// Context window for the endpoint as a whole, used for models that carry
+    /// no per-model value. This is what lifts a custom gateway off the
+    /// conservative 128k fallback.
+    #[serde(default)]
+    context_tokens: Option<u64>,
+}
+
+/// One entry of a saved model list, normalised to (id, context).
+fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, Option<usize>)> {
+    match entry {
+        serde_json::Value::String(id) => {
+            let id = id.trim().to_string();
+            if id.is_empty() {
+                None
+            } else {
+                Some((id, None))
+            }
+        }
+        serde_json::Value::Object(map) => {
+            let id = map.get("id").and_then(|v| v.as_str())?.trim().to_string();
+            if id.is_empty() {
+                return None;
+            }
+            let context = map
+                .get("context")
+                .or_else(|| map.get("context_window"))
+                .or_else(|| map.get("context_tokens"))
+                .and_then(|v| v.as_u64())
+                .map(|value| value as usize)
+                .filter(|value| *value > 0);
+            Some((id, context))
+        }
+        _ => None,
+    }
+}
+
+/// The (id, context) pairs a saved `models_json` describes. Tolerates both the
+/// bare-id and the object spelling, so an endpoint saved by an older build
+/// still resolves.
+fn parse_saved_models(models_json: &str) -> Vec<(String, Option<usize>)> {
+    serde_json::from_str::<Vec<serde_json::Value>>(models_json)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(parse_model_entry)
+        .collect()
 }
 
 async fn get_provider_configs(State(state): State<AppState>) -> impl IntoResponse {
@@ -6881,7 +7165,11 @@ async fn get_provider_configs(State(state): State<AppState>) -> impl IntoRespons
             "base_url": c.base_url,
             "is_default": c.is_default,
             "name": c.name,
-            "models": serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default(),
+            "models": parse_saved_models(&c.models_json)
+                .into_iter()
+                .map(|(id, context)| json!({ "id": id, "context": context }))
+                .collect::<Vec<_>>(),
+            "context_tokens": c.context_tokens,
             "updated_at": c.updated_at,
         }));
     }
@@ -6923,6 +7211,12 @@ async fn save_provider_config(
             .map(|c| c.models_json.clone())
             .unwrap_or_else(|| "[]".to_string()),
     };
+    // An omitted value keeps the stored one, so a Save Key that does not touch
+    // the context cannot silently reset a gateway back to the fallback.
+    let context_tokens = req
+        .context_tokens
+        .map(|value| value as i64)
+        .or_else(|| existing.as_ref().and_then(|c| c.context_tokens));
 
     if let Err(e) = state.storage.save_provider_config(
         &pid,
@@ -6931,6 +7225,7 @@ async fn save_provider_config(
         is_def,
         name.as_deref(),
         &models_json,
+        context_tokens,
     ) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -6957,14 +7252,24 @@ async fn save_provider_config(
     }
     // Keep the model → provider index in step with what Settings saved, so
     // automations and relays using a bare model id reach this provider.
-    if let Ok(models) = serde_json::from_str::<Vec<String>>(&models_json) {
-        let catalogue = models.len();
-        for model in models {
-            state
-                .runtime
-                .register_model_route(&model, &pid, catalogue)
-                .await;
-        }
+    //
+    // The per-model context travels with the route: it is the only way a
+    // custom endpoint escapes the conservative 128k fallback, which is what
+    // made a 200k gateway behave like a 128k one. A model with no value of its
+    // own inherits the endpoint's declared window.
+    let models = parse_saved_models(&models_json);
+    let endpoint_context = req.context_tokens.map(|value| value as usize);
+    let catalogue = models.len();
+    for (model, context) in models {
+        state
+            .runtime
+            .register_model_route_with_context(
+                &model,
+                &pid,
+                catalogue,
+                context.or(endpoint_context),
+            )
+            .await;
     }
 
     (
@@ -7748,34 +8053,32 @@ async fn handle_ssh_terminal_socket(socket: WebSocket, profile_id: String, cols:
     let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
 }
 
-/// Model ids the saved gateway config makes selectable.
+/// Validates a stored gateway base URL before the daemon fetches it.
 ///
-/// The static `openai-compatible` catalogue entry ships with an empty list, so
-/// this is the only place the operator's own model ids can surface. Falling back
-/// to `OPENAI_MODEL` keeps an env-only gateway usable.
-fn gateway_model_ids(byok_configs: &[odon_storage::ProviderConfigRecord]) -> Vec<String> {
-    let mut model_ids: Vec<String> = byok_configs
-        .iter()
-        .find(|c| {
-            c.provider_id.eq_ignore_ascii_case("openai-compatible")
-                || c.provider_id.eq_ignore_ascii_case("openai_compatible")
+/// Every server-side fetch that starts from a stored or user-supplied URL has
+/// to go through `odon_tools::net_guard`, the same guard the tool surface
+/// already uses: it resolves DNS, refuses private/link-local/CGNAT/metadata
+/// ranges, and pins the connection so a rebinding answer cannot slip past.
+/// Loopback is the one deliberate exception — a local gateway (Ollama, LM
+/// Studio, vLLM) is a normal thing to configure — and it is allowed only for a
+/// literal loopback host, never for another machine's private address.
+async fn validate_gateway_url(raw: &str) -> Result<odon_tools::net_guard::ValidatedTarget, String> {
+    let loopback_literal = reqwest::Url::parse(raw)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .map(|host| {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            host.eq_ignore_ascii_case("localhost")
+                || host == "::1"
+                || host.split('.').next() == Some("127")
         })
-        .and_then(|c| serde_json::from_str::<Vec<String>>(&c.models_json).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .collect();
-
-    if model_ids.is_empty() {
-        if let Ok(model) = std::env::var("OPENAI_MODEL") {
-            if !model.trim().is_empty() {
-                model_ids.push(model.trim().to_string());
-            }
-        }
-    }
-
-    model_ids
+        .unwrap_or(false);
+    let outcome = if loopback_literal {
+        odon_tools::net_guard::validate_url_allow_loopback(raw).await
+    } else {
+        odon_tools::net_guard::validate_url(raw).await
+    };
+    outcome.map_err(|error| error.to_string())
 }
 
 /// Ask a BYOK/gateway endpoint which models it actually serves.
@@ -7790,12 +8093,13 @@ async fn discover_provider_models(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let pid = pid.to_lowercase();
-    let Some(config) = state.storage.get_provider_config(&pid).ok().flatten() else {
+    let Some(existing) = state.storage.get_provider_config(&pid).ok().flatten() else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": format!("Provider '{pid}' is not configured") })),
         );
     };
+    let config = &existing;
     if config.api_key.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -7808,9 +8112,26 @@ async fn discover_provider_models(
         .unwrap_or_else(|| default_base_url_for(&pid));
     let url = format!("{}/models", base.trim_end_matches('/'));
 
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
+    // The same fetch as a tool already routes through `net_guard`; the HTTP
+    // path did not, so a saved base_url could point the daemon at a cloud
+    // metadata or internal address with the stored API key attached as a
+    // bearer token. Loopback stays allowed for a local gateway the operator
+    // configured on purpose (Ollama, LM Studio); every other private range is
+    // refused.
+    let validated = match validate_gateway_url(&url).await {
+        Ok(validated) => validated,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Refusing to query {url}: {error}. Fix the endpoint in Settings, or set ODON_ALLOW_PRIVATE_NETWORK=1 to allow private addresses.")
+                })),
+            )
+        }
+    };
+
+    let client = match validated
+        .client(reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)))
     {
         Ok(client) => client,
         Err(error) => {
@@ -7820,7 +8141,12 @@ async fn discover_provider_models(
             )
         }
     };
-    let response = match client.get(&url).bearer_auth(&config.api_key).send().await {
+    let response = match client
+        .get(validated.as_str())
+        .bearer_auth(&config.api_key)
+        .send()
+        .await
+    {
         Ok(response) => response,
         Err(error) => {
             return (
@@ -7883,7 +8209,32 @@ async fn discover_provider_models(
         );
     }
 
-    let models_json = serde_json::to_string(&models).unwrap_or_else(|_| "[]".to_string());
+    // Keep the per-model context the operator declared for models that are
+    // still listed: discovery answers with bare ids, and overwriting them
+    // would silently reset a hand-set 200k window back to the fallback.
+    let existing_models = parse_saved_models(&existing.models_json);
+    let known_context = |id: &str| {
+        existing_models
+            .iter()
+            .find(|(known, _)| known == id)
+            .and_then(|(_, context)| *context)
+    };
+    let endpoint_context = existing
+        .context_tokens
+        .filter(|value| *value > 0)
+        .map(|value| value as usize);
+    let entries: Vec<serde_json::Value> = models
+        .iter()
+        .map(|id| {
+            let window = known_context(id).or(endpoint_context);
+            json!({
+                "id": id,
+                "context": window.map(|value| value as u64),
+            })
+        })
+        .collect();
+
+    let models_json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
     if let Err(error) = state.storage.save_provider_config(
         &pid,
         &config.api_key,
@@ -7891,6 +8242,7 @@ async fn discover_provider_models(
         config.is_default,
         config.name.as_deref(),
         &models_json,
+        endpoint_context.map(|value| value as i64),
     ) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -7901,9 +8253,10 @@ async fn discover_provider_models(
     // Make the freshly discovered models routable straight away.
     let catalogue = models.len();
     for model in &models {
+        let window = known_context(model).or(endpoint_context);
         state
             .runtime
-            .register_model_route(model, &pid, catalogue)
+            .register_model_route_with_context(model, &pid, catalogue, window)
             .await;
     }
 
@@ -8285,15 +8638,23 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
             {
                 continue;
             }
-            let model_ids: Vec<String> =
-                serde_json::from_str::<Vec<String>>(&c.models_json).unwrap_or_default();
-            let models: Vec<serde_json::Value> = model_ids
+            let saved: Vec<(String, Option<usize>)> = parse_saved_models(&c.models_json);
+            // A custom endpoint is only capped by what the operator declared.
+            // The old hardcoded 128000 here is what made a 200k gateway behave
+            // like a 128k one; the fallback only applies when nothing was
+            // declared at all.
+            let declared = c
+                .context_tokens
+                .filter(|value| *value > 0)
+                .map(|value| value as usize);
+            let models: Vec<serde_json::Value> = saved
                 .into_iter()
-                .map(|id| {
+                .map(|(id, context)| {
+                    let window = context.or(declared);
                     json!({
                         "id": id,
                         "name": id,
-                        "context": 128000,
+                        "context": window,
                         "recommended": false
                     })
                 })
@@ -8334,17 +8695,23 @@ async fn get_models(State(state): State<AppState>) -> impl IntoResponse {
                     || c.provider_id.eq_ignore_ascii_case("openai_compatible")
             });
 
-            let model_ids = gateway_model_ids(&byok_configs);
+            let saved: Vec<(String, Option<usize>)> = config
+                .map(|c| parse_saved_models(&c.models_json))
+                .unwrap_or_default();
+            let declared = config
+                .and_then(|c| c.context_tokens)
+                .filter(|value| *value > 0)
+                .map(|value| value as usize);
 
             if let Some(obj) = entry.as_object_mut() {
                 obj.insert(
                     "models".to_string(),
-                    json!(model_ids
+                    json!(saved
                         .into_iter()
-                        .map(|id| json!({
+                        .map(|(id, context)| json!({
                             "id": id,
                             "name": id,
-                            "context": 128000,
+                            "context": context.or(declared),
                             "recommended": false
                         }))
                         .collect::<Vec<_>>()),
@@ -10793,6 +11160,48 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    /// A custom endpoint's context window must survive the save → payload →
+    /// route round-trip. Parsing the model list as bare strings dropped every
+    /// object entry, which is what pinned every gateway to the 128k fallback
+    /// no matter what the operator typed.
+    #[test]
+    fn saved_models_keep_their_context_window() {
+        let saved = r#"[
+            {"id":"gpt-oss-120b","name":"GPT-OSS 120B","context":131072},
+            {"id":"local-7b","context":32768},
+            "bare-model"
+        ]"#;
+        let parsed = parse_saved_models(saved);
+        assert_eq!(parsed.len(), 3, "a bare id must still resolve: {parsed:?}");
+        assert_eq!(parsed[0].0, "gpt-oss-120b");
+        assert_eq!(parsed[0].1, Some(131_072));
+        assert_eq!(parsed[1].1, Some(32_768));
+        assert_eq!(parsed[2].1, None);
+    }
+
+    #[test]
+    fn malformed_model_entries_are_ignored() {
+        let parsed = parse_saved_models(r#"[{"context":1000},{"id":"  "},42,null]"#);
+        assert!(parsed.is_empty(), "got {parsed:?}");
+    }
+
+    #[test]
+    fn context_window_aliases_are_accepted() {
+        let entry = json!({"id":"m","context_window":200000});
+        assert_eq!(
+            parse_model_entry(&entry),
+            Some(("m".to_string(), Some(200_000)))
+        );
+        let entry = json!({"id":"m","context_tokens":4096});
+        assert_eq!(
+            parse_model_entry(&entry),
+            Some(("m".to_string(), Some(4096)))
+        );
+        // A zero or negative window is not a window.
+        let entry = json!({"id":"m","context":0});
+        assert_eq!(parse_model_entry(&entry), Some(("m".to_string(), None)));
+    }
+
     #[test]
     fn github_error_body_reports_http_status_and_hint() {
         // GitHub error payloads carry only `message`; the status code lives on
@@ -11374,44 +11783,37 @@ mod oauth_store_tests {
 #[cfg(test)]
 mod gateway_catalogue_tests {
     use super::*;
-    use odon_storage::ProviderConfigRecord;
 
-    fn config(models_json: &str) -> ProviderConfigRecord {
-        ProviderConfigRecord {
-            provider_id: "openai-compatible".to_string(),
-            api_key: "k".to_string(),
-            base_url: Some("http://localhost:11434/v1".to_string()),
-            is_default: true,
-            name: None,
-            models_json: models_json.to_string(),
-            updated_at: String::new(),
-        }
-    }
-
+    /// A saved model list may be bare ids (the endpoints tab) or objects that
+    /// also carry a context window (the model manager). Both must resolve, and
+    /// a hand-set window must survive: parsing the list as bare strings used to
+    /// drop every object entry, pinning each gateway to the 128k fallback.
     #[test]
     fn gateway_models_come_from_the_saved_config() {
-        // Regression: the static catalogue entry reported `models: []`, so a
-        // saved gateway had nothing to select and every turn failed with
-        // "No model selected" after the daemon started.
-        let ids = gateway_model_ids(&[config("[\"gw-model-a\",\" gw-model-b \"]")]);
+        let parsed = parse_saved_models("[\"gw-model-a\",\" gw-model-b \"]");
         assert_eq!(
-            ids,
-            vec!["gw-model-a".to_string(), "gw-model-b".to_string()]
+            parsed,
+            vec![
+                ("gw-model-a".to_string(), None),
+                ("gw-model-b".to_string(), None)
+            ]
         );
     }
 
     #[test]
-    fn gateway_models_ignore_blank_and_broken_entries() {
-        assert!(gateway_model_ids(&[config("[]")]).is_empty());
-        assert!(gateway_model_ids(&[config("not json")]).is_empty());
-        assert!(gateway_model_ids(&[config("[\"  \"]")]).is_empty());
-        assert!(gateway_model_ids(&[]).is_empty());
+    fn gateway_models_keep_the_declared_context_window() {
+        let parsed = parse_saved_models(
+            r#"[{"id":"gw-a","context":200000},{"id":"gw-b","context_window":32768}]"#,
+        );
+        assert_eq!(parsed[0].1, Some(200_000));
+        assert_eq!(parsed[1].1, Some(32_768));
     }
 
     #[test]
-    fn gateway_models_ignore_other_providers() {
-        let mut other = config("[\"nope\"]");
-        other.provider_id = "deepseek".to_string();
-        assert!(gateway_model_ids(&[other]).is_empty());
+    fn gateway_models_ignore_blank_and_broken_entries() {
+        assert!(parse_saved_models("[]").is_empty());
+        assert!(parse_saved_models("not json").is_empty());
+        assert!(parse_saved_models("[\"  \"]").is_empty());
+        assert!(parse_saved_models("[{\"id\":\"  \"},42,null]").is_empty());
     }
 }

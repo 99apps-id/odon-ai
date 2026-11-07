@@ -49,6 +49,15 @@ impl Tool for MemoryStoreTool {
             .and_then(|c| c.as_str())
             .unwrap_or("general");
 
+        if is_reserved_memory_key(key) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "'{key}' is a runtime-owned key and cannot be written from a turn"
+                ),
+            });
+        }
+
         if let Some(storage) = &ctx.storage {
             storage
                 .set_memory(key, value, category)
@@ -69,6 +78,23 @@ impl Tool for MemoryStoreTool {
             })
         }
     }
+}
+
+/// Key prefixes the runtime owns.
+///
+/// A turn may write and delete ordinary memories freely, but these keys hold
+/// the harness's own per-session state — plan mode above all. The flag is read
+/// again before every tool call, so a `memory_forget` on one of these keys
+/// lifts the session's own plan-mode restriction mid-turn, and a
+/// `memory_store` switches another session's on. Both are model-reachable, so
+/// the namespace is closed here instead of trusting the model to behave.
+const RESERVED_KEY_PREFIXES: [&str; 1] = ["plan_mode:"];
+
+/// Whether `key` belongs to the runtime rather than to the operator's memory.
+pub fn is_reserved_memory_key(key: &str) -> bool {
+    RESERVED_KEY_PREFIXES
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
 }
 
 pub struct MemoryRecallTool;
@@ -276,6 +302,14 @@ impl Tool for MemoryForgetTool {
     }
     async fn execute(&self, ctx: &ToolContext, args: Value) -> Result<Value> {
         let key = args.get("key").and_then(|k| k.as_str()).unwrap_or("");
+        if is_reserved_memory_key(key) {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: format!(
+                    "'{key}' is a runtime-owned key and cannot be deleted from a turn"
+                ),
+            });
+        }
         let Some(storage) = &ctx.storage else {
             return Err(OdonError::Tool {
                 tool: self.name().to_string(),

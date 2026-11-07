@@ -102,6 +102,7 @@ impl ApprovalEngine {
         let always_allowed = std::fs::read_to_string(&policy_path)
             .ok()
             .and_then(|data| serde_json::from_str::<HashSet<String>>(&data).ok())
+            .map(Self::harden_loaded_grants)
             .unwrap_or_default();
 
         let audit_path = base.join(".odon").join("approval-audit.jsonl");
@@ -159,6 +160,7 @@ impl ApprovalEngine {
         let always_allowed = std::fs::read_to_string(&policy_path)
             .ok()
             .and_then(|data| serde_json::from_str::<HashSet<String>>(&data).ok())
+            .map(Self::harden_loaded_grants)
             .unwrap_or_default();
         self.always_allowed = Arc::new(RwLock::new(always_allowed));
         self.audit_history = Arc::new(RwLock::new(Vec::new()));
@@ -267,6 +269,21 @@ impl ApprovalEngine {
         }
     }
 
+    /// Argument keys that name a filesystem target the workspace containment
+    /// rule has to judge. Includes the copy/move spellings, which a scope-only
+    /// list used to miss entirely.
+    const TARGET_KEYS: [&str; 9] = [
+        "path",
+        "cwd",
+        "destination",
+        "destination_path",
+        "source",
+        "file",
+        "target",
+        "from",
+        "to",
+    ];
+
     /// Check if target parameters point outside the workspace.
     pub fn is_outside_workspace(
         parameters: &serde_json::Value,
@@ -277,41 +294,69 @@ impl ApprovalEngine {
 
     /// First target parameter that escapes `workspace_root`, spelled as the
     /// caller wrote it (for the approval prompt).
+    ///
+    /// The scan is recursive: wrapper tools (MCP above all) carry their payload
+    /// under `arguments`, and a nested `{"arguments":{"path":"../../etc"}}` used
+    /// to read as an in-workspace call and be auto-approved.
     pub fn outside_workspace_target(
         parameters: &serde_json::Value,
         workspace_root: &std::path::Path,
     ) -> Option<String> {
         let root = Self::canonical_root(workspace_root);
-        for key in ["path", "cwd", "destination", "source", "file"] {
-            if let Some(p_str) = parameters.get(key).and_then(|v| v.as_str()) {
-                let raw = std::path::Path::new(p_str);
-                // Join relative paths onto the workspace root; absolute paths
-                // are taken as-is. Never trust the raw spelling — `..`
-                // components must be resolved before containment is decided.
-                //
-                // Join onto the *canonical* root, not the caller's spelling:
-                // `std::env::temp_dir()` can hand back an 8.3 short path (for
-                // example `RUNNER~1`) while `canonicalize` resolves the long
-                // form. Mixing the two made every in-workspace target look
-                // like it escaped.
-                let joined = if raw.is_absolute() {
-                    raw.to_path_buf()
-                } else {
-                    root.join(raw)
-                };
-                let normalized = Self::strip_verbatim(
-                    joined
-                        .canonicalize()
-                        .ok()
-                        .or_else(|| Self::canonicalize_existing_ancestor(&joined))
-                        .unwrap_or_else(|| Self::normalize_lexically(&joined)),
-                );
-                if !Self::path_is_inside(&normalized, &root) {
-                    return Some(p_str.to_string());
+        let mut found = None;
+        Self::walk_targets(parameters, &mut |spelling| {
+            if found.is_some() {
+                return;
+            }
+            let raw = std::path::Path::new(spelling);
+            // Join relative paths onto the workspace root; absolute paths
+            // are taken as-is. Never trust the raw spelling — `..`
+            // components must be resolved before containment is decided.
+            //
+            // Join onto the *canonical* root, not the caller's spelling:
+            // `std::env::temp_dir()` can hand back an 8.3 short path (for
+            // example `RUNNER~1`) while `canonicalize` resolves the long
+            // form. Mixing the two made every in-workspace target look
+            // like it escaped.
+            let joined = if raw.is_absolute() {
+                raw.to_path_buf()
+            } else {
+                root.join(raw)
+            };
+            let normalized = Self::strip_verbatim(
+                joined
+                    .canonicalize()
+                    .ok()
+                    .or_else(|| Self::canonicalize_existing_ancestor(&joined))
+                    .unwrap_or_else(|| Self::normalize_lexically(&joined)),
+            );
+            if !Self::path_is_inside(&normalized, &root) {
+                found = Some(spelling.to_string());
+            }
+        });
+        found
+    }
+
+    /// Visits every string stored under a target key, at any depth.
+    fn walk_targets(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, inner) in map {
+                    if Self::TARGET_KEYS.contains(&key.as_str()) {
+                        if let Some(text) = inner.as_str() {
+                            visit(text);
+                        }
+                    }
+                    Self::walk_targets(inner, visit);
                 }
             }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    Self::walk_targets(item, visit);
+                }
+            }
+            _ => {}
         }
-        None
     }
 
     /// The containment target for these parameters, when a root is declared.
@@ -495,7 +540,6 @@ impl ApprovalEngine {
             | "artifact_delete"
             | "artifact_export"
             | "memory_store"
-            | "todo_update"
             | "memory_forget"
             | "mcp_call"
             | "mcp_add_server"
@@ -555,7 +599,7 @@ impl ApprovalEngine {
         };
         let policy_key = Self::policy_key(tool_name, parameters);
         let exact_key = Self::exact_policy_key(tool_name, parameters);
-        let wildcard_key = Self::wildcard_policy_key(parameters);
+        let _ = Self::wildcard_policy_key(parameters);
         // A mutating call aimed outside the declared workspace is never
         // auto-approved: not by the Autonomous Tier-1 shortcut, and not by a
         // cached `always allow` grant. Those grants are recorded while the
@@ -607,7 +651,7 @@ impl ApprovalEngine {
             let allowed = self.always_allowed.read().await;
             if allowed.contains(&policy_key)
                 || allowed.contains(&exact_key)
-                || allowed.contains(&wildcard_key)
+                || Self::wildcard_covers(&allowed, risk)
             {
                 return Ok(ApprovalDecision::Approved);
             }
@@ -632,7 +676,7 @@ impl ApprovalEngine {
             pending.insert(
                 id.clone(),
                 PendingRequest {
-                    request: req,
+                    request: req.clone(),
                     sender: tx,
                 },
             );
@@ -650,13 +694,33 @@ impl ApprovalEngine {
         // Wait for decision or timeout
         match tokio::time::timeout(approval_timeout(), rx).await {
             Ok(Ok(decision)) => Ok(decision),
-            Ok(Err(_)) => Ok(ApprovalDecision::Rejected {
-                reason: "Approval channel closed".to_string(),
-            }),
+            Ok(Err(_)) => {
+                // The resolver dropped the channel (daemon shutting down, a
+                // cancelled task). The tool call is refused, and the refusal
+                // belongs in the approval log just like an explicit denial.
+                Self::persist_audit_record(
+                    &Self::audit_record_for(
+                        &req,
+                        "rejected",
+                        Some("Approval channel closed".to_string()),
+                    ),
+                    &self.audit_path,
+                );
+                Ok(ApprovalDecision::Rejected {
+                    reason: "Approval channel closed".to_string(),
+                })
+            }
             Err(_) => {
                 let mut pending = self.pending.write().await;
                 pending.remove(&id);
                 drop(pending);
+                // An unanswered request is an event too: with only explicit
+                // decisions logged, the trail went permanently silent for any
+                // install that had a stored grant auto-approving everything.
+                Self::persist_audit_record(
+                    &Self::audit_record_for(&req, "expired", None),
+                    &self.audit_path,
+                );
                 self.emit(AgentEvent::ApprovalResolved {
                     session_id: session_id.to_string(),
                     approval_id: id.clone(),
@@ -664,6 +728,26 @@ impl ApprovalEngine {
                 });
                 Ok(ApprovalDecision::Expired)
             }
+        }
+    }
+
+    /// The audit row for a request that ended without a human decision.
+    fn audit_record_for(
+        request: &ApprovalRequest,
+        decision: &str,
+        reason: Option<String>,
+    ) -> AuditRecord {
+        AuditRecord {
+            id: request.id.clone(),
+            session_id: request.session_id.clone(),
+            tool_name: request.tool_name.clone(),
+            risk_tier: request.risk_tier,
+            description: request.description.clone(),
+            parameters: request.parameters.clone(),
+            decision: decision.to_string(),
+            reason,
+            created_at: request.created_at,
+            resolved_at: Utc::now(),
         }
     }
 
@@ -678,14 +762,29 @@ impl ApprovalEngine {
         let mut pending = self.pending.write().await;
         if let Some(entry) = pending.remove(approval_id) {
             let grant_key = match &decision {
-                // "Always" sticks per tool in one workspace scope.
-                ApprovalDecision::ApprovedAlways => Some(Self::policy_key(
-                    &entry.request.tool_name,
-                    &entry.request.parameters,
-                )),
-                // "Allow all" sticks for every tool in one workspace scope.
+                // "Always" sticks per tool in one workspace scope — but only
+                // when the scope key actually covers the dangerous part of the
+                // call. For a command-bearing tool the scope is a directory
+                // (or the literal "workspace" when no path key exists), so a
+                // stored grant would authorise *any* command in it with no
+                // further prompt. Those requests may only be approved once.
+                ApprovalDecision::ApprovedAlways => {
+                    let tool = entry.request.tool_name.as_str();
+                    let command_scoped = Self::tool_grant_is_command_scoped(tool)
+                        || entry.request.parameters.get("command").is_some()
+                        || entry.request.parameters.get("script").is_some();
+                    if command_scoped || entry.request.risk_tier >= RiskTier::Tier3NetworkAction {
+                        None
+                    } else {
+                        Some(Self::policy_key(tool, &entry.request.parameters))
+                    }
+                }
+                // "Allow all" sticks for every tool, but only up to the tier
+                // that prompted. A wildcard earned while looking at a
+                // workspace mutation must not silently authorise shell
+                // execution, SSH or deletions afterwards.
                 ApprovalDecision::ApprovedAll => {
-                    Some(Self::wildcard_policy_key(&entry.request.parameters))
+                    Some(Self::tiered_wildcard_policy_key(entry.request.risk_tier))
                 }
                 _ => None,
             };
@@ -781,17 +880,111 @@ impl ApprovalEngine {
         format!("{tool_name}|{scope}|{:x}", digest)
     }
 
-    /// Stored marker for "Allow All": stored as a bare `*` so one explicit
-    /// grant covers every tool and scope until the user revokes it (it shows
-    /// up as `*` in the policies list). Distinct from Always, which stays
-    /// scoped per tool and target.
+    /// Stored marker for "Allow All": stored with the tier it was earned at
+    /// (`*|1`) so one explicit grant covers every tool *at or below* that tier
+    /// until the user revokes it (it shows up as `*|1` in the policies list).
+    /// Distinct from Always, which stays scoped per tool and target.
+    fn tiered_wildcard_policy_key(tier: RiskTier) -> String {
+        format!("*|{}", tier as u8)
+    }
+
+    /// Legacy marker written before wildcards were tier-bounded. Still honoured
+    /// for loading, but only up to workspace mutations (see
+    /// [`Self::wildcard_covers`]).
     fn wildcard_policy_key(_parameters: &serde_json::Value) -> String {
         "*".to_string()
+    }
+
+    /// Whether a stored "allow all" grant covers a call at `risk`.
+    ///
+    /// A bare `*` (written by builds before tiering existed) is honoured only
+    /// up to workspace mutations, so an old wildcard cannot keep auto-approving
+    /// shell, SSH and delete calls. A tiered `*|n` grant covers everything at
+    /// or below the tier it was earned at.
+    fn wildcard_covers(allowed: &HashSet<String>, risk: RiskTier) -> bool {
+        allowed
+            .iter()
+            .filter(|key| key.starts_with('*'))
+            .any(|key| {
+                let ceiling = match key.split_once('|') {
+                    Some((_, tier)) => tier.parse::<u8>().unwrap_or(0),
+                    // A legacy bare wildcard is treated as workspace-tier.
+                    None => RiskTier::Tier1WorkspaceMutating as u8,
+                };
+                (risk as u8) <= ceiling
+            })
+    }
+
+    /// Tools whose danger lives in a command string rather than in a path.
+    /// "Always allow" binds to a path scope, so a stored grant for one of these
+    /// would authorise any command in that directory — or, when the tool takes
+    /// no path key at all, any command anywhere. Such a request may only ever
+    /// be approved once, never remembered.
+    fn tool_grant_is_command_scoped(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "shell_exec"
+                | "bash_run"
+                | "terminal_exec"
+                | "ssh_exec"
+                | "exec_background"
+                | "exec_stream_stdout"
+                | "pipeline_trigger"
+                | "security_patch_pr"
+                | "smart_install"
+                | "project_task"
+                | "deploy_automation"
+                | "schtasks_create"
+                | "schtasks_delete"
+                | "cron_add"
+                | "cron_remove"
+                | "process_kill"
+                | "mcp_add_server"
+                | "git_push"
+                | "git_pull"
+                | "git_reset"
+                | "git_reset_hard"
+                | "git_clean"
+                | "github_merge_pr"
+                | "github_workflow_run"
+                | "http_delete"
+                | "sftp_delete"
+                | "fs_delete"
+        )
+    }
+
+    /// Drops stored grants that must never persist: a scoped grant for a
+    /// command-bearing tool, and any grant above workspace tier. Applied when
+    /// the policy file is loaded so an install written by an older build is
+    /// hardened on upgrade instead of keeping a standing permission.
+    fn harden_loaded_grants(allowed: HashSet<String>) -> HashSet<String> {
+        allowed
+            .into_iter()
+            .filter(|key| {
+                if key.starts_with('*') {
+                    return true;
+                }
+                let tool = key.split('|').next().unwrap_or_default();
+                !Self::tool_grant_is_command_scoped(tool)
+            })
+            .collect()
     }
 
     pub async fn list_pending(&self) -> Vec<ApprovalRequest> {
         let pending = self.pending.read().await;
         pending.values().map(|p| p.request.clone()).collect()
+    }
+
+    /// Pending approvals belonging to one session. A turn may only see its own
+    /// requests: `approval_list` is read-only and model-visible, so the
+    /// unfiltered list would let one session enumerate another's parameters.
+    pub async fn list_pending_for_session(&self, session_id: &str) -> Vec<ApprovalRequest> {
+        let pending = self.pending.read().await;
+        pending
+            .values()
+            .map(|p| p.request.clone())
+            .filter(|request| request.session_id == session_id)
+            .collect()
     }
 
     pub async fn get_policy(&self) -> SecurityPolicy {
@@ -833,7 +1026,23 @@ impl ApprovalEngine {
         out
     }
 
+    /// Serialises appends to the approval audit log.
+    ///
+    /// Approvals are resolved from several tasks at once (the desktop, the
+    /// relay, an agent turn), and each append used to open the file on its own:
+    /// the measured log had two records glued onto one line, which the loader
+    /// then dropped without a word. A process-wide lock is enough because the
+    /// critical section is a single small write.
+    fn audit_write_lock() -> &'static std::sync::Mutex<()> {
+        use std::sync::Mutex;
+        static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     fn persist_audit_record(record: &AuditRecord, path: &PathBuf) {
+        let _guard = Self::audit_write_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Ok(line) = serde_json::to_string(record) {
             let line = Self::redact_secrets(&line);
             let mut options = std::fs::OpenOptions::new();
@@ -845,7 +1054,10 @@ impl ApprovalEngine {
             }
             let _ = options.open(path).and_then(|mut f| {
                 use std::io::Write;
-                writeln!(f, "{line}")
+                writeln!(f, "{line}")?;
+                // A decision that only reached the page cache is not a record:
+                // an audit trail has to survive the power loss it exists for.
+                f.sync_all()
             });
         }
     }
@@ -970,9 +1182,9 @@ mod tests {
                 engine
                     .evaluate_and_request(
                         "s1",
-                        "shell_exec",
-                        &serde_json::json!({"command": "git status", "cwd": "C:/work"}),
-                        "run",
+                        "write_file",
+                        &serde_json::json!({"path": "C:/work/a.txt"}),
+                        "write",
                     )
                     .await
             })
@@ -988,14 +1200,16 @@ mod tests {
             ApprovalDecision::ApprovedAlways
         ));
 
-        // A later, different command with the same tool and scope must be
-        // approved instantly instead of prompting again.
+        // A later, different payload for the same tool and scope must be
+        // approved instantly instead of prompting again. (Command-bearing
+        // tools are deliberately excluded from this: see
+        // `always_allow_for_command_tools_is_not_persisted`.)
         let second = engine
             .evaluate_and_request(
                 "s1",
-                "shell_exec",
-                &serde_json::json!({"command": "git diff", "cwd": "C:/work"}),
-                "run",
+                "write_file",
+                &serde_json::json!({"path": "C:/work/a.txt", "content": "second payload"}),
+                "write",
             )
             .await;
         assert!(matches!(second, Ok(ApprovalDecision::Approved)));
@@ -1006,7 +1220,7 @@ mod tests {
             .get_always_allowed()
             .await
             .iter()
-            .any(|key| key == "shell_exec|C:/work"));
+            .any(|key| key == "write_file|C:/work/a.txt"));
     }
 
     #[tokio::test]
@@ -1038,7 +1252,8 @@ mod tests {
             ApprovalDecision::Approved
         ));
 
-        // A different tool name is covered by the stored wildcard grant.
+        // A different tool name is covered by the stored wildcard grant, but
+        // only up to the tier the operator was looking at (Tier 2 here).
         let second = engine
             .evaluate_and_request(
                 "s1",
@@ -1050,12 +1265,169 @@ mod tests {
         assert!(matches!(second, Ok(ApprovalDecision::Approved)));
 
         // Revoking the wildcard removes the cover again.
-        assert!(engine.revoke_allowed("*").await);
+        assert!(engine.revoke_allowed("*|2").await);
         assert!(!engine
             .get_always_allowed()
             .await
             .iter()
-            .any(|key| key == "*"));
+            .any(|key| key.starts_with('*')));
+    }
+
+    /// A wildcard earned on a workspace mutation must not authorise system-tier
+    /// work: one "Allow all" click on a Tier-1 prompt used to disable the
+    /// approval engine for shell, SSH and delete calls in every session.
+    #[tokio::test]
+    async fn approve_all_is_tier_bounded() {
+        let (engine, mut rx) = test_engine();
+
+        let first = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request(
+                        "s1",
+                        "write_file",
+                        &serde_json::json!({"path": "C:/work/a.txt"}),
+                        "write",
+                    )
+                    .await
+            })
+        };
+        let id = next_requested_id(&mut rx).await;
+        engine
+            .submit_decision(&id, ApprovalDecision::ApprovedAll)
+            .await;
+        assert!(matches!(
+            first.await.unwrap().unwrap(),
+            ApprovalDecision::Approved
+        ));
+
+        // Another Tier-1 call is covered.
+        assert!(matches!(
+            engine
+                .evaluate_and_request(
+                    "s1",
+                    "write_file",
+                    &serde_json::json!({"path": "C:/work/b.txt"}),
+                    "write",
+                )
+                .await
+                .unwrap(),
+            ApprovalDecision::Approved
+        ));
+
+        // A Tier-2 call still prompts.
+        let second = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request(
+                        "s1",
+                        "shell_exec",
+                        &serde_json::json!({"command": "git status", "cwd": "C:/work"}),
+                        "run",
+                    )
+                    .await
+            })
+        };
+        let id = next_requested_id(&mut rx).await;
+        engine
+            .submit_decision(
+                &id,
+                ApprovalDecision::Rejected {
+                    reason: "no".into(),
+                },
+            )
+            .await;
+        assert!(matches!(
+            second.await.unwrap().unwrap(),
+            ApprovalDecision::Rejected { .. }
+        ));
+    }
+
+    /// "Always allow" for a command-bearing tool stores nothing: the scope key
+    /// is a directory, so a stored grant would authorise any command in it.
+    #[tokio::test]
+    async fn always_allow_for_command_tools_is_not_persisted() {
+        let (engine, mut rx) = test_engine();
+
+        let first = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request(
+                        "s1",
+                        "shell_exec",
+                        &serde_json::json!({"command": "git status", "cwd": "C:/work"}),
+                        "run",
+                    )
+                    .await
+            })
+        };
+        let id = next_requested_id(&mut rx).await;
+        engine
+            .submit_decision(&id, ApprovalDecision::ApprovedAlways)
+            .await;
+        assert!(matches!(
+            first.await.unwrap().unwrap(),
+            ApprovalDecision::Approved | ApprovalDecision::ApprovedAlways
+        ));
+
+        // Nothing was remembered: the same call prompts again.
+        let second = {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                engine
+                    .evaluate_and_request(
+                        "s1",
+                        "shell_exec",
+                        &serde_json::json!({"command": "git status", "cwd": "C:/work"}),
+                        "run",
+                    )
+                    .await
+            })
+        };
+        let id = next_requested_id(&mut rx).await;
+        engine
+            .submit_decision(
+                &id,
+                ApprovalDecision::Rejected {
+                    reason: "no".into(),
+                },
+            )
+            .await;
+        assert!(matches!(
+            second.await.unwrap().unwrap(),
+            ApprovalDecision::Rejected { .. }
+        ));
+    }
+
+    /// A grant file written by an older build is hardened on load: standing
+    /// permissions for command-bearing tools are dropped rather than honoured.
+    #[tokio::test]
+    async fn loaded_grants_for_command_tools_are_dropped() {
+        let dir = temp_dir("harden-grants");
+        let path = dir.join("approval-policies.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!([
+                "shell_exec|C:/work",
+                "ssh_exec|workspace",
+                "read_file|C:/work"
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let engine = ApprovalEngine::new(SecurityPolicy::default())
+            .with_paths(path, dir.join("audit.jsonl"));
+        let allowed = engine.get_always_allowed().await;
+        assert!(
+            !allowed.iter().any(|key| key.starts_with("shell_exec")),
+            "a command-bearing grant must not survive a reload: {allowed:?}"
+        );
+        assert!(!allowed.iter().any(|key| key.starts_with("ssh_exec")));
+        assert!(allowed.iter().any(|key| key == "read_file|C:/work"));
     }
 
     #[test]

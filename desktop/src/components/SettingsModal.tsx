@@ -295,7 +295,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     base_url?: string;
     is_default: boolean;
     name?: string;
-    models?: string[];
+    /** Objects since the daemon also reports the per-model context window. */
+    models?: { id: string; context?: number | null }[];
+    context_tokens?: number | null;
   };
   const [providerConfigs, setProviderConfigs] = useState<EndpointConfig[]>([]);
   const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null);
@@ -304,6 +306,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [endpointKey, setEndpointKey] = useState('');
   const [endpointModels, setEndpointModels] = useState('');
   const [endpointModelDraft, setEndpointModelDraft] = useState('');
+  // Context window (tokens) declared for the whole endpoint. 0 = not declared.
+  const [endpointContext, setEndpointContext] = useState(0);
   const [endpointBusy, setEndpointBusy] = useState(false);
   const [endpointError, setEndpointError] = useState<string | null>(null);
   const customEndpoints = providerConfigs.filter((c) => c.provider_id.startsWith('compat-'));
@@ -329,11 +333,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       api.getModels().catch(() => null),
       api.getProviderConfigs().catch(() => [] as EndpointConfig[]),
     ]);
-    if (data?.providers?.length) setProviders(data.providers);
+    if (data?.providers?.length) {
+      setProviders(data.providers);
+      syncCustomModelsFromDaemon(data.providers);
+    }
     setProviderConfigs(configs || []);
     // The picker lives in the host component; tell it to re-read the catalogue
     // so a saved endpoint is usable immediately, not after an app restart.
     onProvidersChanged?.();
+  };
+
+  /**
+   * Mirror the daemon's model list for the openai-compatible gateway into the
+   * local model manager.
+   *
+   * The daemon is what sizes the context budget, so its list is the source of
+   * truth: a row added in another browser, or a context edited before a refresh,
+   * has to come back. Local-only rows are kept so nothing disappears while the
+   * daemon is unreachable.
+   */
+  const syncCustomModelsFromDaemon = (providers: ProviderItem[]) => {
+    const gateway = providers.find(
+      (p) => p.id === 'openai-compatible' || p.id === 'openai_compatible',
+    );
+    if (!gateway?.models?.length) return;
+    const fromDaemon: ModelItem[] = gateway.models
+      .filter((m) => m && typeof m.id === 'string' && m.id.trim().length > 0)
+      .map((m) => ({
+        id: m.id.trim(),
+        name: m.name || m.id.trim(),
+        context: typeof m.context === 'number' && m.context > 0 ? m.context : 0,
+      }));
+    if (!fromDaemon.length) return;
+    const local = getCustomOpenAiModels();
+    const merged = [
+      ...fromDaemon,
+      ...local.filter((l) => !fromDaemon.some((d) => d.id === l.id)),
+    ];
+    setCustomOpenAiModels(merged);
+    saveCustomOpenAiModels(merged);
   };
 
   const slugifyProvider = (value: string) =>
@@ -361,6 +399,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setEndpointKey('');
     setEndpointModels('');
     setEndpointModelDraft('');
+    setEndpointContext(0);
     setEndpointError(null);
   };
 
@@ -387,6 +426,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         false,
         endpointName.trim(),
         models,
+        endpointContext > 0 ? endpointContext : undefined,
       );
       await refreshProviders();
       resetEndpointForm();
@@ -402,8 +442,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setEndpointName(c.name || c.provider_id);
     setEndpointBaseUrl(c.base_url || '');
     setEndpointKey('');
-    setEndpointModels((c.models || []).join('\n'));
+    setEndpointModels((c.models || []).map((m) => m.id).join('\n'));
     setEndpointModelDraft('');
+    setEndpointContext(c.context_tokens || 0);
     setEndpointError(null);
   };
 
@@ -426,8 +467,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     const firstModel = c.models?.[0];
     if (firstModel) {
-      onSelectModel?.(firstModel);
-      localStorage.setItem('odon_selected_model', firstModel);
+      const modelId = typeof firstModel === 'string' ? firstModel : firstModel.id;
+      onSelectModel?.(modelId);
+      localStorage.setItem('odon_selected_model', modelId);
     }
   };
 
@@ -437,7 +479,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const model: ModelItem = {
       id: trimmedId,
       name: newModelName.trim() || trimmedId,
-      context: Number(newModelContext) || 128000,
+      // 0 means "not declared": the runtime then falls back to the provider's
+      // conservative window instead of being pinned to a guessed value.
+      context: newModelContext > 0 ? newModelContext : 0,
       recommended: false,
     };
     const updated = [...customOpenAiModels.filter((m) => m.id !== model.id), model];
@@ -478,6 +522,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     api.getModels().then((data) => {
       if (data?.providers?.length) {
         setProviders(data.providers);
+        syncCustomModelsFromDaemon(data.providers);
       } else {
         setProviders(FALLBACK_PROVIDERS);
       }
@@ -697,7 +742,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     // Persist to backend daemon storage & register live provider
     try {
-      await api.saveProviderConfig(providerId, rawKey, baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || undefined, true);
+      // For the openai-compatible gateway the model rows the operator added
+      // (each with its own Context Window) must reach the daemon, not just
+      // localStorage: the runtime sizes the context budget from the route it
+      // registered, and an id-only save leaves every custom model on the
+      // conservative 128k fallback.
+      const models =
+        providerId === 'openai-compatible'
+          ? customOpenAiModels.map((m) => ({
+              id: m.id,
+              name: m.name,
+              context: m.context,
+            }))
+          : undefined;
+      await api.saveProviderConfig(
+        providerId,
+        rawKey,
+        baseUrls[providerId] || DEFAULT_BASE_URLS[providerId] || undefined,
+        true,
+        undefined,
+        models,
+      );
       const data = await api.getModels();
       if (data?.providers?.length) {
         setProviders(data.providers);
@@ -947,6 +1012,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
                   />
                 </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
+                    Context Window (tokens)
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={endpointContext === 0 ? '' : endpointContext}
+                    onChange={(e) =>
+                      setEndpointContext(e.target.value === '' ? 0 : Number(e.target.value))
+                    }
+                    placeholder="auto"
+                    title="Applies to every model of this endpoint that has no window of its own. Leave empty to let ODON decide from the provider."
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:border-blue-500"
+                  />
+                </label>
                 <div className="space-y-1 md:col-span-2">
                   <span className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-400">
                     Models
@@ -1061,16 +1142,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             No models yet — edit to add some.
                           </span>
                         ) : (
-                          (c.models || []).map((m) => (
-                            <span
-                              key={m}
-                              className="text-[10.5px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
-                            >
-                              {m}
-                            </span>
-                          ))
+                          (c.models || []).map((m) => {
+                            const id = typeof m === 'string' ? m : m.id;
+                            const ctx = typeof m === 'string' ? null : m.context;
+                            return (
+                              <span
+                                key={id}
+                                className="text-[10.5px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
+                              >
+                                {id}
+                                {ctx ? ` · ${(ctx / 1000).toFixed(0)}k` : ''}
+                              </span>
+                            );
+                          })
                         )}
                       </div>
+                      {c.context_tokens ? (
+                        <div className="text-[10.5px] text-neutral-400">
+                          Context window: {(c.context_tokens / 1000).toFixed(0)}k tokens
+                        </div>
+                      ) : null}
                       <div className="text-[10.5px] text-neutral-400">
                         Key: {c.masked_key}
                       </div>
@@ -1590,9 +1681,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <label className="text-[11px] text-neutral-500 font-mono mb-1 block">Context Window</label>
                           <input
                             type="number"
-                            value={newModelContext}
-                            onChange={(e) => setNewModelContext(Number(e.target.value))}
-                            placeholder="128000"
+                            min={0}
+                            value={newModelContext === 0 ? '' : newModelContext}
+                            onChange={(e) =>
+                              setNewModelContext(e.target.value === '' ? 0 : Number(e.target.value))
+                            }
+                            placeholder="auto"
+                            title="Tokens the model accepts. Leave empty to let ODON decide from the provider."
                             className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-mono outline-none focus:border-blue-500"
                           />
                         </div>
@@ -1644,7 +1739,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   <div className="text-[11px] text-neutral-400 font-mono mt-0.5 flex items-center gap-2">
                                     <span>id: <strong className="text-neutral-600 dark:text-neutral-300">{m.id}</strong></span>
                                     <span>·</span>
-                                    <span>{(m.context / 1000).toFixed(0)}k context</span>
+                                    <span>
+                                      {m.context > 0
+                                        ? `${(m.context / 1000).toFixed(0)}k context`
+                                        : 'auto context'}
+                                    </span>
                                   </div>
                                 </div>
 

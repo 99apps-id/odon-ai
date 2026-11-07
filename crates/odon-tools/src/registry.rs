@@ -7,6 +7,44 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Argument keys whose string value is a command the catastrophic-command
+/// baseline has to see, wherever in the payload it sits.
+const COMMAND_KEYS: [&str; 2] = ["command", "script"];
+
+/// Every command string anywhere in a tool's arguments.
+///
+/// Wrapper tools (MCP above all) carry their real payload one level down under
+/// `arguments`, so a top-level-only scan let `{"arguments":{"command":"rm -rf /"}}`
+/// straight through the baseline. Recursing closes that hole without needing
+/// every wrapper to remember to re-check.
+fn collect_command_strings(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                if COMMAND_KEYS.contains(&key.as_str()) {
+                    if let Some(text) = inner.as_str() {
+                        out.push(text.to_string());
+                    }
+                }
+                collect_command_strings(inner, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_command_strings(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Command strings in `args`, outermost first.
+fn command_strings(args: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_command_strings(args, &mut out);
+    out
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ToolAvailability {
@@ -223,6 +261,24 @@ impl ToolRegistry {
         }
     }
 
+    /// Tools that exist for the host surface only and must never run inside a
+    /// model turn: they mutate the security perimeter itself (approval
+    /// decisions, daemon settings, the workspace allowlist, the MCP server
+    /// registry). Hiding them from `schemas()` is only an advertising control,
+    /// so the runtime checks this list at dispatch time as well — otherwise a
+    /// prompted agent could resolve any session's pending approval, or plant a
+    /// standing grant, by calling the tool directly.
+    pub fn is_security_perimeter_tool(&self, name: &str) -> bool {
+        let canonical = self
+            .get(name)
+            .map(|tool| tool.name().to_string())
+            .unwrap_or_else(|| name.to_string());
+        matches!(
+            canonical.as_str(),
+            "approval_decide" | "settings_set" | "workspace_add" | "mcp_add_server"
+        )
+    }
+
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         if let Some(tool) = self.tools.get(name) {
             return Some(tool.as_ref());
@@ -389,26 +445,27 @@ impl ToolRegistry {
 
         // Hard command-policy check before approval: catastrophic commands are
         // refused regardless of the execution mode or a stored "always allow".
-        for key in ["command", "script"] {
-            if let Some(command) = args.get(key).and_then(|value| value.as_str()) {
-                let policy = ctx.approval_engine.get_policy().await;
-                if let Some(reason) = policy.command_forbidden_reason(command) {
-                    let _ = ctx
-                        .audit_logger
-                        .record(
-                            &ctx.session_id,
-                            canonical_name,
-                            tool.risk_tier(),
-                            &format!("Blocked by command policy: {reason}"),
-                            false,
-                            false,
-                            0,
-                        )
-                        .await;
-                    return Err(OdonError::Security(format!(
-                        "Command blocked by security policy: {reason}"
-                    )));
-                }
+        // The scan is recursive because wrapper tools (MCP above all) carry
+        // their payload one level down under `arguments`, and a nested command
+        // must not escape the baseline by being wrapped.
+        for command in command_strings(&args) {
+            let policy = ctx.approval_engine.get_policy().await;
+            if let Some(reason) = policy.command_forbidden_reason(&command) {
+                let _ = ctx
+                    .audit_logger
+                    .record(
+                        &ctx.session_id,
+                        canonical_name,
+                        tool.risk_tier(),
+                        &format!("Blocked by command policy: {reason}"),
+                        false,
+                        false,
+                        0,
+                    )
+                    .await;
+                return Err(OdonError::Security(format!(
+                    "Command blocked by security policy: {reason}"
+                )));
             }
         }
 

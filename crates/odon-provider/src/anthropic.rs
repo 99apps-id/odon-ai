@@ -141,6 +141,22 @@ impl ModelProvider for AnthropicProvider {
                 }
                 MessageRole::Assistant => {
                     let mut blocks = Vec::new();
+                    // Extended thinking must be replayed verbatim, signature
+                    // included, or the API rejects the turn. Without a stored
+                    // signature the block cannot be rebuilt, so the reasoning
+                    // is dropped rather than fabricated - a fabricated
+                    // signature fails just as hard.
+                    if let Some(thought) = msg.content.thought.as_deref() {
+                        if !thought.is_empty() {
+                            if let Some(signature) = msg.content.thought_signature.as_deref() {
+                                blocks.push(json!({
+                                    "type": "thinking",
+                                    "thinking": thought,
+                                    "signature": signature,
+                                }));
+                            }
+                        }
+                    }
                     if !msg.content.text.is_empty() {
                         blocks.push(json!({ "type": "text", "text": msg.content.text }));
                     }
@@ -302,7 +318,8 @@ impl ModelProvider for AnthropicProvider {
                                 match evt_type {
                                     "content_block_start" => {
                                         if let Some(cb) = val.get("content_block") {
-                                            if cb.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                                            let cb_type = cb.get("type").and_then(|t| t.as_str());
+                                            if cb_type == Some("tool_use") {
                                                 let idx = val.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
                                                 let _ = event_sender.send(StreamEvent::ToolCallDelta {
                                                     index: idx,
@@ -310,6 +327,16 @@ impl ModelProvider for AnthropicProvider {
                                                     name: cb.get("name").and_then(|s| s.as_str()).map(String::from),
                                                     arguments_delta: None,
                                                 }).await;
+                                            } else if cb_type == Some("thinking") {
+                                                // A non-streaming thinking block
+                                                // carries its whole text and
+                                                // signature in the start event.
+                                                if let Some(th) = cb.get("thinking").and_then(|t| t.as_str()) {
+                                                    let _ = event_sender.send(StreamEvent::ThoughtDelta(th.to_string())).await;
+                                                }
+                                                if let Some(sig) = cb.get("signature").and_then(|s| s.as_str()) {
+                                                    let _ = event_sender.send(StreamEvent::ThoughtSignature(sig.to_string())).await;
+                                                }
                                             }
                                         }
                                     }
@@ -319,6 +346,8 @@ impl ModelProvider for AnthropicProvider {
                                                 let _ = event_sender.send(StreamEvent::TextDelta(text.to_string())).await;
                                             } else if let Some(th) = delta.get("thinking").and_then(|t| t.as_str()) {
                                                 let _ = event_sender.send(StreamEvent::ThoughtDelta(th.to_string())).await;
+                                            } else if let Some(sig) = delta.get("signature").and_then(|s| s.as_str()) {
+                                                let _ = event_sender.send(StreamEvent::ThoughtSignature(sig.to_string())).await;
                                             } else if let Some(pj) = delta.get("partial_json").and_then(|t| t.as_str()) {
                                                 let idx = val.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
                                                 let _ = event_sender.send(StreamEvent::ToolCallDelta {

@@ -129,7 +129,7 @@ export function TodoPanel({ items, live = false, onHide }: TodoPanelProps) {
                     {item.title}
                   </span>
                   <span className="ml-auto pl-2 shrink-0 text-[9.5px] uppercase tracking-wide text-neutral-400">
-                    {STATUS_LABEL[item.status] ?? item.status}
+                    {item.auto && isDone ? 'Closed' : (STATUS_LABEL[item.status] ?? item.status)}
                   </span>
                 </li>
               );

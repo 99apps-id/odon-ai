@@ -130,7 +130,12 @@ impl Tool for ApprovalListTool {
         RiskTier::Tier0ReadOnly
     }
     async fn execute(&self, ctx: &ToolContext, _args: Value) -> Result<Value> {
-        let pending = ctx.approval_engine.list_pending().await;
+        // Scoped to the calling session: an unfiltered list would let one
+        // session read another session's pending parameters.
+        let pending = ctx
+            .approval_engine
+            .list_pending_for_session(&ctx.session_id)
+            .await;
         Ok(json!({ "total": pending.len(), "requests": pending }))
     }
 }
@@ -389,9 +394,63 @@ impl Tool for SessionListTool {
                 tool: self.name().to_string(),
                 message: e.to_string(),
             })?;
-            return Ok(json!({ "sessions": list }));
+            // Every desk's conversation used to be listed here, which let one
+            // agent enumerate another agent's history. Keep the caller's own
+            // session and the sessions of the agent that owns it.
+            let owner = storage
+                .get_session(&ctx.session_id)
+                .ok()
+                .and_then(|session| session.agent_id);
+            let visible: Vec<_> = list
+                .into_iter()
+                .filter(|session| {
+                    session.id == ctx.session_id
+                        || match owner.as_deref() {
+                            Some(owner) => session.agent_id.as_deref() == Some(owner),
+                            None => false,
+                        }
+                })
+                .collect();
+            return Ok(json!({ "sessions": visible }));
         }
         Ok(json!({ "sessions": [] }))
+    }
+}
+
+/// Whether a turn may read or write another session.
+///
+/// The session tools are read-only or Tier 2 on the surface, but an agent turn
+/// that can name any `session_id` can dump a *different* agent's transcript -
+/// another desk's persona, its secrets in tool arguments, its whole history.
+/// A turn may therefore only reach its own session, the sessions of the agent
+/// that owns it, and the delegated children that agent spawned.
+async fn session_reachable(ctx: &ToolContext, target: &str) -> bool {
+    if target == ctx.session_id {
+        return true;
+    }
+    let Some(storage) = ctx.storage.as_ref() else {
+        return false;
+    };
+    let owner = match storage.get_session(&ctx.session_id) {
+        Ok(session) => session.agent_id,
+        Err(_) => None,
+    };
+    let Some(owner) = owner else {
+        // A session with no agent behind it (the composer, a relay) has no
+        // other session to reach.
+        return false;
+    };
+    match storage.get_session(target) {
+        Ok(session) => {
+            session.agent_id.as_deref() == Some(owner.as_str())
+                || session
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("parent_session"))
+                    .and_then(|parent| parent.as_str())
+                    == Some(ctx.session_id.as_str())
+        }
+        Err(_) => false,
     }
 }
 
@@ -425,6 +484,13 @@ impl Tool for SessionGetTool {
             tool: self.name().to_string(),
             message: "Storage engine unavailable".to_string(),
         })?;
+        if !session_reachable(ctx, session_id).await {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "that session belongs to another agent and cannot be read from this turn"
+                    .to_string(),
+            });
+        }
         let session = storage
             .get_session(session_id)
             .map_err(|e| OdonError::Tool {
@@ -471,6 +537,13 @@ impl Tool for SessionMessagesTool {
             tool: self.name().to_string(),
             message: "Storage engine unavailable".to_string(),
         })?;
+        if !session_reachable(ctx, session_id).await {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message: "that session belongs to another agent and cannot be read from this turn"
+                    .to_string(),
+            });
+        }
         let mut messages = storage
             .list_messages(session_id)
             .map_err(|e| OdonError::Tool {
@@ -542,6 +615,14 @@ impl Tool for SessionDeleteTool {
             tool: self.name().to_string(),
             message: "Storage engine unavailable".to_string(),
         })?;
+        if !session_reachable(ctx, session_id).await {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message:
+                    "that session belongs to another agent and cannot be deleted from this turn"
+                        .to_string(),
+            });
+        }
         let deleted = storage
             .delete_session(session_id)
             .map_err(|e| OdonError::Tool {
@@ -588,6 +669,15 @@ impl Tool for SessionExportTool {
             .get("format")
             .and_then(|f| f.as_str())
             .unwrap_or("markdown");
+
+        if !session_reachable(ctx, s_id).await {
+            return Err(OdonError::Tool {
+                tool: self.name().to_string(),
+                message:
+                    "that session belongs to another agent and cannot be exported from this turn"
+                        .to_string(),
+            });
+        }
 
         if let Some(storage) = &ctx.storage {
             let msgs = storage.list_messages(s_id).unwrap_or_default();

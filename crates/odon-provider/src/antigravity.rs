@@ -7,7 +7,6 @@
 //!      thoughts and native function calls).
 
 use async_trait::async_trait;
-use base64::Engine;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use odon_core::{MessageRole, OdonError, Result};
@@ -403,24 +402,31 @@ impl ModelProvider for AntigravityProvider {
                             .trim_start_matches("defaultapi:")
                             .trim_start_matches("default_api:");
 
-                        let sig = self
-                            .get_signature(&tc.call_id)
-                            .await
+                        // A thought signature must be the one the provider
+                        // issued for this call. Fabricating one used to paper
+                        // over a miss, but the API rejects an invented value
+                        // exactly as it rejects a missing one, so the field is
+                        // omitted instead: the call is then replayed as an
+                        // ordinary function call.
+                        let sig = msg
+                            .content
+                            .thought_signature
+                            .clone()
+                            .or(self.get_signature(&tc.call_id).await)
                             .or(self.get_signature(&tc.tool_name).await)
-                            .or(self.get_signature(clean_name).await)
-                            .unwrap_or_else(|| {
-                                base64::engine::general_purpose::STANDARD
-                                    .encode(format!("sig_{}_{}", clean_name, tc.call_id))
-                            });
+                            .or(self.get_signature(clean_name).await);
 
-                        parts.push(json!({
-                            "thoughtSignature": sig,
+                        let mut part = json!({
                             "functionCall": {
                                 "id": tc.call_id,
                                 "name": clean_name,
                                 "args": args
                             }
-                        }));
+                        });
+                        if let Some(sig) = sig {
+                            part["thoughtSignature"] = json!(sig);
+                        }
+                        parts.push(part);
                     }
                     if !parts.is_empty() {
                         contents.push(json!({ "role": "model", "parts": parts }));
@@ -673,6 +679,21 @@ impl ModelProvider for AntigravityProvider {
                                 }).await;
                                 tool_index += 1;
                             } else if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                // A signature can ride on a thought part or on
+                                // the closing text part; either way it must be
+                                // forwarded so the runtime can store it with
+                                // the message and replay it later.
+                                let part_sig = part
+                                    .get("thoughtSignature")
+                                    .or_else(|| part.get("thought_signature"))
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or_default();
+                                if !part_sig.is_empty() {
+                                    self.remember_signature("last", part_sig).await;
+                                    let _ = event_sender
+                                        .send(StreamEvent::ThoughtSignature(part_sig.to_string()))
+                                        .await;
+                                }
                                 if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
                                     let _ = event_sender.send(StreamEvent::ThoughtDelta(text.to_string())).await;
                                 } else {

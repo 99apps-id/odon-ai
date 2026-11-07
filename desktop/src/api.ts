@@ -86,6 +86,9 @@ export interface TodoItem {
   id: string;
   title: string;
   status: 'pending' | 'in_progress' | 'completed';
+  /** Set when the runtime closed this item because the turn ended without a
+   *  final `todo_update` — the model never ticked it itself. */
+  auto?: boolean;
 }
 
 export interface WorkspaceInfo {
@@ -1009,7 +1012,9 @@ export const api = {
     base_url?: string;
     is_default: boolean;
     name?: string;
-    models?: string[];
+    /** Objects since the daemon also reports the per-model context window. */
+    models?: { id: string; context?: number | null }[];
+    context_tokens?: number | null;
   }>> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config`);
     if (!res.ok) return [];
@@ -1022,12 +1027,23 @@ export const api = {
     base_url?: string,
     is_default?: boolean,
     name?: string,
-    models?: string[],
+    /** Bare model ids, or objects carrying the context window per model. */
+    models?: (string | { id: string; context?: number })[],
+    /** Context window for the endpoint as a whole (tokens). */
+    context_tokens?: number,
   ): Promise<any> {
     const res = await this.fetchApi(`${this.getBaseUrl()}/api/providers/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider_id, api_key, base_url, is_default, name, models }),
+      body: JSON.stringify({
+        provider_id,
+        api_key,
+        base_url,
+        is_default,
+        name,
+        models,
+        context_tokens,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

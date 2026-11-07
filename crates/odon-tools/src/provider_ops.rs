@@ -320,6 +320,7 @@ impl Tool for ProviderSetDefaultTool {
                     true,
                     config.name.as_deref(),
                     &config.models_json,
+                    None,
                 )
                 .map_err(|e| OdonError::Tool {
                     tool: self.name().to_string(),

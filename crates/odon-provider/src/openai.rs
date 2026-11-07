@@ -560,6 +560,22 @@ impl OpenAiCompatibleProvider {
                     }));
                 }
                 MessageRole::Assistant => {
+                    // With `store: false` a reasoning item is only replayable
+                    // through the encrypted blob the API handed back. Replay it
+                    // when the runtime captured one, so the turn's reasoning is
+                    // carried forward instead of silently dropped.
+                    if let (Some(thought), Some(encrypted)) = (
+                        msg.content.thought.as_deref(),
+                        msg.content.thought_signature.as_deref(),
+                    ) {
+                        if !thought.is_empty() && !encrypted.is_empty() {
+                            input_items.push(json!({
+                                "type": "reasoning",
+                                "encrypted_content": encrypted,
+                                "summary": [],
+                            }));
+                        }
+                    }
                     if !msg.content.text.is_empty() {
                         input_items.push(json!({
                             "role": "assistant",
@@ -695,6 +711,23 @@ impl OpenAiCompatibleProvider {
                                                 arguments_delta: arguments,
                                             }).await;
                                             tool_index += 1;
+                                        } else if item.get("type").and_then(|kind| kind.as_str()) == Some("reasoning") {
+                                            // `store: false` means the only way
+                                            // to carry this reasoning into the
+                                            // next request is the encrypted
+                                            // blob. Forward it so the runtime
+                                            // can store and replay it.
+                                            if let Some(encrypted) = item
+                                                .get("encrypted_content")
+                                                .and_then(|content| content.as_str())
+                                                .filter(|content| !content.is_empty())
+                                            {
+                                                let _ = event_sender
+                                                    .send(StreamEvent::ThoughtSignature(
+                                                        encrypted.to_string(),
+                                                    ))
+                                                    .await;
+                                            }
                                         }
                                     }
                                 }
