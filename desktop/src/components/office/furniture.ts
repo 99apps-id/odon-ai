@@ -8,16 +8,16 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
  */
 
 export const PALETTE = {
-  floor: '#efe6d8',
-  floorAgent: '#e8e3db',
-  floorSub: '#e1e6e8',
-  floorDirector: '#e8ddd2',
-  floorMeeting: '#e5e0d8',
-  floorLounge: '#e9e2d6',
-  wall: '#f4f1ec',
-  wallTrim: '#d6cfc3',
+  floor: '#bab3a7',
+  floorAgent: '#b5ada1',
+  floorSub: '#b8b2a8',
+  floorDirector: '#b0a89c',
+  floorMeeting: '#b3aca0',
+  floorLounge: '#b8b0a4',
+  wall: '#cfc8bd',
+  wallTrim: '#9e9587',
   glass: '#cfe3ee',
-  wood: '#e5dccd',
+  wood: '#c9bead',
   woodDark: '#5d3d30',
   ink: '#3a352e',
   skin: '#d5b9a3',
@@ -26,7 +26,7 @@ export const PALETTE = {
   greenLight: '#5f7d58',
   terracotta: '#a8775f',
   blue: '#3f5b70',
-  white: '#fffaf2',
+  white: '#dfd8cc',
 } as const;
 
 export function material(color: string, roughness = 0.9, metalness = 0): THREE.MeshStandardMaterial {
@@ -855,7 +855,7 @@ export function createWindowWall(length: number): THREE.Group {
     new THREE.MeshStandardMaterial({
       color: '#a9cfe4',
       emissive: '#cfe3ee',
-      emissiveIntensity: 0.35,
+      emissiveIntensity: 0.08,
       transparent: true,
       opacity: 0.38,
       roughness: 0.1,

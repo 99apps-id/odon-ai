@@ -195,39 +195,68 @@ function makeThoughtBubble(kind: 'thinking' | 'approval' | 'tool'): ThoughtBubbl
 
 function makeFloorTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
+  canvas.width = 1024;
+  canvas.height = 1024;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = '#efe6d8';
-    ctx.fillRect(0, 0, 512, 512);
-    // Warm plank seams.
-    ctx.strokeStyle = 'rgba(140, 118, 92, 0.16)';
-    ctx.lineWidth = 1.5;
-    for (let step = 0; step <= 8; step += 1) {
-      const y = step * 64;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(512, y);
-      ctx.stroke();
-    }
-    ctx.strokeStyle = 'rgba(140, 118, 92, 0.10)';
-    for (let step = 0; step <= 8; step += 1) {
-      const x = step * 64;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 512);
-      ctx.stroke();
-    }
-    // Subtle warm speckle so the large fill is not dead flat.
-    let speckSeed = 20240117;
-    const speck = () => {
-      speckSeed = (speckSeed * 1664525 + 1013904223) >>> 0;
-      return speckSeed / 0xffffffff;
+    // Office ceramic / porcelain tile layout:
+    // 8x8 tiles per texture block (128x128px per tile) with distinct grout lines.
+    const tileSize = 128;
+    const groutSize = 2.5;
+
+    // Grout seam background: subtle warm neutral grout
+    ctx.fillStyle = '#948a7b';
+    ctx.fillRect(0, 0, 1024, 1024);
+
+    let seed = 42891;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
     };
-    for (let index = 0; index < 320; index += 1) {
-      ctx.fillStyle = `rgba(120, 96, 70, ${0.04 + speck() * 0.05})`;
-      ctx.fillRect(speck() * 512, speck() * 512, 1.4, 1.4);
+
+    // Soft palette of office porcelain / ceramic tiles:
+    // Muted architectural stone/taupe tones (calm, warm neutral, non-glaring)
+    const tileColors = [
+      '#bfb8ad',
+      '#bbb3a8',
+      '#b6afa4',
+      '#c2bbb0',
+      '#b3aca1',
+      '#b8b1a6',
+      '#bdb6ab',
+      '#b1aaa0',
+    ];
+
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const x = c * tileSize;
+        const y = r * tileSize;
+        const color = tileColors[Math.floor(rand() * tileColors.length)];
+
+        // Tile body (inside the grout seam)
+        ctx.fillStyle = color;
+        ctx.fillRect(x + groutSize, y + groutSize, tileSize - groutSize * 2, tileSize - groutSize * 2);
+
+        // Subtle bevel on tile edges (gives realistic tile depth without specular glare)
+        // Top & left bevel highlight (gentle soft light)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.09)';
+        ctx.fillRect(x + groutSize, y + groutSize, tileSize - groutSize * 2, 2);
+        ctx.fillRect(x + groutSize, y + groutSize, 2, tileSize - groutSize * 2);
+
+        // Bottom & right bevel shadow (gentle recessed shade)
+        ctx.fillStyle = 'rgba(50, 42, 35, 0.12)';
+        ctx.fillRect(x + groutSize, y + tileSize - groutSize - 2, tileSize - groutSize * 2, 2);
+        ctx.fillRect(x + tileSize - groutSize - 2, y + groutSize, 2, tileSize - groutSize * 2);
+
+        // Subtle stone / ceramic matte grain on each tile
+        for (let s = 0; s < 45; s++) {
+          const sx = x + groutSize + rand() * (tileSize - groutSize * 2 - 2);
+          const sy = y + groutSize + rand() * (tileSize - groutSize * 2 - 2);
+          const opacity = (rand() * 0.04 + 0.015).toFixed(3);
+          ctx.fillStyle = rand() > 0.5 ? `rgba(255, 255, 255, ${opacity})` : `rgba(60, 50, 40, ${opacity})`;
+          ctx.fillRect(sx, sy, 2, 2);
+        }
+      }
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -235,6 +264,8 @@ function makeFloorTexture(): THREE.CanvasTexture {
   texture.anisotropy = 4;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
+  // Repeat 6x5 across the 48x42 meter office floor so tiles are proportional to desks
+  texture.repeat.set(6, 5);
   return texture;
 }
 
@@ -410,11 +441,11 @@ export function createOfficeScene(
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 0.96;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#e9e2d6');
+  scene.background = new THREE.Color('#dcd6cb');
 
   // Image-based lighting gives the flat primitives a believable ambient
   // bounce so whites are not blown and wood/plastic read as materials.
@@ -424,6 +455,9 @@ export function createOfficeScene(
     scene.environment = pmrem.fromScene(environment, 0.04).texture;
     environment.dispose();
     pmrem.dispose();
+    if ('environmentIntensity' in scene) {
+      (scene as any).environmentIntensity = 0.25;
+    }
   } catch (envErr) {
     console.warn('[ODON 3D] RoomEnvironment PMREM skipped (unsupported by GPU/WebGL context):', envErr);
   }
@@ -449,9 +483,9 @@ export function createOfficeScene(
   });
   controls.update();
 
-  const hemi = new THREE.HemisphereLight('#fff8ee', '#8d8578', 1.05);
+  const hemi = new THREE.HemisphereLight('#f2ebdc', '#726b60', 0.8);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight('#fff0d8', 2.0);
+  const sun = new THREE.DirectionalLight('#fff0d8', 1.35);
   sun.position.set(19, 29, 12);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -464,7 +498,7 @@ export function createOfficeScene(
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.02;
   scene.add(sun);
-  const fill = new THREE.DirectionalLight('#e8f1f5', 0.55);
+  const fill = new THREE.DirectionalLight('#dce7ed', 0.35);
   fill.position.set(-16, 18, -12);
   scene.add(fill);
 
