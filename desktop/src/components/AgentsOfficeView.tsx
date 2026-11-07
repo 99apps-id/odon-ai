@@ -36,7 +36,7 @@ const AREA_SUBTITLES: Record<string, string> = {
  * operator.
  */
 export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<OfficeScene | null>(null);
   const agentsRef = useRef<Agent[]>([]);
   const sessionsRef = useRef<Session[]>([]);
@@ -46,6 +46,7 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hoveredIdRef = useRef('');
 
+  const [retryKey, setRetryKey] = useState(0);
   const [desks, setDesks] = useState<Desk[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [hoveredId, setHoveredId] = useState('');
@@ -125,8 +126,16 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
   };
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Reset container and create a pristine canvas element for WebGL initialization
+    container.innerHTML = '';
+    const canvas = document.createElement('canvas');
+    canvas.className = 'h-full w-full block';
+    canvas.setAttribute('aria-label', 'Agents Office');
+    container.appendChild(canvas);
+
     try {
       sceneRef.current = createOfficeScene(
         canvas,
@@ -141,13 +150,15 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
       console.error('[AgentsOfficeView] WebGL creation error:', error);
       setWebglError(error?.message || 'WebGL is not available in this window.');
     }
+
     return () => {
       sceneRef.current?.dispose();
       sceneRef.current = null;
+      if (canvas.parentNode) {
+        canvas.remove();
+      }
     };
-    // The scene is created once for the life of the view.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [retryKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -350,7 +361,7 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
   return (
     <div className="flex h-full min-h-0 gap-3">
       <div className="relative flex-1 min-w-0 overflow-hidden rounded-xl border border-neutral-200 bg-sand-50">
-        <canvas ref={canvasRef} className="h-full w-full" aria-label="Agents Office" />
+        <div ref={containerRef} className="h-full w-full" />
 
         <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-neutral-200 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-neutral-800 shadow-2xs">
@@ -480,9 +491,18 @@ export default function AgentsOfficeView({ onOpenSession }: AgentsOfficeViewProp
         {webglError ? (
           <div className="absolute inset-0 overflow-y-auto bg-sand-50/95 p-5">
             <div className="mx-auto max-w-xl space-y-2">
-              <div className="flex items-center gap-2 text-xs font-semibold text-neutral-800">
-                <span className="h-2 w-2 rounded-full bg-clay-500" />
-                The 3D view is unavailable in this window
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold text-neutral-800">
+                  <span className="h-2 w-2 rounded-full bg-clay-500" />
+                  The 3D view is unavailable in this window
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRetryKey((k) => k + 1)}
+                  className="px-2.5 py-1 text-[11px] font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
+                >
+                  Retry 3D View
+                </button>
               </div>
               <p className="text-[11px] leading-relaxed text-neutral-500">
                 {webglError} The office data is still live; use the list on the right or open a

@@ -362,13 +362,45 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
       }
 
       // 8. Lists (Unordered, Ordered, and Task Lists)
-      const isListItem = /^(-|\*|\d+\.)\s+/.test(trimmed);
-      if (isListItem) {
+      // A list run may be interrupted by blank lines and still be one list:
+      // reasoning models write "1. do this" then a blank line then "2. do
+      // that", and treating the blank line as a break used to emit one
+      // single-item <ol> per step, so every item restarted the counter at 1.
+      // Blank lines are now absorbed while the next non-blank line keeps the
+      // same list kind, and the authored start number is carried over so a
+      // list that opens at 2. still counts 2, 3, 4 instead of 1, 2, 3.
+      const listMatch = trimmed.match(/^(-|\*|\d+\.)\s+/);
+      if (listMatch) {
         const listItems: { text: string; isTask?: boolean; isChecked?: boolean }[] = [];
-        const isOrdered = /^\d+\.\s+/.test(trimmed);
+        const orderedMatch = trimmed.match(/^(\d+)\.\s+/);
+        const isOrdered = orderedMatch !== null;
+        const listStart = orderedMatch ? parseInt(orderedMatch[1], 10) : undefined;
 
-        while (i < rawLines.length && /^(-|\*|\d+\.)\s+/.test(rawLines[i].trim())) {
-          let itemText = rawLines[i].trim().replace(/^(-|\*|\d+\.)\s+/, '');
+        while (i < rawLines.length) {
+          const raw = rawLines[i].trim();
+          if (!raw) {
+            // Absorb a blank run only when the list continues after it: look
+            // ahead without consuming, and stop the list when the run ended.
+            let j = i + 1;
+            while (j < rawLines.length && !rawLines[j].trim()) j++;
+            if (j < rawLines.length) {
+              const next = rawLines[j].trim();
+              const nextOrdered = /^\d+\.\s+/.test(next);
+              const nextUnordered = /^(-|\*)\s+/.test(next);
+              if ((isOrdered && nextOrdered) || (!isOrdered && nextUnordered)) {
+                i = j;
+                continue;
+              }
+            }
+            break;
+          }
+
+          const itemMatch = raw.match(/^(-|\*|\d+\.)\s+/);
+          if (!itemMatch) break;
+          const itemOrdered = /^\d+\.\s+/.test(raw);
+          if (isOrdered !== itemOrdered) break;
+
+          let itemText = raw.replace(/^(-|\*|\d+\.)\s+/, '');
           let isTask = false;
           let isChecked = false;
 
@@ -385,7 +417,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({
 
         if (isOrdered) {
           elements.push(
-            <ol key={`ol-${i}`} className={dense ? "my-1 space-y-0.5 list-decimal pl-4 text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400" : "my-2 space-y-1.5 list-decimal pl-5 text-[15px] leading-relaxed text-neutral-800 dark:text-neutral-200"}>
+            <ol key={`ol-${i}`} start={listStart} className={dense ? "my-1 space-y-0.5 list-decimal pl-4 text-[12.5px] leading-relaxed text-neutral-600 dark:text-neutral-400" : "my-2 space-y-1.5 list-decimal pl-5 text-[15px] leading-relaxed text-neutral-800 dark:text-neutral-200"}>
               {listItems.map((item, idx) => (
                 <li key={idx} dangerouslySetInnerHTML={{ __html: formatInline(item.text, triggerOpenBrowser, dense) }} />
               ))}

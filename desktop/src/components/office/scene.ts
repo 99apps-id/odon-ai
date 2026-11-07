@@ -1719,7 +1719,6 @@ export function createOfficeScene(
         scene.environment = null;
       }
       renderer.dispose();
-      renderer.forceContextLoss?.();
     },
   };
 }
